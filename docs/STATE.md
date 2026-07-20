@@ -4,13 +4,13 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-07-20 (public-repo scrub done + verified + merged to main; ready for public repo creation)
+**Last updated:** 2026-07-20 (PUBLIC REPO LIVE — this is now the primary repo, github.com/Cringely/spacemolt-harness)
 
 ## NOW, live status
 
 _Refreshed 2026-07-20 (scrub verified + merged to main). Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. Capped at 500 words by `test/doc-size.test.ts`._
 
-**P0 — GO PUBLIC (operator, 2026-07-20). SCRUB DONE + VERIFIED, MERGED TO MAIN.** CI + auto-deploy billing-dead on the private free tier (frozen at image `eb0056b`); fix = fresh-start PUBLIC repo (option B). All scrub + public-voice work (S1 #468, S2 #471, S3 #469, G1/G2/G3 #475/#473/#474) assembled on `scrub/integration` and merged to main this session. Residuals CLEARED: compose-hardening checker retired (#479; #478 re-homes it to the private GitOps CI); 3 host-specific deploy files genericized + renamed to `production` (#480); staging env template genericized (#481). VERIFIED CLEAN: whole-tree public-readiness audit = PUBLIC-READY (no secret, no real domain, no topology leak); gitleaks full-history in WSL = 529 commits all refs, 0 leaks. LICENSE = MIT (operator-confirmed). REMAINING — OPERATOR HANDS: create + seed the public repo from the merged main tree, then post-flip hardening (outside-contributor-approval toggle, server-side branch protection, GHCR visibility, add the MIT LICENSE file). Accepted-low: `docker-staging` role-name survives in the containerize plan (historical build-record, placeholder IPs, non-blocking).
+**P0 — PUBLIC FLIP COMPLETE (2026-07-20).** `github.com/Cringely/spacemolt-harness` is LIVE and PUBLIC, seeded as one clean initial commit (null history, so none of the 93 internal-referencing commit messages ship). Why: CI was billing-dead on the private free tier (frozen at image `eb0056b`); a fresh public repo (option B) restores free Actions. Seed = the private `spacemolt` main tree after the full scrub (S1 #468, S2 #471, S3 #469, G1/G2/G3 #475/#473/#474) + residual cleanup (#479/#480/#481/#484). VERIFIED CLEAN before exposure four ways: whole-tree audit PUBLIC-READY; gitleaks history + dir (0 leaks); export sweep; GitHub tree check. Post-flip hardening this session: MIT LICENSE added; branch protection + Actions contributor-approval set. STILL OPEN (operator): GHCR image visibility (image at `eb0056b`, private namespace); private `spacemolt` repo fate (archive per plan). #478 re-homes the compose-hardening check privately.
 
 **MODEL POLICY.** Fable = prose seats, Opus everything else, cheap tiers for bulk. Usage 34% all-models / 25% Fable, boosted limits.
 
