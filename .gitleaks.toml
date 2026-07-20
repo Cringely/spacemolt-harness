@@ -1,0 +1,45 @@
+# gitleaks config — read automatically by `gitleaks git .` from the repo root
+# (security.yml runs exactly that, so CI and a local run see the same rules).
+#
+# The full default ruleset stays on, and the job keeps its "any finding fails"
+# posture. The only addition is one allowlist, built as an AND of two narrow
+# conditions so it can suppress the game's own placeholder text and nothing else.
+#
+# What it suppresses, and why that is safe:
+#   docs/game-reference/upstream/** is machine-captured, byte-for-byte, from the
+#   game's PUBLIC docs by scripts/refresh-game-reference.ts. Nothing in that tree
+#   is hand-authored, so a secret of ours cannot legitimately originate there.
+#   Those docs illustrate the login payload with a literal placeholder —
+#   "password": "a1b2c3d4e5f6...64_hex_characters..." — which the generic-api-key
+#   rule reads as a credential (6 hits: api.md lines 360, 614, 666, across the two
+#   commits that introduced the tree in #217).
+#
+# Why AND, not the path alone:
+#   A path-only allowlist would blind the scanner to EVERY secret shape inside
+#   that directory. The refresh script writes whatever upstream serves; if the
+#   game ever publishes a real key in its docs, or a bad merge drops one of our
+#   files into that tree, a path-only rule would hide it. Pinning the secret text
+#   too means this allowlist can only ever hide THIS placeholder, in THAT tree.
+#   If upstream changes its example, the gate fires again — fail-closed and
+#   intended: a human re-reads the new text and updates this file, which is
+#   exactly the review we want.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Game's own placeholder password in vendored upstream docs (#217) — machine-captured public docs, never hand-authored"
+condition = "AND"
+paths = ['''^docs/game-reference/upstream/''']
+regexes = ['''^a1b2c3d4e5f6\.\.\.''']
+
+# The SAME placeholder, quoted once in our own register while documenting the
+# allowlist above — which promptly tripped the scanner on the very commit that
+# added the allowlist (#238). The prose no longer repeats the literal, but git
+# history is permanent, so history-scanning needs this second entry. Same AND
+# discipline: this one file, that one string, nothing else. Do not quote
+# secret-shaped literals in prose; describe them.
+[[allowlists]]
+description = "The same placeholder, quoted in our own security register while documenting the rule above (#238)"
+condition = "AND"
+paths = ['''^docs/wiki/security-controls\.md$''']
+regexes = ['''^a1b2c3d4e5f6\.\.\.''']

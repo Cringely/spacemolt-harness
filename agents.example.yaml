@@ -1,0 +1,95 @@
+# Copy to agents.yaml and adjust. Passwords are auto-created in secrets/
+# on first run; put your registration code (from spacemolt.com/dashboard)
+# in secrets/registration_code first. Claude subscription auth needs
+# secrets/claude_oauth_token (see docs/superpowers/specs/spike-claude-container-auth.md).
+server_url: https://game.spacemolt.com
+db_path: ./harness.sqlite
+ollama_url: http://localhost:11434
+agents:
+  - id: miner
+    username: REPLACE_ME_1
+    empire: nebula            # cargo bonus suits a miner/trader
+    persona: >
+      A pragmatic ore miner and trader. Priorities: fill cargo, sell at the
+      best nearby price, keep fuel above 25%, avoid combat entirely.
+    # Standing goals (#216): durable objectives (milestones) go HERE, not in
+    # the persona prose. The harness reads this list deterministically -- the
+    # planner briefing renders it as Goals, and a goal naming a catalog item
+    # (exact name or id) triggers a free estimate_purchase (price + sellers)
+    # every replan. Persona prose is style only; a milestone written there is
+    # invisible to that machinery. Max 5; newer operator steers supersede.
+    goals:
+      - "Milestone: buy and fit a Mining Laser III"
+    # Repetitive mine/sell/travel loop needs little judgment; a local model
+    # keeps this agent's cost at zero even past any subscription limit.
+    planner: { provider: ollama, model: llama3.1:8b }
+    # Local-model A/B via an OpenAI-compatible server (LM Studio, #240).
+    # base_url is REQUIRED (per-planner endpoint, e.g. the workstation on the
+    # LAN); model is REQUIRED (ids differ per install). No API key by default;
+    # a keyed server takes api_key_file (a PATH under secrets/, never the key
+    # inline). The experiment block is the deterministic exit (#251): if the
+    # named progress counter ("any" = every progress dimension) does not
+    # advance within within_hours, the harness latches this agent onto its
+    # fallback_planner (required with experiment:) and emits
+    # experiment_reverted -- one-way until this block changes.
+    # planner: { provider: openai-compat, model: qwen3-30b-a3b-instruct, base_url: "http://192.168.1.50:1234" }
+    # fallback_planner: { provider: claude-subscription, model: sonnet }
+    # experiment: { revert_if_no: any, within_hours: 12 }
+    # Zero-token reflex: auto-refuel while docked, no planner call needed.
+    reflex: { keep_fuel_above: 30 }
+    # Deterministic, dashboard-visible progress pulse: every N minutes emit a
+    # progress_heartbeat reporting whether any progress dimension advanced since
+    # the last one. Reports only (never acts); default 30. Zero LLM cost.
+    progress_heartbeat_minutes: 30
+    # Improv mode (model-in-the-loop over the game's MCP interface). OPTIONAL:
+    # omit the block for plan-then-execute (the default). When enabled, a model
+    # chooses one action per tick while the deterministic backstops keep running.
+    # Expensive vs plan-then-execute, so it is budget- and window-bounded. Batch C
+    # wires the loop; until then `enabled: true` is REJECTED at load (#118, #119)
+    # rather than silently running plan-then-execute. Keep the block commented
+    # (or set enabled: false) until Batch C ships:
+    # improv:
+    #   enabled: true
+    #   model: sonnet            # the chooser model (Batch C)
+    #   token_budget: 200000     # soft per-window ceiling (chars/4-estimated)
+    #   wall_clock_minutes: 60   # hard per-window limit (the true stop)
+    #   preset: standard         # MCP tool preset: standard (9) or full (16)
+    #   schedule: { start: "02:00", end: "04:00" }  # optional daily window (Batch E)
+  - id: scout
+    username: REPLACE_ME_2
+    empire: outerrim          # speed bonus suits an explorer
+    persona: >
+      A methodical explorer. Priorities: visit unvisited adjacent systems,
+      survey POIs, log discoveries, retreat from any hostile contact.
+    # Better instruction-following than a small local model for varied POI
+    # descriptions and log entries; the cheapest Claude tier is enough.
+    planner: { provider: claude-subscription, model: haiku }
+    # Second-vendor alternative (#311): OpenAI's Codex CLI signed in with a
+    # ChatGPT subscription -- same zero-marginal-cost trick as
+    # claude-subscription, drawing from a SEPARATE weekly quota pool. Auth is
+    # codex-managed: run `codex login` once on the host (or `codex login
+    # --device-auth` for a headless container) and the artifact lives in
+    # ~/.codex/auth.json -- nothing goes under secrets/. Model ids as of
+    # 2026-07-17: gpt-5.6-sol | gpt-5.6-terra (default) | gpt-5.6-luna |
+    # gpt-5.5 | gpt-5.4 | gpt-5.4-mini. Eval-gate any model before pilot use
+    # (bun run eval:planner --provider codex-subscription --model <m>).
+    # planner: { provider: codex-subscription, model: gpt-5.6-terra }
+    fallback_planner: { provider: ollama, model: llama3.1:8b }
+    heartbeat_minutes: 10
+  - id: corsair
+    username: REPLACE_ME_3
+    empire: crimson           # weapons bonus suits a combat pilot
+    persona: >
+      An opportunistic privateer. Priorities: scan targets before engaging,
+      only attack when advantaged, disengage below 50% hull.
+    # Combat engage/disengage judgment benefits from the strongest reasoning
+    # available -- this is the one agent where a bad call costs the ship,
+    # not just time.
+    planner: { provider: claude-subscription, model: sonnet }
+    fallback_planner: { provider: ollama, model: llama3.1:8b }
+    hull_pct: 50
+    wake_notification_types: [combat, chat, trade]
+    stall_threshold: 3   # combat agent should escalate to stalled faster than the default 5
+    # Zero-token reflex: auto-repair while docked, so a return to base after
+    # a fight doesn't need a planner round-trip just to top off hull.
+    reflex: { repair_below_hull: 60 }

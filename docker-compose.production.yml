@@ -1,0 +1,81 @@
+# Production promotion for a reverse-proxied stack. Label pattern and
+# secrets convention follow a typical reverse-proxy-fronted deployment
+# (the labels below use Traefik syntax):
+# router labels use the <name>-rtr / <name>-svc naming, a ${DOMAIN1}
+# base domain, an external `front` network, and a ${SECRETSDIR}/<name>
+# secrets directory. No published host port — the dashboard is reachable
+# only through the reverse proxy plus its SSO forwardAuth middleware.
+services:
+  harness:
+    image: spacemolt-harness:${HARNESS_IMAGE_TAG:?set HARNESS_IMAGE_TAG to the short git SHA}
+    container_name: spacemolt-harness
+    restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+
+    volumes:
+      - harness_data:/app/data
+      # Deviation from the usual read-only `secrets:` construct (individual
+      # files bind-mounted read-only to /run/secrets/<name>): that shape
+      # can't support this app, which writes NEW per-agent password files
+      # into its secrets directory at first run (ensureCredentials,
+      # src/config/config.ts:118) — a read-only single-file secret mount
+      # would make registration fail. Using the ${SECRETSDIR} naming
+      # convention but as a read-write directory bind-mount instead, same
+      # shape as docker-compose.staging.yml. Host-side directory ownership
+      # for container UID 10001 must be set before first run.
+      - ${SECRETSDIR}/spacemolt:/app/secrets
+      # codex-subscription auth home (#311): dedicated WRITABLE, PERSISTENT
+      # bind-mount at /app/codex-home, so codex can refresh its OAuth token
+      # in place (rewriting auth.json) and keep it across restarts. Host dir
+      # must be writable by container UID 10001.
+      - ${SECRETSDIR}/spacemolt/codex-home:/app/codex-home
+      - ./agents.yaml:/app/agents.yaml:ro
+
+    networks:
+      - front
+
+    environment:
+      # #173 second auth barrier: a shared-secret header checked after the
+      # SSO forwardAuth, so a request that clears SSO still needs the token.
+      # This file bind-mounts the secrets directory read-write, so the token
+      # file lives inside it.
+      HARNESS_DASHBOARD_TOKEN_FILE: /app/secrets/dashboard_token
+      # codex-subscription planner (#311): both the codex CLI and the planner's
+      # existence-check resolve auth at $CODEX_HOME/auth.json
+      # (src/planner/codex-subscription.ts). Points at the dedicated writable,
+      # persistent codex-home bind-mount above, so codex refreshes and rewrites
+      # auth.json in place and keeps the rotated token across restarts. Inert
+      # unless an agent uses codex-subscription.
+      CODEX_HOME: /app/codex-home
+
+    labels:
+      traefik.enable: true
+      traefik.http.routers.spacemolt-rtr.entryPoints: websecure
+      traefik.http.routers.spacemolt-rtr.rule: Host(`spacemolt.${DOMAIN1}`)
+      traefik.http.routers.spacemolt-rtr.tls: true
+      # #173: spacemolt-token stamps the shared-secret header after
+      # forwardAuth; the harness 401s any request without it. DASHBOARD_TOKEN
+      # comes from the host-side .env (chmod 0600) and MUST equal the
+      # contents of ${SECRETSDIR}/spacemolt/dashboard_token — reverse-proxy
+      # labels have no _FILE mechanism (documented deviation).
+      traefik.http.routers.spacemolt-rtr.middlewares: authentik@file,spacemolt-token
+      traefik.http.middlewares.spacemolt-token.headers.customrequestheaders.X-Dashboard-Token: ${DASHBOARD_TOKEN:?set DASHBOARD_TOKEN in .env to the contents of SECRETSDIR/spacemolt/dashboard_token}
+      traefik.http.routers.spacemolt-rtr.service: spacemolt-svc
+      traefik.http.services.spacemolt-svc.loadBalancer.server.port: ${HARNESS_DASHBOARD_PORT}
+    # Deliberately no `ports:` stanza — reachable only via the `front`
+    # network, matching every other service behind the reverse proxy.
+
+networks:
+  front:
+    external: true
+    name: docker_front
+
+volumes:
+  harness_data:

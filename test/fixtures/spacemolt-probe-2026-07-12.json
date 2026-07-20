@@ -1,0 +1,1273 @@
+{
+  "_meta": {
+    "captured": "2026-07-12",
+    "account": "Rockhopper Kess (nebula) — live production pilot",
+    "method": "read-only probe via harness SpacemoltHttp transport; 6 token-free queries; no mutations",
+    "game_version": "0.492.1",
+    "redactions": "session.id bearer tokens replaced with REDACTED; all gameplay/shape fields intact",
+    "purpose": "response-shape fixtures for the pilot stall-watcher (docs/superpowers/specs/2026-07-12-pilot-stall-watcher.md)"
+  },
+  "get_status": {
+    "result": "Rockhopper Kess [nebula] | 2,720cr | Moonshadow\nShip: Prospect (prospect) | Hull: 95/95 | Shield: 50/50 (+1/tick) | Armor: 4 | Speed: 1\nFuel: 0/130 | Cargo: 24/100 | CPU: 2/13 | Power: 5/26\nSecurity: Lawless (no police protection)\nConnections: fafnir, ross_128, heze, gsc_0032, ravensbrook, 55_cancri\nModules (1):\nid\ttype\tslot\tsize\twear\tstats\ne4cc830ca1f644e80b004eee9230d01e\tmining_laser_i\tutility\t10\tPristine\tmining_power:5\nCargo (2 items):\nitem\tqty\tsize\nCarbon Ore\t16\t1\nIridium Ore\t8\t1\nSkills (5):\nskill\tlevel\txp\tnext_level\nexploration\t1\t0\t165\nmining\t2\t21\t340\nnavigation\t3\t181\t585\npiloting\t3\t427\t585\ntrading\t0\t29\t60\nEmpire standings:\nempire\trep\tbaseline\tbounty\nsolarian\t10\t10\t0\nvoidborn\t10\t10\t0\ncrimson\t10\t10\t0\nnebula\t20\t20\t0\nouterrim\t10\t10\t0\npirates\t-30\t-30\t0\n",
+    "structuredContent": {
+      "cargo": [
+        {
+          "item_id": "carbon_ore",
+          "item_name": "Carbon Ore",
+          "quantity": 16,
+          "size": 1
+        },
+        {
+          "item_id": "iridium_ore",
+          "item_name": "Iridium Ore",
+          "quantity": 8,
+          "size": 1
+        }
+      ],
+      "location": {
+        "connections": [
+          "fafnir",
+          "ross_128",
+          "heze",
+          "gsc_0032",
+          "ravensbrook",
+          "55_cancri"
+        ],
+        "docked_at": null,
+        "empire": "",
+        "nearby_empire_npc_count": 0,
+        "nearby_empire_npcs": [],
+        "nearby_pirate_count": 0,
+        "nearby_pirates": [],
+        "nearby_player_count": 0,
+        "nearby_players": [],
+        "poi_id": "moonshadow_iii",
+        "poi_name": "Moonshadow III",
+        "poi_type": "planet",
+        "resources": [],
+        "security_status": "Lawless (no police protection)",
+        "system_id": "moonshadow",
+        "system_name": "Moonshadow"
+      },
+      "message": "Current game state",
+      "missions": {
+        "active": [],
+        "max_missions": 5
+      },
+      "modules": [
+        {
+          "cpu_usage": 2,
+          "module_id": "e4cc830ca1f644e80b004eee9230d01e",
+          "name": "Mining Laser I",
+          "power_usage": 5,
+          "size": 10,
+          "slot": "utility",
+          "stats": {
+            "mining_power": 5
+          },
+          "type": "mining",
+          "type_id": "mining_laser_i",
+          "wear": 0,
+          "wear_status": "Pristine"
+        }
+      ],
+      "player": {
+        "citizenships": [
+          "nebula"
+        ],
+        "clan_tag": "",
+        "credits": 2720,
+        "empire": "nebula",
+        "home_base": "grand_exchange_station",
+        "home_poi": "grand_exchange",
+        "home_system": "haven",
+        "id": "[REDACTED]",
+        "is_cloaked": false,
+        "primary_color": "#FFFFFF",
+        "secondary_color": "#000000",
+        "standings": {
+          "crimson": {
+            "baseline": 10,
+            "outstanding_bounty": 0,
+            "reputation": 10
+          },
+          "nebula": {
+            "baseline": 20,
+            "outstanding_bounty": 0,
+            "reputation": 20
+          },
+          "outerrim": {
+            "baseline": 10,
+            "outstanding_bounty": 0,
+            "reputation": 10
+          },
+          "pirates": {
+            "baseline": -30,
+            "outstanding_bounty": 0,
+            "reputation": -30
+          },
+          "solarian": {
+            "baseline": 10,
+            "outstanding_bounty": 0,
+            "reputation": 10
+          },
+          "voidborn": {
+            "baseline": 10,
+            "outstanding_bounty": 0,
+            "reputation": 10
+          }
+        },
+        "stats": {
+          "bases_destroyed": 0,
+          "battles_fled": 0,
+          "battles_started": 0,
+          "captains_log_entries": 5,
+          "chat_messages_sent": 0,
+          "cloak_activations": 0,
+          "consumables_used": 0,
+          "contraband_sold": 0,
+          "credits_earned": 3348,
+          "credits_earned_taxable": 3348,
+          "credits_earned_taxable_by_category": {
+            "market": 3348
+          },
+          "credits_earned_taxable_snapshot": 0,
+          "credits_gifted": 0,
+          "credits_spent": 878,
+          "customs_evaded": 0,
+          "damage_dealt": 0,
+          "damage_taken": 0,
+          "deaths_by_pirate": 0,
+          "deaths_by_player": 0,
+          "deaths_by_self_destruct": 0,
+          "deaths_by_wildlife": 0,
+          "deep_core_pois_discovered": 0,
+          "distance_traveled": 39537,
+          "exchange_credits_earned": 3348,
+          "exchange_items_bought": 0,
+          "exchange_items_sold": 222,
+          "facilities_built": 0,
+          "facility_items_produced": 0,
+          "forum_posts_created": 0,
+          "gifts_received": 0,
+          "gifts_sent": 0,
+          "insurance_claims_made": 0,
+          "insurance_payouts_received": 0,
+          "insurance_policies_bought": 0,
+          "items_crafted": 0,
+          "items_jettisoned": 0,
+          "jumps_completed": 103,
+          "market_purchases_deductible": 878,
+          "missions_abandoned": 0,
+          "missions_accepted": 0,
+          "missions_completed": 0,
+          "modules_installed": 0,
+          "npcs_destroyed": 0,
+          "ore_mined": 246,
+          "pirates_destroyed": 0,
+          "prayer_distance_traveled": 0,
+          "refuels_given": 0,
+          "repairs_given": 0,
+          "scans_performed": 0,
+          "self_destructs": 0,
+          "ships_commissioned": 0,
+          "ships_destroyed": 0,
+          "ships_lost": 0,
+          "ships_purchased": 0,
+          "systems_explored": 13,
+          "time_played": 65340,
+          "times_docked": 143,
+          "trades_completed": 15,
+          "void_drifts": 0,
+          "wormholes_traversed": 0,
+          "wreck_items_looted": 0,
+          "wrecks_scrapped": 0,
+          "wrecks_sold": 0
+        },
+        "status_message": "",
+        "username": "Rockhopper Kess"
+      },
+      "queue": {
+        "has_pending": false
+      },
+      "ship": {
+        "armor": 4,
+        "cargo_capacity": 100,
+        "cargo_used": 24,
+        "class_id": "prospect",
+        "class_name": "Prospect",
+        "cpu_capacity": 13,
+        "cpu_used": 2,
+        "defense_slots": 1,
+        "fuel": 0,
+        "hull": 95,
+        "id": "b2551cd4be807e8bb01a5e4ea88e8b5a",
+        "max_fuel": 130,
+        "max_hull": 95,
+        "max_shield": 50,
+        "name": "Prospect",
+        "power_capacity": 26,
+        "power_used": 5,
+        "shield": 50,
+        "shield_recharge": 1,
+        "speed": 1,
+        "utility_slots": 2,
+        "weapon_slots": 1
+      },
+      "skills": {
+        "exploration": {
+          "category": "Exploration",
+          "level": 1,
+          "max_level": 100,
+          "name": "Exploration",
+          "next_level_xp": 165,
+          "xp": 0
+        },
+        "mining": {
+          "category": "Industry",
+          "level": 2,
+          "max_level": 100,
+          "name": "Mining",
+          "next_level_xp": 340,
+          "xp": 21
+        },
+        "navigation": {
+          "category": "Ships",
+          "level": 3,
+          "max_level": 100,
+          "name": "Navigation",
+          "next_level_xp": 585,
+          "xp": 181
+        },
+        "piloting": {
+          "category": "Ships",
+          "level": 3,
+          "max_level": 100,
+          "name": "Piloting",
+          "next_level_xp": 585,
+          "xp": 427
+        },
+        "trading": {
+          "category": "Commerce",
+          "level": 0,
+          "max_level": 100,
+          "name": "Trading",
+          "next_level_xp": 60,
+          "xp": 29
+        }
+      },
+      "version": "0.492.1"
+    },
+    "notifications": null,
+    "session": {
+      "id": "REDACTED",
+      "player_id": "[REDACTED]",
+      "created_at": "2026-07-12T16:28:13.160427681Z",
+      "expires_at": "2026-07-12T16:58:13.30078696Z"
+    }
+  },
+  "get_skills": {
+    "result": "Skills (5 trained, 0-100 scale):\nskill\tname\tcategory\tlevel\tprogress\nexploration\tExploration\tExploration\t1/100\t0/165 XP\nmining\tMining\tIndustry\t2/100\t21/340 XP\nnavigation\tNavigation\tShips\t3/100\t181/585 XP\npiloting\tPiloting\tShips\t3/100\t427/585 XP\ntrading\tTrading\tCommerce\t0/100\t29/60 XP\n",
+    "structuredContent": {
+      "message": "Skills progress",
+      "skills": {
+        "exploration": {
+          "category": "Exploration",
+          "level": 1,
+          "max_level": 100,
+          "name": "Exploration",
+          "next_level_xp": 165,
+          "xp": 0
+        },
+        "mining": {
+          "category": "Industry",
+          "level": 2,
+          "max_level": 100,
+          "name": "Mining",
+          "next_level_xp": 340,
+          "xp": 21
+        },
+        "navigation": {
+          "category": "Ships",
+          "level": 3,
+          "max_level": 100,
+          "name": "Navigation",
+          "next_level_xp": 585,
+          "xp": 181
+        },
+        "piloting": {
+          "category": "Ships",
+          "level": 3,
+          "max_level": 100,
+          "name": "Piloting",
+          "next_level_xp": 585,
+          "xp": 427
+        },
+        "trading": {
+          "category": "Commerce",
+          "level": 0,
+          "max_level": 100,
+          "name": "Trading",
+          "next_level_xp": 60,
+          "xp": 29
+        }
+      }
+    },
+    "notifications": null,
+    "session": {
+      "id": "REDACTED",
+      "player_id": "[REDACTED]",
+      "created_at": "2026-07-12T16:28:13.160427681Z",
+      "expires_at": "2026-07-12T16:58:13.366280366Z"
+    }
+  },
+  "get_achievements": {
+    "result": "Achievements (3/62 earned, 20 points):\nid\tname\tcategory\tpoints\tstatus\tshare\nwanderer\tWanderer\texploration\t10\tEARNED\thttps://www.spacemolt.com/a/Rockhopper%20Kess/wanderer\nfirst_steps\tFirst Steps\tprogression\t5\tEARNED\thttps://www.spacemolt.com/a/Rockhopper%20Kess/first_steps\nmaiden_jump\tMaiden Jump\tprogression\t5\tEARNED\thttps://www.spacemolt.com/a/Rockhopper%20Kess/maiden_jump\ndiplomatic_courier\tDiplomatic Courier\tcollection\t20\t0/5\t\ngalactic_concierge\tGalactic Concierge\tcollection\t60\t0/2,849\t\nshipwright_supreme\tShipwright Supreme\tcollection\t50\t0/317\t\nvip_traveler\t???\tcollection\t30\tlocked\t\nbounty_hunter\tBounty Hunter\tcombat\t20\t0/100\t\nfirst_blood\tFirst Blood\tcombat\t10\t0/1\t\nnine_lives\t???\tcombat\t15\tlocked\t\npirate_slayer\tPirate Slayer\tcombat\t30\t0/500\t\nuntouchable\t???\tcombat\t40\tlocked\t\nwarrior\tWarrior\tcombat\t25\t0/50\t\nhigh_volume_trader\tHigh-Volume Trader\tcommerce\t25\t15/1,000\t\nopen_for_business\tOpen For Business\tcommerce\t15\t15/50\t\nplutonium_dealer\tPlutonium Dealer\tcommerce\t25\t0/1,000\t\nbillionaire\t???\teconomy\t75\tlocked\t\nbullion_baron\tBullion Baron\teconomy\t50\tlocked\t\nmillionaire\tMillionaire\teconomy\t25\t2,720/1,000,000\t\nwell_insured\tWell Insured\teconomy\t10\t0/10\t\ncartographer\tCartographer\texploration\t30\t13/100\t\ndeep_core_master\tDeep Core Master\texploration\t35\t0/25\t\nfar_traveler\tFar Traveler\texploration\t25\t39,537/15,000,000\t\nfirst_contact\tFirst Contact\texploration\t5\t0/1\t\ngrand_tour\t???\texploration\t75\tlocked\t\nhalfway_there\tHalfway There\texploration\t40\t0/5,000,000\t\ninto_the_void\t???\texploration\t25\tlocked\t\njump_master\tJump Master\texploration\t20\t103/25,000\t\nthreshold_crosser\tThreshold Crosser\texploration\t20\t0/25\t\nvoyager_i\tVoyager I\texploration\t10\t13/25\t\nvoyager_ii\tVoyager II\texploration\t25\t13/250\t\nartisan\tArtisan\tindustry\t20\t0/10,000\t\nindustrialist\tIndustrialist\tindustry\t30\t0/10\t\nline_cook\tLine Cook\tindustry\t15\t0/10\t\nprospector_i\tProspector I\tindustry\t10\t246/10,000\t\nprospector_ii\tProspector II\tindustry\t20\t246/250,000\t\nprospector_iii\tProspector III\tindustry\t40\t246/5,000,000\t\nscrap_magnate\tScrap Magnate\tindustry\t20\t0/200\t\ndeep_core_savant\tInto the Deep\tmastery\t30\tlocked\t\ngalactic_gastronome\tGalactic Gastronome\tmastery\t50\t0/25\t\ngrandmaster\t???\tmastery\t60\tlocked\t\nmaster_distiller\tMaster Distiller\tmastery\t40\t0/14\t\nmaster_engineer\tMaster Engineer\tmastery\t25\t0/50\t\nmaster_explorer\tMaster Explorer\tmastery\t25\t1/50\t\nmaster_miner\tMaster Miner\tmastery\t25\t2/50\t\nmaster_salvager\tMaster Salvager\tmastery\t25\t0/50\t\nmaster_trader\tMaster Trader\tmastery\t25\t0/50\t\nrenaissance_pilot\tRenaissance Pilot\tmastery\t30\tlocked\t\nweapons_master\tWeapons Master\tmastery\t25\t0/50\t\nchronicler\tChronicler\tprogression\t15\t5/25\t\nfirst_refinement\tFirst Refinement\tprogression\t5\t0/1\t\nbreakers_yard\tBreaker's Yard\tsalvage\t20\t0/500\t\nfirst_salvage\tFirst Salvage\tsalvage\t5\t0/1\t\nghost_runner\tGhost Runner\tsmuggling\t20\t0/25\t\nkingpin\tKingpin\tsmuggling\t35\tlocked\t\nout_of_the_frying_pan\t???\tsmuggling\t40\tlocked\t\nuntouchable_smuggler\tSmoke & Mirrors\tsmuggling\t30\t0/200\t\nfield_medic\tField Medic\tsocial\t15\t0/20\t\nfirst_aid\tFirst Aid\tsocial\t5\t0/1\t\ngood_samaritan\tGood Samaritan\tsocial\t15\t0/20\t\nhelping_hand\tHelping Hand\tsocial\t5\t0/1\t\nphilanthropist\tPhilanthropist\tsocial\t40\t0/10,000,000\t\n",
+    "structuredContent": {
+      "achievements": [
+        {
+          "category": "exploration",
+          "description": "Explore 10 distinct star systems.",
+          "earned": true,
+          "earned_at": "2026-07-11T23:51:46.974648062Z",
+          "hidden": false,
+          "id": "wanderer",
+          "name": "Wanderer",
+          "points": 10,
+          "share_url": "https://www.spacemolt.com/a/Rockhopper%20Kess/wanderer"
+        },
+        {
+          "category": "progression",
+          "description": "Dock at a station for the first time.",
+          "earned": true,
+          "earned_at": "2026-07-11T03:05:58.297913889Z",
+          "hidden": false,
+          "id": "first_steps",
+          "name": "First Steps",
+          "points": 5,
+          "share_url": "https://www.spacemolt.com/a/Rockhopper%20Kess/first_steps"
+        },
+        {
+          "category": "progression",
+          "description": "Complete your first jump between systems.",
+          "earned": true,
+          "earned_at": "2026-07-11T04:21:27.938006109Z",
+          "hidden": false,
+          "id": "maiden_jump",
+          "name": "Maiden Jump",
+          "points": 5,
+          "share_url": "https://www.spacemolt.com/a/Rockhopper%20Kess/maiden_jump"
+        },
+        {
+          "category": "collection",
+          "description": "Transport a citizen from each of the five empires.",
+          "earned": false,
+          "hidden": false,
+          "id": "diplomatic_courier",
+          "name": "Diplomatic Courier",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 5
+          }
+        },
+        {
+          "category": "collection",
+          "description": "Successfully transport every unique citizen in the galaxy.",
+          "earned": false,
+          "hidden": false,
+          "id": "galactic_concierge",
+          "name": "Galactic Concierge",
+          "points": 60,
+          "progress": {
+            "current": 0,
+            "target": 2849
+          }
+        },
+        {
+          "category": "collection",
+          "description": "Own (purchase) one of every ship class.",
+          "earned": false,
+          "hidden": false,
+          "id": "shipwright_supreme",
+          "name": "Shipwright Supreme",
+          "points": 50,
+          "progress": {
+            "current": 0,
+            "target": 317
+          }
+        },
+        {
+          "category": "collection",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "vip_traveler",
+          "name": "???",
+          "points": 30
+        },
+        {
+          "category": "combat",
+          "description": "Destroy 100 pirates.",
+          "earned": false,
+          "hidden": false,
+          "id": "bounty_hunter",
+          "name": "Bounty Hunter",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 100
+          }
+        },
+        {
+          "category": "combat",
+          "description": "Destroy your first enemy ship.",
+          "earned": false,
+          "hidden": false,
+          "id": "first_blood",
+          "name": "First Blood",
+          "points": 10,
+          "progress": {
+            "current": 0,
+            "target": 1
+          }
+        },
+        {
+          "category": "combat",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "nine_lives",
+          "name": "???",
+          "points": 15
+        },
+        {
+          "category": "combat",
+          "description": "Destroy 500 pirates.",
+          "earned": false,
+          "hidden": false,
+          "id": "pirate_slayer",
+          "name": "Pirate Slayer",
+          "points": 30,
+          "progress": {
+            "current": 0,
+            "target": 500
+          }
+        },
+        {
+          "category": "combat",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "untouchable",
+          "name": "???",
+          "points": 40
+        },
+        {
+          "category": "combat",
+          "description": "Win your way through 50 battles (50 ships destroyed).",
+          "earned": false,
+          "hidden": false,
+          "id": "warrior",
+          "name": "Warrior",
+          "points": 25,
+          "progress": {
+            "current": 0,
+            "target": 50
+          }
+        },
+        {
+          "category": "commerce",
+          "description": "Complete 1,000 trades.",
+          "earned": false,
+          "hidden": false,
+          "id": "high_volume_trader",
+          "name": "High-Volume Trader",
+          "points": 25,
+          "progress": {
+            "current": 15,
+            "target": 1000
+          }
+        },
+        {
+          "category": "commerce",
+          "description": "Complete 50 trades.",
+          "earned": false,
+          "hidden": false,
+          "id": "open_for_business",
+          "name": "Open For Business",
+          "points": 15,
+          "progress": {
+            "current": 15,
+            "target": 50
+          }
+        },
+        {
+          "category": "commerce",
+          "description": "Sell 1,000 units of weapons-grade plutonium on the exchange.",
+          "earned": false,
+          "hidden": false,
+          "id": "plutonium_dealer",
+          "name": "Plutonium Dealer",
+          "points": 25,
+          "progress": {
+            "current": 0,
+            "target": 1000
+          }
+        },
+        {
+          "category": "economy",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "billionaire",
+          "name": "???",
+          "points": 75
+        },
+        {
+          "category": "economy",
+          "description": "Sit on 100,000 gold bars, 100,000 silver bars, and 100,000 platinum bars in storage at once. Pure wealth, doing absolutely nothing.",
+          "earned": false,
+          "hidden": false,
+          "id": "bullion_baron",
+          "name": "Bullion Baron",
+          "points": 50
+        },
+        {
+          "category": "economy",
+          "description": "Hold 1,000,000 credits at once.",
+          "earned": false,
+          "hidden": false,
+          "id": "millionaire",
+          "name": "Millionaire",
+          "points": 25,
+          "progress": {
+            "current": 2720,
+            "target": 1000000
+          }
+        },
+        {
+          "category": "economy",
+          "description": "Purchase 10 insurance policies.",
+          "earned": false,
+          "hidden": false,
+          "id": "well_insured",
+          "name": "Well Insured",
+          "points": 10,
+          "progress": {
+            "current": 0,
+            "target": 10
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Visit 100 distinct star systems.",
+          "earned": false,
+          "hidden": false,
+          "id": "cartographer",
+          "name": "Cartographer",
+          "points": 30,
+          "progress": {
+            "current": 13,
+            "target": 100
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Reveal 25 hidden deep-core deposits.",
+          "earned": false,
+          "hidden": false,
+          "id": "deep_core_master",
+          "name": "Deep Core Master",
+          "points": 35,
+          "progress": {
+            "current": 0,
+            "target": 25
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Travel 15,000,000 cumulative distance.",
+          "earned": false,
+          "hidden": false,
+          "id": "far_traveler",
+          "name": "Far Traveler",
+          "points": 25,
+          "progress": {
+            "current": 39537,
+            "target": 15000000
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Perform your first scan.",
+          "earned": false,
+          "hidden": false,
+          "id": "first_contact",
+          "name": "First Contact",
+          "points": 5,
+          "progress": {
+            "current": 0,
+            "target": 1
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "grand_tour",
+          "name": "???",
+          "points": 75
+        },
+        {
+          "category": "exploration",
+          "description": "Travel 5,000,000 cumulative distance while flying a Prayer-class hull — a seat bolted to a cargo container, no shields, no weapons, no excuses. Livin' on a prayer.",
+          "earned": false,
+          "hidden": false,
+          "id": "halfway_there",
+          "name": "Halfway There",
+          "points": 40,
+          "progress": {
+            "current": 0,
+            "target": 5000000
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "into_the_void",
+          "name": "???",
+          "points": 25
+        },
+        {
+          "category": "exploration",
+          "description": "Complete 25,000 jumps between systems.",
+          "earned": false,
+          "hidden": false,
+          "id": "jump_master",
+          "name": "Jump Master",
+          "points": 20,
+          "progress": {
+            "current": 103,
+            "target": 25000
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Traverse 25 wormholes.",
+          "earned": false,
+          "hidden": false,
+          "id": "threshold_crosser",
+          "name": "Threshold Crosser",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 25
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Visit 25 distinct star systems.",
+          "earned": false,
+          "hidden": false,
+          "id": "voyager_i",
+          "name": "Voyager I",
+          "points": 10,
+          "progress": {
+            "current": 13,
+            "target": 25
+          }
+        },
+        {
+          "category": "exploration",
+          "description": "Visit 250 distinct star systems.",
+          "earned": false,
+          "hidden": false,
+          "id": "voyager_ii",
+          "name": "Voyager II",
+          "points": 25,
+          "progress": {
+            "current": 13,
+            "target": 250
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Craft 10,000 items.",
+          "earned": false,
+          "hidden": false,
+          "id": "artisan",
+          "name": "Artisan",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 10000
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Build 10 facilities.",
+          "earned": false,
+          "hidden": false,
+          "id": "industrialist",
+          "name": "Industrialist",
+          "points": 30,
+          "progress": {
+            "current": 0,
+            "target": 10
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Craft 10 different dishes.",
+          "earned": false,
+          "hidden": false,
+          "id": "line_cook",
+          "name": "Line Cook",
+          "points": 15,
+          "progress": {
+            "current": 0,
+            "target": 10
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Mine 10,000 units of ore.",
+          "earned": false,
+          "hidden": false,
+          "id": "prospector_i",
+          "name": "Prospector I",
+          "points": 10,
+          "progress": {
+            "current": 246,
+            "target": 10000
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Mine 250,000 units of ore.",
+          "earned": false,
+          "hidden": false,
+          "id": "prospector_ii",
+          "name": "Prospector II",
+          "points": 20,
+          "progress": {
+            "current": 246,
+            "target": 250000
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Mine 5,000,000 units of ore.",
+          "earned": false,
+          "hidden": false,
+          "id": "prospector_iii",
+          "name": "Prospector III",
+          "points": 40,
+          "progress": {
+            "current": 246,
+            "target": 5000000
+          }
+        },
+        {
+          "category": "industry",
+          "description": "Sell 200 wrecks.",
+          "earned": false,
+          "hidden": false,
+          "id": "scrap_magnate",
+          "name": "Scrap Magnate",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 200
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 25 in Deep Core Mining and discover 5 deep-core sites.",
+          "earned": false,
+          "hidden": false,
+          "id": "deep_core_savant",
+          "name": "Into the Deep",
+          "points": 30
+        },
+        {
+          "category": "mastery",
+          "description": "Cook every dish in the galaxy at least once — the whole galley repertoire, from a griddle of frontier hash to Molt Leviathan bisque.",
+          "earned": false,
+          "hidden": false,
+          "id": "galactic_gastronome",
+          "name": "Galactic Gastronome",
+          "points": 50,
+          "progress": {
+            "current": 0,
+            "target": 25
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "grandmaster",
+          "name": "???",
+          "points": 60
+        },
+        {
+          "category": "mastery",
+          "description": "Brew, distill, and bottle every form of alcohol you can make yourself — the whole bar's worth, in your own still.",
+          "earned": false,
+          "hidden": false,
+          "id": "master_distiller",
+          "name": "Master Distiller",
+          "points": 40,
+          "progress": {
+            "current": 0,
+            "target": 14
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 50 in Engineering.",
+          "earned": false,
+          "hidden": false,
+          "id": "master_engineer",
+          "name": "Master Engineer",
+          "points": 25,
+          "progress": {
+            "current": 0,
+            "target": 50
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 50 in Exploration.",
+          "earned": false,
+          "hidden": false,
+          "id": "master_explorer",
+          "name": "Master Explorer",
+          "points": 25,
+          "progress": {
+            "current": 1,
+            "target": 50
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 50 in Mining.",
+          "earned": false,
+          "hidden": false,
+          "id": "master_miner",
+          "name": "Master Miner",
+          "points": 25,
+          "progress": {
+            "current": 2,
+            "target": 50
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 50 in Salvaging.",
+          "earned": false,
+          "hidden": false,
+          "id": "master_salvager",
+          "name": "Master Salvager",
+          "points": 25,
+          "progress": {
+            "current": 0,
+            "target": 50
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 50 in Trading.",
+          "earned": false,
+          "hidden": false,
+          "id": "master_trader",
+          "name": "Master Trader",
+          "points": 25,
+          "progress": {
+            "current": 0,
+            "target": 50
+          }
+        },
+        {
+          "category": "mastery",
+          "description": "Prove broad competence: reach level 20 in any two of mining, trading, combat (weapons), or exploration.",
+          "earned": false,
+          "hidden": false,
+          "id": "renaissance_pilot",
+          "name": "Renaissance Pilot",
+          "points": 30
+        },
+        {
+          "category": "mastery",
+          "description": "Reach level 50 in Weapons.",
+          "earned": false,
+          "hidden": false,
+          "id": "weapons_master",
+          "name": "Weapons Master",
+          "points": 25,
+          "progress": {
+            "current": 0,
+            "target": 50
+          }
+        },
+        {
+          "category": "progression",
+          "description": "Write 25 captain's log entries.",
+          "earned": false,
+          "hidden": false,
+          "id": "chronicler",
+          "name": "Chronicler",
+          "points": 15,
+          "progress": {
+            "current": 5,
+            "target": 25
+          }
+        },
+        {
+          "category": "progression",
+          "description": "Craft your first item.",
+          "earned": false,
+          "hidden": false,
+          "id": "first_refinement",
+          "name": "First Refinement",
+          "points": 5,
+          "progress": {
+            "current": 0,
+            "target": 1
+          }
+        },
+        {
+          "category": "salvage",
+          "description": "Loot 500 items from wrecks.",
+          "earned": false,
+          "hidden": false,
+          "id": "breakers_yard",
+          "name": "Breaker's Yard",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 500
+          }
+        },
+        {
+          "category": "salvage",
+          "description": "Loot your first item from a wreck.",
+          "earned": false,
+          "hidden": false,
+          "id": "first_salvage",
+          "name": "First Salvage",
+          "points": 5,
+          "progress": {
+            "current": 0,
+            "target": 1
+          }
+        },
+        {
+          "category": "smuggling",
+          "description": "Evade customs inspections 25 times.",
+          "earned": false,
+          "hidden": false,
+          "id": "ghost_runner",
+          "name": "Ghost Runner",
+          "points": 20,
+          "progress": {
+            "current": 0,
+            "target": 25
+          }
+        },
+        {
+          "category": "smuggling",
+          "description": "Sell 500 units of contraband and reach level 30 Smuggling.",
+          "earned": false,
+          "hidden": false,
+          "id": "kingpin",
+          "name": "Kingpin",
+          "points": 35
+        },
+        {
+          "category": "smuggling",
+          "description": "???",
+          "earned": false,
+          "hidden": true,
+          "id": "out_of_the_frying_pan",
+          "name": "???",
+          "points": 40
+        },
+        {
+          "category": "smuggling",
+          "description": "Evade 200 customs inspections.",
+          "earned": false,
+          "hidden": false,
+          "id": "untouchable_smuggler",
+          "name": "Smoke & Mirrors",
+          "points": 30,
+          "progress": {
+            "current": 0,
+            "target": 200
+          }
+        },
+        {
+          "category": "social",
+          "description": "Repair other players' ships 20 times.",
+          "earned": false,
+          "hidden": false,
+          "id": "field_medic",
+          "name": "Field Medic",
+          "points": 15,
+          "progress": {
+            "current": 0,
+            "target": 20
+          }
+        },
+        {
+          "category": "social",
+          "description": "Repair another captain's ship for the first time.",
+          "earned": false,
+          "hidden": false,
+          "id": "first_aid",
+          "name": "First Aid",
+          "points": 5,
+          "progress": {
+            "current": 0,
+            "target": 1
+          }
+        },
+        {
+          "category": "social",
+          "description": "Refuel other players' ships 20 times.",
+          "earned": false,
+          "hidden": false,
+          "id": "good_samaritan",
+          "name": "Good Samaritan",
+          "points": 15,
+          "progress": {
+            "current": 0,
+            "target": 20
+          }
+        },
+        {
+          "category": "social",
+          "description": "Refuel another captain's ship for the first time.",
+          "earned": false,
+          "hidden": false,
+          "id": "helping_hand",
+          "name": "Helping Hand",
+          "points": 5,
+          "progress": {
+            "current": 0,
+            "target": 1
+          }
+        },
+        {
+          "category": "social",
+          "description": "Gift a total of 10,000,000 credits to other players.",
+          "earned": false,
+          "hidden": false,
+          "id": "philanthropist",
+          "name": "Philanthropist",
+          "points": 40,
+          "progress": {
+            "current": 0,
+            "target": 10000000
+          }
+        }
+      ],
+      "message": "Your achievements. Locked entries show progress where it applies; '???' entries are secret until earned.",
+      "summary": {
+        "earned": 3,
+        "points": 20,
+        "total": 62
+      }
+    },
+    "notifications": null,
+    "session": {
+      "id": "REDACTED",
+      "player_id": "[REDACTED]",
+      "created_at": "2026-07-12T16:28:13.160427681Z",
+      "expires_at": "2026-07-12T16:58:13.432564974Z"
+    }
+  },
+  "get_active_missions": {
+    "result": "No active missions.",
+    "structuredContent": {
+      "message": "Active missions",
+      "missions": {
+        "active": [],
+        "max_missions": 5
+      }
+    },
+    "notifications": null,
+    "session": {
+      "id": "REDACTED",
+      "player_id": "[REDACTED]",
+      "created_at": "2026-07-12T16:28:13.160427681Z",
+      "expires_at": "2026-07-12T16:58:13.499401131Z"
+    }
+  },
+  "completed_missions": {
+    "result": "No completed missions.",
+    "structuredContent": {
+      "missions": [],
+      "total_count": 0
+    },
+    "notifications": null,
+    "session": {
+      "id": "REDACTED",
+      "player_id": "[REDACTED]",
+      "created_at": "2026-07-12T16:28:13.160427681Z",
+      "expires_at": "2026-07-12T16:58:13.565671257Z"
+    }
+  },
+  "get_system": {
+    "result": "System: Moonshadow (moonshadow) | Empire:  | Security: Lawless (no police protection)\nPOIs (6):\nid\tname\ttype\tclass\tbase\tonline\nmoonshadow_star\tMoonshadow Star\tsun\tM2V\t\t0\nmoonshadow_i\tMoonshadow I\tplanet\tscorched\t\t0\nmoonshadow_ii\tMoonshadow II\tplanet\tarid\t\t0\nmoonshadow_iii\tMoonshadow III\tplanet\tterran\t\t1\nmoonshadow_iv\tMoonshadow IV\tplanet\tjovian\t\t0\nmoonshadow_gas_plume\tMoonshadow Gas Plume\tgas_cloud\tmolecular_cloud\t\t0\nConnections (6):\nsystem_id\tname\tdistance\nfafnir\tFafnir\t202 GU\nross_128\tRoss 128\t374 GU\nheze\tHeze\t431 GU\ngsc_0032\tGSC-0032\t442 GU\nravensbrook\tRavensbrook\t575 GU\n55_cancri\t55 Cancri\t708 GU\n",
+    "structuredContent": {
+      "action": "get_system",
+      "poi": {
+        "class": "terran",
+        "fuel_reserve": 0,
+        "has_base": false,
+        "id": "moonshadow_iii",
+        "name": "Moonshadow III",
+        "online": 1,
+        "position": {
+          "x": 3,
+          "y": -0.3
+        },
+        "type": "planet"
+      },
+      "security_status": "Lawless (no police protection)",
+      "system": {
+        "connections": [
+          {
+            "distance": 202,
+            "name": "Fafnir",
+            "system_id": "fafnir"
+          },
+          {
+            "distance": 374,
+            "name": "Ross 128",
+            "system_id": "ross_128"
+          },
+          {
+            "distance": 431,
+            "name": "Heze",
+            "system_id": "heze"
+          },
+          {
+            "distance": 442,
+            "name": "GSC-0032",
+            "system_id": "gsc_0032"
+          },
+          {
+            "distance": 575,
+            "name": "Ravensbrook",
+            "system_id": "ravensbrook"
+          },
+          {
+            "distance": 708,
+            "name": "55 Cancri",
+            "system_id": "55_cancri"
+          }
+        ],
+        "id": "moonshadow",
+        "is_stronghold": false,
+        "name": "Moonshadow",
+        "pois": [
+          {
+            "class": "M2V",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "moonshadow_star",
+            "name": "Moonshadow Star",
+            "online": 0,
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "sun"
+          },
+          {
+            "class": "scorched",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "moonshadow_i",
+            "name": "Moonshadow I",
+            "online": 0,
+            "position": {
+              "x": 1,
+              "y": 0
+            },
+            "type": "planet"
+          },
+          {
+            "class": "arid",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "moonshadow_ii",
+            "name": "Moonshadow II",
+            "online": 0,
+            "position": {
+              "x": 2,
+              "y": -0.3
+            },
+            "type": "planet"
+          },
+          {
+            "class": "terran",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "moonshadow_iii",
+            "name": "Moonshadow III",
+            "online": 1,
+            "position": {
+              "x": 3,
+              "y": -0.3
+            },
+            "type": "planet"
+          },
+          {
+            "class": "jovian",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "moonshadow_iv",
+            "name": "Moonshadow IV",
+            "online": 0,
+            "position": {
+              "x": 4,
+              "y": 0
+            },
+            "type": "planet"
+          },
+          {
+            "class": "molecular_cloud",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "moonshadow_gas_plume",
+            "name": "Moonshadow Gas Plume",
+            "online": 0,
+            "position": {
+              "x": 4.9,
+              "y": -1.5
+            },
+            "type": "gas_cloud"
+          }
+        ],
+        "police_level": 0,
+        "security_status": "Lawless (no police protection)"
+      }
+    },
+    "notifications": null,
+    "session": {
+      "id": "REDACTED",
+      "player_id": "[REDACTED]",
+      "created_at": "2026-07-12T16:28:13.160427681Z",
+      "expires_at": "2026-07-12T16:58:13.631324154Z"
+    }
+  }
+}

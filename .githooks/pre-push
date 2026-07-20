@@ -1,0 +1,13 @@
+#!/bin/sh
+# Blocks direct pushes to main. All changes reach main via pull request
+# (merged server-side with `gh pr merge`), so a local push to main is
+# always a process violation. GitHub-side enforcement needs Pro on private
+# repos; this hook is the free, deterministic substitute.
+# One-time setup per clone: git config core.hooksPath .githooks
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "pre-push: direct push to main blocked - open a PR (gh pr create) and merge it (gh pr merge) instead." >&2
+    exit 1
+  fi
+done
+exit 0

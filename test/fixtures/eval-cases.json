@@ -1,0 +1,4471 @@
+[
+  {
+    "id": "sm9-1-full-hold-no-station",
+    "note": "SM-9 (2026-07-14, issue #240 RESULT comment): Qwen3-30B-A3B-Instruct-2507 on the live pilot. Blocked wake, hold FULL, no POI in the system marked [station]. Recorded plan mines into the full hold and docks where nothing is dockable. State shape mirrors a real get_system capture (test/fixtures/spacemolt-probe-2026-07-12.json: system.pois[].has_base / type, connections[].system_id).",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "Cargo hold full (100/100)"
+      },
+      "statusSummary": "credits 17306, fuel 62/100, hull 100/100, cargo 100/100, undocked",
+      "recentEvents": [
+        "Mine",
+        "Mine",
+        "Mine"
+      ],
+      "surroundings": {
+        "systemId": "bunda",
+        "systemName": "Bunda",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "bunda_star",
+            "name": "Bunda Star",
+            "type": "sun",
+            "class": "K1V"
+          },
+          {
+            "id": "bunda_belt",
+            "name": "Bunda Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "titanium_ore",
+              "palladium_ore"
+            ]
+          },
+          {
+            "id": "bunda_nebula",
+            "name": "Bunda Nebula",
+            "type": "gas_cloud",
+            "class": "molecular_cloud"
+          },
+          {
+            "id": "bunda_i",
+            "name": "Bunda I",
+            "type": "planet",
+            "class": "arid"
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "bunda_belt",
+          "name": "Bunda Belt",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 100,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "titanium_ore",
+            "name": "Titanium Ore",
+            "quantity": 72
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 28
+          }
+        ]
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine titanium at Bunda Belt and dock to sell the ore",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "bunda_belt"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {}
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "sm9-2-invented-system-id",
+    "note": "SM-9, second blocked wake on the same state. Recorded plan travels to trappist_prime_belt -- a system id that does not exist ('Target system not found'). Goal is IDENTICAL to sm9-1: this is the replan-instead-of-adapt thrash.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "\"You must be at a base to dock\""
+      },
+      "statusSummary": "credits 17306, fuel 62/100, hull 100/100, cargo 100/100, undocked",
+      "recentEvents": [
+        "Dock",
+        "Mine",
+        "Dock"
+      ],
+      "previousGoal": {
+        "goal": "Mine titanium at Bunda Belt and dock to sell the ore",
+        "outcome": "blocked"
+      },
+      "surroundings": {
+        "systemId": "bunda",
+        "systemName": "Bunda",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "bunda_star",
+            "name": "Bunda Star",
+            "type": "sun",
+            "class": "K1V"
+          },
+          {
+            "id": "bunda_belt",
+            "name": "Bunda Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "titanium_ore",
+              "palladium_ore"
+            ]
+          },
+          {
+            "id": "bunda_nebula",
+            "name": "Bunda Nebula",
+            "type": "gas_cloud",
+            "class": "molecular_cloud"
+          },
+          {
+            "id": "bunda_i",
+            "name": "Bunda I",
+            "type": "planet",
+            "class": "arid"
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "bunda_belt",
+          "name": "Bunda Belt",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 100,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "titanium_ore",
+            "name": "Titanium Ore",
+            "quantity": 72
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 28
+          }
+        ]
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine titanium at Bunda Belt and dock to sell the ore",
+      "steps": [
+        {
+          "action": "travel_to",
+          "params": {
+            "system_id": "trappist_prime_belt"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "sm9-3-mine-wrong-extraction",
+    "note": "SM-9, third blocked wake, same goal a THIRD time. Recorded plan mines at a gas_cloud POI with only a mining laser fitted -- the #253 class the digest's [gas -- needs gas_harvester] marker exists to prevent -- into a hold that is already full.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "\"Target system not found\""
+      },
+      "statusSummary": "credits 17306, fuel 62/100, hull 100/100, cargo 100/100, undocked",
+      "recentEvents": [
+        "Travel to POI",
+        "Dock",
+        "Travel to POI"
+      ],
+      "previousGoal": {
+        "goal": "Mine titanium at Bunda Belt and dock to sell the ore",
+        "outcome": "blocked"
+      },
+      "surroundings": {
+        "systemId": "bunda",
+        "systemName": "Bunda",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "bunda_star",
+            "name": "Bunda Star",
+            "type": "sun",
+            "class": "K1V"
+          },
+          {
+            "id": "bunda_belt",
+            "name": "Bunda Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "titanium_ore",
+              "palladium_ore"
+            ]
+          },
+          {
+            "id": "bunda_nebula",
+            "name": "Bunda Nebula",
+            "type": "gas_cloud",
+            "class": "molecular_cloud"
+          },
+          {
+            "id": "bunda_i",
+            "name": "Bunda I",
+            "type": "planet",
+            "class": "arid"
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "bunda_belt",
+          "name": "Bunda Belt",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 100,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "titanium_ore",
+            "name": "Titanium Ore",
+            "quantity": 72
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 28
+          }
+        ]
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine titanium at Bunda Belt and dock to sell the ore",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "bunda_nebula"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prose-item-id-fuel-cells",
+    "note": "The #179/#152 class: the game's own refuel error prose says 'Buy fuel cells', the catalog id is fuel_cell (singular). 86/86 lifetime buy failures. Docked, low fuel, hold has room.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "low_fuel",
+        "detail": "18/100"
+      },
+      "statusSummary": "credits 17306, fuel 18/100, hull 100/100, cargo 40/100, docked",
+      "recentEvents": [
+        "Dock",
+        "Sell items"
+      ],
+      "lowFuel": true,
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "bunda",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "market_prime_station",
+            "name": "Market Prime Station",
+            "type": "station",
+            "hasBase": true
+          },
+          {
+            "id": "market_prime_belt",
+            "name": "Market Prime Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "iron_ore"
+            ]
+          }
+        ],
+        "dockedAt": "market_prime_station",
+        "currentPoi": {
+          "id": "market_prime_station",
+          "name": "Market Prime Station",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 40,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "titanium_ore",
+            "name": "Titanium Ore",
+            "quantity": 40
+          }
+        ]
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Refuel before the next mining run",
+      "steps": [
+        {
+          "action": "buy",
+          "params": {
+            "id": "fuel_cells",
+            "quantity": 4
+          }
+        },
+        {
+          "action": "refuel",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "invented-action-and-bad-params",
+    "note": "The unconstrained-output class recorded during the #240 workstation setup: the local model emitted 'Sell cargo' where the registry action is `sell`, and a sell with no quantity. Same docked state as the fuel case.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 17306, fuel 90/100, hull 100/100, cargo 40/100, docked",
+      "recentEvents": [
+        "Dock"
+      ],
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "bunda",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "market_prime_station",
+            "name": "Market Prime Station",
+            "type": "station",
+            "hasBase": true
+          },
+          {
+            "id": "market_prime_belt",
+            "name": "Market Prime Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "iron_ore"
+            ]
+          }
+        ],
+        "dockedAt": "market_prime_station",
+        "currentPoi": {
+          "id": "market_prime_station",
+          "name": "Market Prime Station",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 40,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "titanium_ore",
+            "name": "Titanium Ore",
+            "quantity": 40
+          }
+        ]
+      },
+      "marketRows": [
+        {
+          "itemId": "titanium_ore",
+          "bestBuy": 45,
+          "buyQty": 500
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Sell the titanium ore",
+      "steps": [
+        {
+          "action": "Sell cargo",
+          "params": {
+            "item": "titanium_ore"
+          }
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "titanium_ore"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "maiden-invented-poi",
+    "note": "The maiden-flight class the digest's POI list exists to prevent: the planner invented the POI id 'alpha_mining' and travelled to it (travel resolves POIs in THIS system, so an id absent from the system's POI list is a guaranteed error). Empty hold, mining laser fitted -- so the ONLY thing wrong with this plan is the id, and known_poi_ref is the only scorer that can see it.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "no_plan"
+      },
+      "statusSummary": "credits 1200, fuel 95/100, hull 100/100, cargo 0/100, undocked",
+      "recentEvents": [
+        "Undock"
+      ],
+      "surroundings": {
+        "systemId": "bunda",
+        "systemName": "Bunda",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "bunda_star",
+            "name": "Bunda Star",
+            "type": "sun",
+            "class": "K1V"
+          },
+          {
+            "id": "bunda_belt",
+            "name": "Bunda Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "titanium_ore",
+              "palladium_ore"
+            ]
+          },
+          {
+            "id": "bunda_i",
+            "name": "Bunda I",
+            "type": "planet",
+            "class": "arid"
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "bunda_i",
+          "name": "Bunda I",
+          "type": "planet"
+        }
+      },
+      "cargo": {
+        "used": 0,
+        "capacity": 100,
+        "items": []
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Head to the alpha mining site and fill the hold",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "alpha_mining"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  },
+  {
+    "id": "good-sonnet-sell-docked",
+    "note": "The known-good control (SM-9's A/B line: the first sonnet plan after the revert). Docked at a station with a buyer for the held ore. No scorer may FAIL this plan -- a false positive here would make the eval worse than useless.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 17306, fuel 90/100, hull 100/100, cargo 100/100, docked",
+      "recentEvents": [
+        "Travel to POI",
+        "Dock"
+      ],
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "bunda",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "market_prime_station",
+            "name": "Market Prime Station",
+            "type": "station",
+            "hasBase": true
+          },
+          {
+            "id": "market_prime_belt",
+            "name": "Market Prime Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "iron_ore"
+            ]
+          }
+        ],
+        "dockedAt": "market_prime_station",
+        "currentPoi": {
+          "id": "market_prime_station",
+          "name": "Market Prime Station",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 100,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "titanium_ore",
+            "name": "Titanium Ore",
+            "quantity": 72
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 28
+          }
+        ]
+      },
+      "marketRows": [
+        {
+          "itemId": "titanium_ore",
+          "bestBuy": 45,
+          "buyQty": 500
+        },
+        {
+          "itemId": "palladium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Hold is full at a station that buys titanium: sell the titanium, list the palladium nobody here buys, then refuel",
+      "steps": [
+        {
+          "action": "sell",
+          "params": {
+            "id": "titanium_ore",
+            "quantity": 72
+          }
+        },
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "palladium_ore",
+            "quantity": 28
+          }
+        },
+        {
+          "action": "refuel",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "good-sonnet-mine-belt",
+    "note": "The known-good control for the POSITIVE checks (the sell control above mostly abstains). Empty hold, mining laser fitted, an asteroid_belt POI in system: mining here is correct, and every location/extraction scorer must PASS rather than abstain.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 21100, fuel 88/100, hull 100/100, cargo 0/100, undocked",
+      "recentEvents": [
+        "Sell items",
+        "Undock"
+      ],
+      "surroundings": {
+        "systemId": "bunda",
+        "systemName": "Bunda",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "bunda_star",
+            "name": "Bunda Star",
+            "type": "sun",
+            "class": "K1V"
+          },
+          {
+            "id": "bunda_belt",
+            "name": "Bunda Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "titanium_ore",
+              "palladium_ore"
+            ]
+          },
+          {
+            "id": "bunda_nebula",
+            "name": "Bunda Nebula",
+            "type": "gas_cloud",
+            "class": "molecular_cloud"
+          },
+          {
+            "id": "bunda_i",
+            "name": "Bunda I",
+            "type": "planet",
+            "class": "arid"
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "bunda_i",
+          "name": "Bunda I",
+          "type": "planet"
+        }
+      },
+      "cargo": {
+        "used": 0,
+        "capacity": 100,
+        "items": []
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Fill the hold with titanium at Bunda Belt, then run it to Market Prime",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "bunda_belt"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        },
+        {
+          "action": "travel_to",
+          "params": {
+            "system_id": "market_prime"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "cargo-incoherent-sell-before-mine",
+    "note": "Issue #268 (found by the PR #267 review): a plan valid step-by-step but incoherent as a SEQUENCE. The hold holds only palladium_ore, yet step 0 sells titanium_ore -- an item the hold never held -- BEFORE any mine. Every other scorer passes (sell is a real action with valid params, titanium_ore is a catalog item, the belt is a real POI its laser can work, the hold has room): cargo_coherence is the ONLY scorer that can see it, and removing it lets this plan score clean. That is the ablation.",
+    "ctx": {
+      "persona": "Solarian miner",
+      "goals": [
+        "build up credits by mining and selling ore"
+      ],
+      "wake": {
+        "reason": "no_plan"
+      },
+      "statusSummary": "credits 900, fuel 88/100, hull 100/100, cargo 20/100, undocked",
+      "recentEvents": [
+        "Undock"
+      ],
+      "surroundings": {
+        "systemId": "bunda",
+        "systemName": "Bunda",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "steadyburn"
+        ],
+        "pois": [
+          {
+            "id": "bunda_star",
+            "name": "Bunda Star",
+            "type": "sun",
+            "class": "K1V"
+          },
+          {
+            "id": "bunda_belt",
+            "name": "Bunda Belt",
+            "type": "asteroid_belt",
+            "resources": [
+              "titanium_ore",
+              "palladium_ore"
+            ]
+          },
+          {
+            "id": "bunda_i",
+            "name": "Bunda I",
+            "type": "planet",
+            "class": "arid"
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "bunda_i",
+          "name": "Bunda I",
+          "type": "planet"
+        }
+      },
+      "cargo": {
+        "used": 20,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 20
+          }
+        ]
+      },
+      "shipFit": {
+        "cpuUsed": 15,
+        "cpuCapacity": 40,
+        "powerUsed": 10,
+        "powerCapacity": 30,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "slot": "utility",
+          "name": "Mining Laser I",
+          "miningPower": 10
+        }
+      ]
+    },
+    "groundTruth": {
+      "knownSystemIds": [
+        "bunda",
+        "gold_run",
+        "market_prime",
+        "steadyburn"
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Sell the titanium for credits, then head to the belt and refill the hold",
+      "steps": [
+        {
+          "action": "sell",
+          "params": {
+            "id": "titanium_ore",
+            "quantity": 50
+          }
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "bunda_belt"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-38558-heartbeat",
+    "note": "harvested from the production pilot (event 38558, 2026-07-16T17:32:10.933Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. MILESTONE GOAL (operator-confirmed, two steps): (1) buy a Deep Core Extractor Mk I (~3,000cr, item deep_core_extractor_mk_i) as soon as you find one for sale - it triples mining power and unlocks rare-ore veins like palladium; (2) then raise mining skill to 4 and save ~8,000cr for a Mining Laser III (mining_laser_iii) - that purchase is the milestone. Prefer missions for income over selling common ore at ~8cr/unit. Work the goal steadily alongside missions.\n",
+      "goals": [],
+      "wake": {
+        "reason": "heartbeat"
+      },
+      "statusSummary": "credits 171477, fuel 58/130, hull 95/95, cargo 86/100, undocked",
+      "recentEvents": [
+        "action",
+        "ledger",
+        "action",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 86,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 25
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 16
+          },
+          {
+            "itemId": "gold_ore",
+            "name": "Gold Ore",
+            "quantity": 18
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 27
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Free cargo of unsellable ore via exchange listings and jettison, then mine Titanium Ore at Gold Run Mineral Fields for the active contract",
+        "outcome": "superseded"
+      },
+      "chatMessages": [],
+      "activeMissionsText": "Active missions (1/5):\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 7523 ticks\n",
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Free cargo space by selling ore at Gold Run Extraction Hub, then mine Titanium Ore at Gold Run Mineral Fields to progress the active Titanium Extraction Contract",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_extraction_hub"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "palladium_ore",
+            "quantity": 25
+          }
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "gold_ore",
+            "quantity": 18
+          }
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "vanadium_ore",
+            "quantity": 27
+          }
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "carbon_ore",
+            "quantity": 16
+          }
+        },
+        {
+          "action": "undock",
+          "params": {}
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_mineral_fields"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full",
+          "repeat": 20
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-38565-blocked",
+    "note": "harvested from the production pilot (event 38565, 2026-07-16T17:33:14.280Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. MILESTONE GOAL (operator-confirmed, two steps): (1) buy a Deep Core Extractor Mk I (~3,000cr, item deep_core_extractor_mk_i) as soon as you find one for sale - it triples mining power and unlocks rare-ore veins like palladium; (2) then raise mining skill to 4 and save ~8,000cr for a Mining Laser III (mining_laser_iii) - that purchase is the milestone. Prefer missions for income over selling common ore at ~8cr/unit. Work the goal steadily alongside missions.\n",
+      "goals": [],
+      "wake": {
+        "reason": "blocked",
+        "detail": "Sold 0 Palladium Ore for 0cr. 25 unsold (no buyers)."
+      },
+      "statusSummary": "credits 171477, fuel 57/130, hull 95/95, cargo 86/100, docked",
+      "recentEvents": [
+        "action",
+        "action",
+        "action",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "gold_run_extraction_hub",
+        "currentPoi": {
+          "id": "gold_run_extraction_hub",
+          "name": "Gold Run Extraction Hub",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 86,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 25
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 16
+          },
+          {
+            "itemId": "gold_ore",
+            "name": "Gold Ore",
+            "quantity": 18
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 27
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Free cargo space by selling ore at Gold Run Extraction Hub, then mine Titanium Ore at Gold Run Mineral Fields to progress the active Titanium Extraction Contract",
+        "outcome": "blocked"
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Gold Run Extraction Hub (12):\n--- Pirate Bounty [pirate_bounty] (combat, difficulty 2) ---\nHunt down a pirate threatening local shipping lanes. Any pirate will do - the station pays for confirmed kills.\nFrom: Bounty Clerk Frost (Station Security Office)\n\"We've got pirates disrupting trade in the region and the station is posting bounties. Take one out and bring proof. Use the `attack` command when you find one - pirates tend to spawn in lawless systems with low police presence. Fair warning: they shoot back, so watch your hull.\"\nRewards: 2,000cr, +20 weapons XP\nObjectives:\n  - Kill 1 pirate\n--- Deep Core Prospecting [deep_core_prospecting] (mining, difficulty 5) ---\nForeman Voss has heard rumors of hidden mineral deposits deep in lawless space. He needs an experienced miner to help investigate.\nFrom: Foreman Voss (Deep Core Research Initiative)\n\"I've spent years studying geological survey data from the frontier, and I'm convinced there are massive mineral deposits hidden in lawless space — deposits too deep for standard scanners to detect. I need a veteran miner to help me prove it. Mine 20 units of platinum ore — I need the platinum for calibrating prototype detection equipment. You'll need advanced mining experience for this kind of work.\"\nRewards: 5,000cr, 10x exotic_matter, +15 mining XP, +25 deep_core_mining XP\nObjectives:\n  - Mine 20 units of Platinum Ore\nChain next: exotic_crystal_synthesis\n--- First Haul [first_haul] (equipment, difficulty 1) ---\nThe salva…",
+      "activeMissionsText": "Active missions (1/5):\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 7516 ticks\n",
+      "nearbyText": "At gold_run_extraction_hub — 7 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n0cc62eb85bf5dba6e2e04f940848c6fd\tILC Purser\tProspect (prospect)\tIRLC\t\tdocked\nd5a0aae2bf4ec9bf6934ff1233e8013f\tTau\tFutures (futures)\tORBK\t\tonline\n47040af580a9e5a343dc39fdaf61144d\tPike Market Bot 19\tProspect (prospect)\t\t\tdocked\n0057df5682749421c48604379d8787e7\tSacagawea\tFutures (futures)\tNOIR\t\tonline\nbf0458f50a20529e61be3ea4f91f19d4\tmarketbot_gold_run\tProspect (prospect)\t DB \t\tdocked\n4e4078fad295330cb11f018690e4a448\tMarket News Nebula\tProspector (prospector)\t\t\tdocked\n38ffb3ae1d72a1e8142e3359b8152584\tSarkazKingAmiya\tVenture (venture)\tSRKZ\t\tdocked\n(+20 offline players not listed; POI is busy.)\n",
+      "lowFuel": false,
+      "marketRows": [
+        {
+          "itemId": "carbon_ore",
+          "buyQty": 0
+        },
+        {
+          "itemId": "gold_ore",
+          "bestBuy": 50,
+          "buyQty": 1434
+        },
+        {
+          "itemId": "palladium_ore",
+          "buyQty": 0
+        },
+        {
+          "itemId": "vanadium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "12 ship(s) for sale at Gold Run Extraction Hub:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n80efb1b30402fc4222ecf54cfeaf7ca0\tFranchise\tT2\tCombat Support\t79,827cr\t175/175\t0\t[Station Manager: Gold Run Extraction Hub]\n7f95ca72b716543192316cf726f7c289\tArbitrage\tT2\tCovert\t71,565cr\t150/150\t2\t[Station Manager: Gold Run Extraction Hub]\nab65b4fc65d944b461083a493d84085c\tSurplus\tT2\tCommercial\t52,871cr\t185/185\t0\t[Station Manager: Gold Run Extraction Hub]\ne977a25bce63dafe3d1f01eb5596a471\tGas Tanker\tT3\tIndustrial\t178,879cr\t320/320\t3\t[Station Manager: Gold Run Extraction Hub]\n163d8ab68de3d136c450249022974b62\tBenefit\tT2\tSupport\t55,573cr\t160/160\t0\t[Station Manager: Gold Run Extraction Hub]\n215a2760a52d4210c02caed8b0573fe0\tBulk Terms\tT2\tCommercial\t41,949cr\t155/155\t1\t[Station Manager: Gold Run Extraction Hub]\n57c36bc6b7dc98ed5ed10305f44fd3a1\tProspectus\tT2\tExploration\t52,398cr\t140/140\t2\t[Station Manager: Gold Run Extraction Hub]\n5475c5d376c9476e8341149633266b79\tConsortium\tT2\tCivilian\t47,710cr\t170/170\t0\t[Station Manager: Gold Run Extraction Hub]\nfa1a6f862e01dbc60b270a313e80f84c\tBenefit\tT2\tSupport\t55,573cr\t160/160\t0\t[Station Manager: Gold Run Extraction Hub]\nb011f26af6f34d2bfe0a5846a7abffe6\tAppraisal\tT1\tIndustrial\t12,744cr\t85/85\t1\t[Station Manager: Gold Run Extraction Hub]\nab2f4e302231cde6d0128b169c24c7dd\tScaffold\tT3\tIndustrial\t549,397cr\t450/450\t0\t[Station Manager: Gold Run Extraction Hub]\n88c65760cff4118926863276ded97f48\tFloor Price\tT1\tCommercial\t10,161cr\t70/70\t1\t[Station Manager: Gold Run Extra…",
+      "marketInsightsText": "Trading insights at Gold Run Extraction Hub (trading skill 2):\npriority\tcategory\titem\titem_id\tinsight\n900\tsell_here\tGold Ore\tgold_ore\tYou have 18 Gold Ore — buy orders here at 50cr would fill all 18 for 900cr.\n50\torder_warning\tVanadium Ore\tvanadium_ore\tYour sell order for Vanadium Ore at 22cr is 2100% above the best ask of 1cr — unlikely to fill soon.\n50\torder_warning\tPlatinum Ore\tplatinum_ore\tYour sell order for Platinum Ore at 175cr is 600% above the best ask of 25cr — unlikely to fill soon.\n\nFound 3 trading insights at Gold Run Extraction Hub (trading level 2).\n"
+    },
+    "recordedPlan": {
+      "goal": "Sell gold ore here, clear low-value ore from cargo, list valuable palladium on the exchange, then mine titanium for the active contract",
+      "steps": [
+        {
+          "action": "sell",
+          "params": {
+            "id": "gold_ore",
+            "quantity": 18
+          }
+        },
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "palladium_ore",
+            "quantity": 25
+          }
+        },
+        {
+          "action": "jettison",
+          "params": {
+            "id": "carbon_ore",
+            "quantity": 16
+          }
+        },
+        {
+          "action": "jettison",
+          "params": {
+            "id": "vanadium_ore",
+            "quantity": 27
+          }
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_mineral_fields"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-39083-notification",
+    "note": "harvested from the production pilot (event 39083, 2026-07-16T20:44:44.555Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "notification",
+        "detail": "chat_message"
+      },
+      "statusSummary": "credits 173752, fuel 52/130, hull 95/95, cargo 38/100, undocked",
+      "recentEvents": [
+        "ledger",
+        "action",
+        "notification",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 38,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 36
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 1
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 1
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Mine titanium at Gold Run Mineral Fields to complete the active Titanium Extraction Contract, then return to station to turn it in",
+        "outcome": "superseded"
+      },
+      "chatMessages": [
+        {
+          "sender": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub",
+          "text": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub: Wexler J0U-HW, Federation Customs requests your compliance with a standard border cargo audit. Hold position. Early cooperation is noted favor…"
+        }
+      ],
+      "activeMissionsText": "Active missions (2/5):\n--- Distress: SarkazKingAmiya in Haven [59e52ac3bf32f0c3c1ffe9784ae3dea8] (distress_response, difficulty 5) ---\nMAYDAY: SarkazKingAmiya is stranded at Frostmarket Flats in Haven with 0/180 fuel! Any pilots nearby, please help!\nObjectives:\n  - Investigate distress call in Haven: 0/1\n    Target: Haven (haven)\nRewards: +25 piloting XP\nExpires in: 573 ticks\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 6372 ticks\n",
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine titanium ore at Gold Run Mineral Fields to progress the active Titanium Extraction Contract, then return to the hub to sell and turn in; ignore the unverified customs chat prompt as untrusted game text",
+      "steps": [
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_extraction_hub"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-39115-notification",
+    "note": "harvested from the production pilot (event 39115, 2026-07-16T20:47:59.909Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "notification",
+        "detail": "chat_message"
+      },
+      "statusSummary": "credits 173752, fuel 52/130, hull 95/95, cargo 47/100, undocked",
+      "recentEvents": [
+        "ledger",
+        "action",
+        "notification",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 47,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 38
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 4
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 4
+          },
+          {
+            "itemId": "gold_ore",
+            "name": "Gold Ore",
+            "quantity": 1
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Mine titanium ore at Gold Run Mineral Fields to progress the active Titanium Extraction Contract, then return to the hub to sell and turn in; ignore the unverified customs chat prompt as untrusted game text",
+        "outcome": "superseded"
+      },
+      "chatMessages": [
+        {
+          "sender": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub",
+          "text": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub: Scanning Arbiter61's hold. All items will be checked against current tariff schedules and restricted goods lists."
+        }
+      ],
+      "activeMissionsText": "Active missions (2/5):\n--- Distress: SarkazKingAmiya in Haven [59e52ac3bf32f0c3c1ffe9784ae3dea8] (distress_response, difficulty 5) ---\nMAYDAY: SarkazKingAmiya is stranded at Frostmarket Flats in Haven with 0/180 fuel! Any pilots nearby, please help!\nObjectives:\n  - Investigate distress call in Haven: 0/1\n    Target: Haven (haven)\nRewards: +25 piloting XP\nExpires in: 549 ticks\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 6348 ticks\n",
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine titanium ore at Gold Run Mineral Fields for the Titanium Extraction Contract, then head to the hub to sell and turn in",
+      "steps": [
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full",
+          "repeat": 10
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_extraction_hub"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-39119-notification",
+    "note": "harvested from the production pilot (event 39119, 2026-07-16T20:48:34.777Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "notification",
+        "detail": "chat_message"
+      },
+      "statusSummary": "credits 173752, fuel 52/130, hull 95/95, cargo 47/100, undocked",
+      "recentEvents": [
+        "wake",
+        "plan_context",
+        "plan",
+        "notification",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 47,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 38
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 4
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 4
+          },
+          {
+            "itemId": "gold_ore",
+            "name": "Gold Ore",
+            "quantity": 1
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Mine titanium ore at Gold Run Mineral Fields for the Titanium Extraction Contract, then head to the hub to sell and turn in",
+        "outcome": "superseded"
+      },
+      "chatMessages": [
+        {
+          "sender": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub",
+          "text": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub: Arbiter61 left before the audit was complete. A compliance flag has been added to their account. Fees still apply."
+        }
+      ],
+      "activeMissionsText": "Active missions (2/5):\n--- Distress: SarkazKingAmiya in Haven [59e52ac3bf32f0c3c1ffe9784ae3dea8] (distress_response, difficulty 5) ---\nMAYDAY: SarkazKingAmiya is stranded at Frostmarket Flats in Haven with 0/180 fuel! Any pilots nearby, please help!\nObjectives:\n  - Investigate distress call in Haven: 0/1\n    Target: Haven (haven)\nRewards: +25 piloting XP\nExpires in: 547 ticks\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 6346 ticks\n",
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 1 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\n1a2776b68c0b1f100dcc8a6bc0ef91fa\t[POLICE] Federation Patrol I - Gold Run Extraction Hub\tpolice\tnebula\t\tNTF-1ca3ac11 (overhead)\t\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine toward the Titanium Extraction Contract (0/20) at Gold Run Mineral Fields until cargo is full, then head to hub to sell/turn in",
+      "steps": [
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-39905-plan-done",
+    "note": "harvested from the production pilot (event 39905, 2026-07-16T22:18:39.276Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 186693, fuel 125/130, hull 95/95, cargo 100/100, undocked",
+      "recentEvents": [
+        "action",
+        "action",
+        "ledger",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 100,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 41
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 34
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 14
+          },
+          {
+            "itemId": "gold_ore",
+            "name": "Gold Ore",
+            "quantity": 11
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Sell gold ore here, jettison worthless vanadium ore to free cargo space, then mine at the local asteroid field to progress the Titanium Extraction Contract",
+        "outcome": "completed"
+      },
+      "chatMessages": [],
+      "activeMissionsText": "Active missions (2/5):\n--- Distress: SarkazKingAmiya in Haven [59e52ac3bf32f0c3c1ffe9784ae3dea8] (distress_response, difficulty 5) ---\nMAYDAY: SarkazKingAmiya is stranded at Frostmarket Flats in Haven with 0/180 fuel! Any pilots nearby, please help!\nObjectives:\n  - Investigate distress call in Haven: 0/1\n    Target: Haven (haven)\nRewards: +25 piloting XP\nExpires in: 7 ticks\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 5806 ticks\n",
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Dock at Gold Run Extraction Hub to sell mined ore and free cargo space for the titanium mining contract",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_extraction_hub"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "gold_ore",
+            "quantity": 11
+          }
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "palladium_ore",
+            "quantity": 41
+          }
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "carbon_ore",
+            "quantity": 34
+          }
+        },
+        {
+          "action": "jettison",
+          "params": {
+            "id": "vanadium_ore",
+            "quantity": 14
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-39914-blocked",
+    "note": "harvested from the production pilot (event 39914, 2026-07-16T22:20:31.020Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "Sold 0 Palladium Ore for 0cr. 41 unsold (no buyers)."
+      },
+      "statusSummary": "credits 187243, fuel 124/130, hull 95/95, cargo 89/100, docked",
+      "recentEvents": [
+        "action",
+        "ledger",
+        "action",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "gold_run_extraction_hub",
+        "currentPoi": {
+          "id": "gold_run_extraction_hub",
+          "name": "Gold Run Extraction Hub",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 89,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 41
+          },
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 34
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 14
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Dock at Gold Run Extraction Hub to sell mined ore and free cargo space for the titanium mining contract",
+        "outcome": "blocked"
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Gold Run Extraction Hub (11):\n--- Nebula Drift Hunt [nebula_drift_hunt] (combat, difficulty 2) ---\nRefineries want the crystallized bio-gas that sift-rays carry, and the only way to collect it is to put them down. Hunt the drifting grazers in gas clouds and nebulae.\nFrom: Station Bounty Board (Refinery Procurement Notice)\n\"POSTED: Sift-rays graze the gas clouds and nebulae and crystallize clean-burning gas in their gut. Hunt 6. They flee at the first shot, so close fast and hit hard. Mind the deep belts — the leviathans hunting out there are not prey.\"\nRewards: 1,300cr, +20 xenobiology XP, +10 weapons XP\nObjectives:\n  - Hunt 6 Sift-Rays\nRepeatable: yes\n--- Deep Space Cartography [deep_space_cartography] (exploration, difficulty 4) ---\nChart frontier systems to expand our knowledge of the galaxy's outer reaches.\nFrom: Dr. Yun-Seo Park (Galactic Survey Institute)\n\"The Institute needs fresh navigation data from frontier space. Visit The Crucible and Horizon systems - both are in regions where our data is sparse.\"\nRewards: 4,000cr, +40 exploration XP, +25 navigation XP\nObjectives:\n  - Visit The Crucible system\n    Target system: the_crucible\n  - Visit the Horizon system\n    Target system: horizon\n--- First Haul [first_haul] (equipment, difficulty 1) ---\nThe salvage yard foreman needs someone to tow in a wreck. A good way to learn the business.\nFrom: Yard Foreman Dak (Salvage Yard Supervisor)\n\"New to salvaging? Here's how it works. Wrecks are scattered across the galax…",
+      "activeMissionsText": "Active missions (1/5):\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 5796 ticks\n",
+      "nearbyText": "At gold_run_extraction_hub — 20 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nbf0458f50a20529e61be3ea4f91f19d4\tmarketbot_gold_run\tProspect (prospect)\t DB \t\tdocked\n8fe2fe371ace74afc265dadb4abf2445\tDouble Entry\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\ncc9334bbfb71a0f7aac83fb508431678\tILC Ferrule\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\n847e28256591c175ebc56c1ebe56ede6\tNumbered Account\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\nf17aaebb0d5197679be8adb6fe5d1df4\tShrinkage\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\n87200fc58eadb776877ad7f7cb60c364\tILC Burnish\tPrayer (prayer)\tIRLC\t\tdocked\n0cc62eb85bf5dba6e2e04f940848c6fd\tILC Purser\tProspect (prospect)\tIRLC\t\tdocked\n47040af580a9e5a343dc39fdaf61144d\tPike Market Bot 19\tProspect (prospect)\t\t\tdocked\n9136f92da4c19e64d36ff23c4129142a\tILC Quench\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\n88c8e445254cb494993d085f0f2d63e2\tILC Mandrel\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\n22977e6e85758611b904bc43a7e7cbf1\tILC Filament\tEnterprise (enterprise)\tIRLC\t\tdocked\n019746b860a191b832429eb3cb4c1507\tILC Mallet\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\n363037fa11b29f9741886681d3cdb008\tILC Relay\tEnterprise (enterprise)\tIRLC\t\tdocked\nd5a0aae2bf4ec9bf6934ff1233e8013f\tTau\tFutures (futures)\tORBK\t\tonline\n2cd52755c92280457109dd70e4d94562\tKit Mercer\tRunner (runner)\tPLGT\t\tonline\n2f625ba3c7dc2270e3d9ab6841ff71d1\tILC Gauge\tJunk Convoy (junk_convoy)\tIRLC\t\tdocked\n738f410bbc386dc1164c7ea70ff36950\tILC Sprocket\tJunk Convoy (junk_convoy)\tIRLC…",
+      "lowFuel": false,
+      "marketRows": [
+        {
+          "itemId": "carbon_ore",
+          "buyQty": 0
+        },
+        {
+          "itemId": "palladium_ore",
+          "buyQty": 0
+        },
+        {
+          "itemId": "vanadium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "12 ship(s) for sale at Gold Run Extraction Hub:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n80efb1b30402fc4222ecf54cfeaf7ca0\tFranchise\tT2\tCombat Support\t83,736cr\t175/175\t0\t[Station Manager: Gold Run Extraction Hub]\nab65b4fc65d944b461083a493d84085c\tSurplus\tT2\tCommercial\t55,160cr\t185/185\t0\t[Station Manager: Gold Run Extraction Hub]\n7f95ca72b716543192316cf726f7c289\tArbitrage\tT2\tCovert\t73,940cr\t150/150\t2\t[Station Manager: Gold Run Extraction Hub]\n163d8ab68de3d136c450249022974b62\tBenefit\tT2\tSupport\t58,379cr\t160/160\t0\t[Station Manager: Gold Run Extraction Hub]\ne977a25bce63dafe3d1f01eb5596a471\tGas Tanker\tT3\tIndustrial\t203,606cr\t320/320\t3\t[Station Manager: Gold Run Extraction Hub]\n57c36bc6b7dc98ed5ed10305f44fd3a1\tProspectus\tT2\tExploration\t54,459cr\t140/140\t2\t[Station Manager: Gold Run Extraction Hub]\n215a2760a52d4210c02caed8b0573fe0\tBulk Terms\tT2\tCommercial\t43,673cr\t155/155\t1\t[Station Manager: Gold Run Extraction Hub]\n5475c5d376c9476e8341149633266b79\tConsortium\tT2\tCivilian\t49,887cr\t170/170\t0\t[Station Manager: Gold Run Extraction Hub]\nfa1a6f862e01dbc60b270a313e80f84c\tBenefit\tT2\tSupport\t58,379cr\t160/160\t0\t[Station Manager: Gold Run Extraction Hub]\nb011f26af6f34d2bfe0a5846a7abffe6\tAppraisal\tT1\tIndustrial\t13,173cr\t85/85\t1\t[Station Manager: Gold Run Extraction Hub]\nab2f4e302231cde6d0128b169c24c7dd\tScaffold\tT3\tIndustrial\t565,398cr\t450/450\t0\t[Station Manager: Gold Run Extraction Hub]\n88c65760cff4118926863276ded97f48\tFloor Price\tT1\tCommercial\t10,614cr\t70/70\t1\t[Station Manager: Gold Run Extra…",
+      "marketInsightsText": "Trading insights at Gold Run Extraction Hub (trading skill 2):\npriority\tcategory\titem\titem_id\tinsight\n50\torder_warning\tVanadium Ore\tvanadium_ore\tYour sell order for Vanadium Ore at 22cr is 2100% above the best ask of 1cr — unlikely to fill soon.\n50\torder_warning\tPlatinum Ore\tplatinum_ore\tYour sell order for Platinum Ore at 175cr is 600% above the best ask of 25cr — unlikely to fill soon.\n\nFound 2 trading insights at Gold Run Extraction Hub (trading level 2).\n"
+    },
+    "recordedPlan": {
+      "goal": "Clear no-buyer ore from cargo via player exchange listings, then continue the titanium mining mission by heading to the local asteroid belt.",
+      "steps": [
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "palladium_ore",
+            "quantity": 41
+          }
+        },
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "carbon_ore",
+            "quantity": 34
+          }
+        },
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "vanadium_ore",
+            "quantity": 14,
+            "price_each": 1
+          }
+        },
+        {
+          "action": "undock",
+          "params": {}
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_mineral_fields"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-39932-notification",
+    "note": "harvested from the production pilot (event 39932, 2026-07-16T22:22:49.055Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "notification",
+        "detail": "chat_message"
+      },
+      "statusSummary": "credits 187117, fuel 122/130, hull 95/95, cargo 1/100, undocked",
+      "recentEvents": [
+        "ledger",
+        "action",
+        "notification",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 1,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 1
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Clear no-buyer ore from cargo via player exchange listings, then continue the titanium mining mission by heading to the local asteroid belt.",
+        "outcome": "superseded"
+      },
+      "chatMessages": [
+        {
+          "sender": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub",
+          "text": "[CUSTOMS] Federation Customs I - Gold Run Extraction Hub: ILC Dross declined to complete the inspection process. The Federation has logged this. Outstanding inspection fees will accrue interest."
+        }
+      ],
+      "activeMissionsText": "Active missions (1/5):\n--- Titanium Extraction Contract [1f3dd7cc7f7099dfdd5831c5120e8e30] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nObjectives:\n  - Mine 20 units of Titanium Ore: 0/20\nRewards: 3,500cr, +25 mining XP\nExpires in: 5780 ticks\n",
+      "activeMissions": [
+        {
+          "missionId": "1f3dd7cc7f7099dfdd5831c5120e8e30",
+          "expiresInTicks": 5780,
+          "percentComplete": 0,
+          "zeroProgressHours": 55.944651388888886,
+          "objectives": [
+            {
+              "type": "mine_resource",
+              "itemId": "titanium_ore",
+              "required": 20,
+              "current": 0,
+              "completed": false
+            }
+          ]
+        }
+      ],
+      "currentPoiDepositIds": [
+        "carbon_ore",
+        "vanadium_ore",
+        "palladium_ore",
+        "gold_ore"
+      ],
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Abandon unfulfillable titanium mission, mine valuable ore (palladium/gold/vanadium) at this belt, then dock at the extraction hub to sell and check for Deep Core Extractor / Mining Laser III availability",
+      "steps": [
+        {
+          "action": "abandon_mission",
+          "params": {
+            "id": "1f3dd7cc7f7099dfdd5831c5120e8e30"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        },
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_extraction_hub"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40208-heartbeat",
+    "note": "harvested from the production pilot (event 40208, 2026-07-16T22:53:06.173Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "heartbeat"
+      },
+      "statusSummary": "credits 187117, fuel 122/130, hull 95/95, cargo 91/100, undocked",
+      "recentEvents": [
+        "action",
+        "action",
+        "ledger",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "gold_run",
+        "systemName": "Gold Run",
+        "connections": [
+          "cargo_lanes",
+          "market_prime",
+          "bunda",
+          "copernicus",
+          "wealth_lane"
+        ],
+        "pois": [
+          {
+            "id": "aurelia",
+            "name": "Aurelia",
+            "type": "sun",
+            "class": "K3V",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_i",
+            "name": "Gold Run I",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_ii",
+            "name": "Gold Run II",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iii",
+            "name": "Gold Run III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_iv",
+            "name": "Gold Run IV",
+            "type": "planet",
+            "class": "jovian",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_v",
+            "name": "Gold Run V",
+            "type": "planet",
+            "class": "glacial",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "metallic",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_cryobelt",
+            "name": "Gold Run Cryobelt",
+            "type": "ice_field",
+            "class": "kuiper",
+            "hasBase": false
+          },
+          {
+            "id": "gold_run_extraction_hub",
+            "name": "Gold Run Extraction Hub",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "gold_run_mineral_fields",
+          "name": "Gold Run Mineral Fields",
+          "type": "asteroid_belt"
+        }
+      },
+      "cargo": {
+        "used": 91,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 35
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 20
+          },
+          {
+            "itemId": "gold_ore",
+            "name": "Gold Ore",
+            "quantity": 15
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Abandon unfulfillable titanium mission, mine valuable ore (palladium/gold/vanadium) at this belt, then dock at the extraction hub to sell and check for Deep Core Extractor / Mining Laser III availability",
+        "outcome": "superseded"
+      },
+      "chatMessages": [],
+      "nearbyText": "At gold_run_mineral_fields — 10 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n61a31839b440db8658ce299e0a7e3204\tLiberation\tCobble (cobble)\t[o7]\t\toffline\n66246de8057abdfd354e7ff2adc88fd0\tQuantumDrift\tProspector (prospector)\t\t\toffline\nf292ece88eb47ebb5ddd31e47d231367\tZapity\tProspect (prospect)\t\t\toffline\n9ff4afba5533a03709e770d78bca77fd\tMiningBuddy36\tProspect (prospect)\t\t\toffline\ne286b11f411b1f8392b45dd657bdfc61\tGeminiCommander\tAxiom (axiom)\t\t\toffline\n15518dc823890df88b493f75e3cca2d8\tGeminiFleet_01\tProspect (prospect)\t\t\toffline\n1275cb25b9fa682291b4547a43e1433a\tVoidTrader\tProspect (prospect)\t\t\toffline\nf107eda9c21075f7af80e6eb2facc90f\tStarMapper\tProspect (prospect)\t\t\toffline\nda590a60ccaaf5b03376e4cab1a7ef72\tcaptian godzilla\tProspector (prospector)\t\t\toffline\n51e6196fca4212c74b427765e86cb249\tmyMiner9\tProspect (prospect)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Dock at Gold Run Extraction Hub to sell ore and check for Deep Core Extractor / Mining Laser III availability",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "gold_run_extraction_hub"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40222-plan-done",
+    "note": "harvested from the production pilot (event 40222, 2026-07-16T22:55:59.528Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 187867, fuel 120/130, hull 95/95, cargo 76/100, undocked",
+      "recentEvents": [
+        "ledger",
+        "action",
+        "action",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "cargo_lanes",
+          "gold_run",
+          "haven"
+        ],
+        "pois": [
+          {
+            "id": "the_beacon",
+            "name": "The Beacon",
+            "type": "sun",
+            "class": "F8V",
+            "hasBase": false
+          },
+          {
+            "id": "warehouse_world",
+            "name": "Warehouse World",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "auction_hall",
+            "name": "Auction Hall",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_gas_plume",
+            "name": "Market Prime Gas Plume",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_exchange",
+            "name": "Market Prime Exchange",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "the_beacon",
+          "name": "The Beacon",
+          "type": "sun"
+        }
+      },
+      "cargo": {
+        "used": 76,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "carbon_ore",
+            "name": "Carbon Ore",
+            "quantity": 35
+          },
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 20
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Sell gold ore here (only local buyer), then head to Market Prime to seek buyers for remaining ore and check for Deep Core Extractor Mk I / Mining Laser III availability",
+        "outcome": "completed"
+      },
+      "chatMessages": [],
+      "nearbyText": "At the_beacon — 1 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n219b8ccc005ad452abee9f78ed748248\tsilver\tRunner (runner)\tPLGT\t\tonline\n(+21 offline players not listed; POI is busy.)\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Travel to Market Prime Exchange to sell carbon/vanadium/palladium ore and check for Deep Core Extractor Mk I / Mining Laser III availability",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "market_prime_exchange"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40242-blocked",
+    "note": "harvested from the production pilot (event 40242, 2026-07-16T23:00:37.170Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "Sold 0 Vanadium Ore for 0cr. 21 unsold (no buyers)."
+      },
+      "statusSummary": "credits 187952, fuel 117/130, hull 95/95, cargo 41/100, docked",
+      "recentEvents": [
+        "action",
+        "ledger",
+        "action",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "cargo_lanes",
+        "systemName": "Cargo Lanes",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "bunda",
+          "alrakis",
+          "alula"
+        ],
+        "pois": [
+          {
+            "id": "waymark",
+            "name": "Waymark",
+            "type": "sun",
+            "class": "F5V",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_i",
+            "name": "Cargo Lanes I",
+            "type": "planet",
+            "class": "scorched",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_ii",
+            "name": "Cargo Lanes II",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_iii",
+            "name": "Cargo Lanes III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_gas_cloud",
+            "name": "Cargo Lanes Gas Cloud",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_freight_depot",
+            "name": "Cargo Lanes Freight Depot",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "cargo_lanes_freight_depot",
+        "currentPoi": {
+          "id": "cargo_lanes_freight_depot",
+          "name": "Cargo Lanes Freight Depot",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 41,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          },
+          {
+            "itemId": "palladium_ore",
+            "name": "Palladium Ore",
+            "quantity": 20
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Check Cargo Lanes Freight Depot market for ore buyers, sell if possible",
+        "outcome": "blocked"
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Cargo Lanes Freight Depot (13):\n--- Market Participation: Buying [market_participation_buying] (trading, difficulty 1) ---\nPlace buy orders on the station exchange to learn how the market works. Any items count.\nFrom: Exchange Operator Nkosi (Market Services)\n\"The exchange runs on supply and demand, and right now we need more demand. Place some buy orders - any items, any quantity, as long as you buy at least 10 units total. Use the `create_buy_order` command to place an order on the book. Your orders sit there until a seller fills them, or you can cancel.\"\nRewards: 1,000cr, +15 trading XP\nObjectives:\n  - Buy 10 units of any item on the exchange\n--- Trade Convoy Protection [trade_convoy_protection] (combat, difficulty 4) ---\nThin out scout-class pirates threatening freight convoys running through Cargo Lanes.\nFrom: Convoy Master Rho (Cargo Lanes Freight Security)\n\"The freight convoys running through Cargo Lanes have been getting hit by pirates. Five attacks in the last cycle alone. I'm hiring escort pilots to thin out the pirate population along our routes. I need five pirate scouts destroyed — anywhere you can find them. Every pirate you kill is one less threat to our cargo haulers. The Freight Security office pays per confirmed kill, bundled into one contract.\"\nRewards: 5,000cr, +20 bounty_hunting XP, +15 trading XP\nObjectives:\n  - Kill 5 pirates to protect trade convoys\n--- Deep Core Prospecting [deep_core_prospecting] (mining, difficulty 5) ---\nForeman Voss ha…",
+      "nearbyText": "At cargo_lanes_freight_depot — 2 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nb0ecb61240d489b8df3445db9a5efcc9\tILC Registrar\tProspect (prospect)\tIRLC\t\tdocked\n381c269f0ab6c784b4cf8e5189805011\tmarketbot_cargo_lanes\tAppraisal (appraisal)\t DB \t\tdocked\n(+14 offline players not listed; POI is busy.)\n",
+      "lowFuel": false,
+      "marketRows": [
+        {
+          "itemId": "palladium_ore",
+          "buyQty": 0
+        },
+        {
+          "itemId": "vanadium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "8 ship(s) for sale at Cargo Lanes Freight Depot:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n1615a7455302eb39b63c987cb3961cf1\tBulk Terms\tT2\tCommercial\t42,760cr\t155/155\t1\t[Station Manager: Cargo Lanes Freight Depot]\nd037c3397eae1863dd99725950c33bb2\tFrost Dividend\tT1\tIndustrial\t13,446cr\t95/95\t1\t[Station Manager: Cargo Lanes Freight Depot]\n2f458e9c4ada0ff9ae583fea90e4daac\tEscort\tT1\t\t5,678cr\t120/120\t3\t[Station Manager: Cargo Lanes Freight Depot]\n0ef39ceb9a508c8f6bcac76f26339aa7\tOverhead\tT1\tCombat Support\t12,233cr\t110/110\t3\t[Station Manager: Cargo Lanes Freight Depot]\n4ce9d99fcd7d765faf00a50e8e6cde7f\tScaffold\tT3\tIndustrial\t565,798cr\t450/450\t0\t[Station Manager: Cargo Lanes Freight Depot]\n68024ad7daa9a5c3e51598272745d661\tConsortium\tT2\tCivilian\t48,632cr\t170/170\t0\t[Station Manager: Cargo Lanes Freight Depot]\n05c6eb126f5f190a35ef49de72bd6836\tArbitrage\tT2\tCovert\t72,750cr\t150/150\t2\t[Station Manager: Cargo Lanes Freight Depot]\n5c8c2994379fc237ca382703b4fa557e\tBenefit\tT2\tSupport\t56,984cr\t160/160\t0\t[Station Manager: Cargo Lanes Freight Depot]\n",
+      "marketInsightsText": "Trading insights at Cargo Lanes Freight Depot (trading skill 2):\npriority\tcategory\titem\titem_id\tinsight\n50\torder_warning\tVanadium Ore\tvanadium_ore\tYour sell order for Vanadium Ore at 22cr is 2100% above the best ask of 1cr — unlikely to fill soon.\n\nFound 1 trading insight at Cargo Lanes Freight Depot (trading level 2).\n"
+    },
+    "recordedPlan": {
+      "goal": "Relocate unsellable ore cargo and continue milestone progress toward mining upgrades",
+      "steps": [
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "palladium_ore",
+            "quantity": 20
+          }
+        },
+        {
+          "action": "travel_to",
+          "params": {
+            "system_id": "market_prime"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40254-blocked",
+    "note": "harvested from the production pilot (event 40254, 2026-07-16T23:03:02.975Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "No station at this location"
+      },
+      "statusSummary": "credits 187892, fuel 116/130, hull 95/95, cargo 21/100, undocked",
+      "recentEvents": [
+        "wake",
+        "plan_context",
+        "plan",
+        "action",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "cargo_lanes",
+          "gold_run",
+          "haven"
+        ],
+        "pois": [
+          {
+            "id": "the_beacon",
+            "name": "The Beacon",
+            "type": "sun",
+            "class": "F8V",
+            "hasBase": false
+          },
+          {
+            "id": "warehouse_world",
+            "name": "Warehouse World",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "auction_hall",
+            "name": "Auction Hall",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_gas_plume",
+            "name": "Market Prime Gas Plume",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_exchange",
+            "name": "Market Prime Exchange",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "auction_hall",
+          "name": "Auction Hall",
+          "type": "planet"
+        }
+      },
+      "cargo": {
+        "used": 21,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Dock at Auction Hall and sell Vanadium Ore cargo",
+        "outcome": "blocked"
+      },
+      "chatMessages": [],
+      "nearbyText": "At auction_hall — 1 players, 0 pirates, 3 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n977928bd40795893301793474e9f9e9b\tmyMiner36\tProspect (prospect)\t\t\toffline\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\nf9fcf134c1c92711446014785b843a3b\t[POLICE] Federation Patrol V - Market Prime Exchange\tpolice\tnebula\t\tNTF-36fcf6fe (overhead)\t\na660dd325092693da4dce5da57a8042b\t[POLICE] Federation Patrol IV - Market Prime Exchange\tpolice\tnebula\t\tNTF-1a3c9c0f (overhead)\t\nac61429b587b332dc2638df9fa30e5d8\t[POLICE] Federation Patrol VI - Market Prime Exchange\tpolice\tnebula\t\tNTF-ac917868 (overhead)\t\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Travel to the station in this system to sell Vanadium Ore cargo",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "market_prime_exchange"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40260-plan-done",
+    "note": "harvested from the production pilot (event 40260, 2026-07-16T23:03:55.788Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 187892, fuel 115/130, hull 95/95, cargo 21/100, docked",
+      "recentEvents": [
+        "plan",
+        "action",
+        "action",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "cargo_lanes",
+          "gold_run",
+          "haven"
+        ],
+        "pois": [
+          {
+            "id": "the_beacon",
+            "name": "The Beacon",
+            "type": "sun",
+            "class": "F8V",
+            "hasBase": false
+          },
+          {
+            "id": "warehouse_world",
+            "name": "Warehouse World",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "auction_hall",
+            "name": "Auction Hall",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_gas_plume",
+            "name": "Market Prime Gas Plume",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_exchange",
+            "name": "Market Prime Exchange",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "market_prime_exchange",
+        "currentPoi": {
+          "id": "market_prime_exchange",
+          "name": "Market Prime Exchange",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 21,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Travel to the station in this system to sell Vanadium Ore cargo",
+        "outcome": "completed"
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Market Prime Exchange (14):\n--- Military Upgrade Materials - Platinum & Cobalt Acquisition [faction_7b95b224620584063a21111e8c855887] (mining, difficulty 5) ---\nSwarm battle readiness requires upgraded military vessels. Gather Platinum Ore and Cobalt Ore from deep-core deposits and mining zones. High-difficulty deep-core surveying welcome. Faction will pay premium credits for volume deliveries. Feed the upgrade pipeline.\nFrom: The Architect (Nova Zoea Resource Director)\nRewards: 20,000cr\nObjectives:\n  - Deliver 50 units of Platinum Ore\n    Deliver: 50x platinum_ore to market_prime_exchange\n  - Deliver 30 units of Cobalt Ore\n    Deliver: 30x cobalt_ore to market_prime_exchange\n--- First Haul [first_haul] (equipment, difficulty 1) ---\nThe salvage yard foreman needs someone to tow in a wreck. A good way to learn the business.\nFrom: Yard Foreman Dak (Salvage Yard Supervisor)\n\"New to salvaging? Here's how it works. Wrecks are scattered across the galaxy — left behind after battles, pirate attacks, equipment failures. You need a Basic Tow Rig module first. Use `view_market` to find one on the exchange and `buy` to purchase it, or craft one yourself. Then use `install_mod` to fit it in a utility slot. Once equipped, fly to a wreck, use `tow_wreck` to attach it, then haul it back here. Use `sell_wreck` to cash it in. Simple as that.\"\nRewards: 500cr, +25 salvaging XP\nObjectives:\n  - Sell 1 wreck at a salvage yard\n--- Pirate Bounty [pirate_bounty] (combat, difficulty 2) ---…",
+      "nearbyText": "At market_prime_exchange — 6 players, 0 pirates, 3 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nfc920d942b786df325d6c40aeb2884ac\tAriaStarsmith\tProspect (prospect)\t\t\tdocked\n6b5ee9794b5c6c97e0790f97fb0abbf4\tWexler EWK-0R\tPrayer (prayer)\tWEXL\t\tdocked\n59f2f11dea451202a8d84c6c663c311f\tILC Adjuster\tProspect (prospect)\tIRLC\t\tdocked\ne470f75d9757206dad4f82cddfceb4a5\tAgent007\tCatalogue (catalogue)\tENDL\t\tdocked\n8d9255dbc6a22837b76ccb30425f338c\tArbiter59\tDust Devil (dust_devil)\tNOIR\t\tdocked\n8d166571daff32d64cc4f65ebac79383\tPike Market Bot 9\tProspect (prospect)\t\t\tdocked\n(+27 offline players not listed; POI is busy.)\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\ne1e910680d0bd38ee9dfcfa66e73070a\t[POLICE] Federation Patrol II - Market Prime Exchange\tpolice\tnebula\t\tNTF-465bef4a (overhead)\t\nf9fcf134c1c92711446014785b843a3b\t[POLICE] Federation Patrol V - Market Prime Exchange\tpolice\tnebula\t\tNTF-36fcf6fe (overhead)\t\na660dd325092693da4dce5da57a8042b\t[POLICE] Federation Patrol IV - Market Prime Exchange\tpolice\tnebula\t\tNTF-1a3c9c0f (overhead)\t\n",
+      "lowFuel": false,
+      "marketRows": [
+        {
+          "itemId": "vanadium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "16 ship(s) for sale at Market Prime Exchange:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n396577d2ce2eb2884c9fdfb1239e7a72\tBonanza\tT1\tIndustrial\t27,273cr\t75/75\t3\t[Station Manager: Market Prime Exchange]\nebe351195539dfb8dadada7c2896b882\tFloor Price\tT1\tCommercial\t10,363cr\t55/55\t1\t[Station Manager: Market Prime Exchange]\n774d56409c2dde4f78837e46c1478756\tConsortium\tT2\tCivilian\t49,982cr\t170/170\t0\t[Station Manager: Market Prime Exchange]\n386562e1576f53c440ad1494cab5f92c\tLeverage\tT1\tCommercial\t14,456cr\t120/120\t2\t[Station Manager: Market Prime Exchange]\nf640edc1281e860732b58fe831fc95ff\tYield\tT1\tIndustrial\t13,895cr\t100/100\t1\t[Station Manager: Market Prime Exchange]\nd7f76244e6de646fe2a7306096252ca7\tBenefit\tT2\tSupport\t58,154cr\t160/160\t0\t[Station Manager: Market Prime Exchange]\n69e6b1847184ff74863b1b34e9b83393\tReserve\tT3\tCommercial\t259,114cr\t380/380\t1\t[Station Manager: Market Prime Exchange]\nb66e01b9bd2285541fd24f6edb6fae61\tNebula Tender\tT1\tCivilian\t9,481cr\t70/70\t1\t[Station Manager: Market Prime Exchange]\n3c19008d88dff9a5d3f30ab7e1a206bd\tArbitrage\tT2\tCovert\t73,740cr\t150/150\t2\t[Station Manager: Market Prime Exchange]\na85613f589c35ad7db2a2cffdfc6fd34\tDividend\tT1\tCommercial\t13,056cr\t110/110\t2\t[Station Manager: Market Prime Exchange]\nefbdfd9a384a5ebaf74707bda7bb0a11\tOverhead\tT1\tCombat Support\t15,004cr\t110/110\t3\t[Station Manager: Market Prime Exchange]\nf3f7a34dda97c163fce672fda38b0538\tGas Tanker\tT3\tIndustrial\t206,076cr\t320/320\t3\t[Station Manager: Market Prime Exchange]\nbfef61222fad0be7c74d61…",
+      "marketInsightsText": "No trading opportunities found at Market Prime Exchange. Try acquiring goods to sell, or place exchange orders."
+    },
+    "recordedPlan": {
+      "goal": "Vanadium Ore has no buyer at Market Prime Exchange and no mission here fits current cargo; move to an adjacent system to find a market with demand for Vanadium Ore.",
+      "steps": [
+        {
+          "action": "undock",
+          "params": {}
+        },
+        {
+          "action": "jump",
+          "params": {
+            "id": "cargo_lanes"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40285-plan-done",
+    "note": "harvested from the production pilot (event 40285, 2026-07-16T23:20:22.915Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 187892, fuel 113/130, hull 95/95, cargo 21/100, docked",
+      "recentEvents": [
+        "action",
+        "action",
+        "status_snapshot",
+        "plan_budget_exceeded",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "cargo_lanes",
+        "systemName": "Cargo Lanes",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "bunda",
+          "alrakis",
+          "alula"
+        ],
+        "pois": [
+          {
+            "id": "waymark",
+            "name": "Waymark",
+            "type": "sun",
+            "class": "F5V",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_i",
+            "name": "Cargo Lanes I",
+            "type": "planet",
+            "class": "scorched",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_ii",
+            "name": "Cargo Lanes II",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_iii",
+            "name": "Cargo Lanes III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_gas_cloud",
+            "name": "Cargo Lanes Gas Cloud",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_freight_depot",
+            "name": "Cargo Lanes Freight Depot",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "cargo_lanes_freight_depot",
+        "currentPoi": {
+          "id": "cargo_lanes_freight_depot",
+          "name": "Cargo Lanes Freight Depot",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 21,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Dock at Cargo Lanes Freight Depot to check for Vanadium Ore buyers, missions, and any Deep Core Extractor/Mining Laser III for sale",
+        "outcome": "completed"
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Cargo Lanes Freight Depot (13):\n--- First Haul [first_haul] (equipment, difficulty 1) ---\nThe salvage yard foreman needs someone to tow in a wreck. A good way to learn the business.\nFrom: Yard Foreman Dak (Salvage Yard Supervisor)\n\"New to salvaging? Here's how it works. Wrecks are scattered across the galaxy — left behind after battles, pirate attacks, equipment failures. You need a Basic Tow Rig module first. Use `view_market` to find one on the exchange and `buy` to purchase it, or craft one yourself. Then use `install_mod` to fit it in a utility slot. Once equipped, fly to a wreck, use `tow_wreck` to attach it, then haul it back here. Use `sell_wreck` to cash it in. Simple as that.\"\nRewards: 500cr, +25 salvaging XP\nObjectives:\n  - Sell 1 wreck at a salvage yard\n--- Pirate Bounty [pirate_bounty] (combat, difficulty 2) ---\nHunt down a pirate threatening local shipping lanes. Any pirate will do - the station pays for confirmed kills.\nFrom: Bounty Clerk Frost (Station Security Office)\n\"We've got pirates disrupting trade in the region and the station is posting bounties. Take one out and bring proof. Use the `attack` command when you find one - pirates tend to spawn in lawless systems with low police presence. Fair warning: they shoot back, so watch your hull.\"\nRewards: 2,000cr, +20 weapons XP\nObjectives:\n  - Kill 1 pirate\n--- Ice-Field Thinning [ice_field_thinning] (combat, difficulty 2) ---\nRime-grazers are stripping volatiles from a charted ice field faster than …",
+      "nearbyText": "At cargo_lanes_freight_depot — 2 players, 0 pirates, 3 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n381c269f0ab6c784b4cf8e5189805011\tmarketbot_cargo_lanes\tAppraisal (appraisal)\t DB \t\tdocked\nb0ecb61240d489b8df3445db9a5efcc9\tILC Registrar\tProspect (prospect)\tIRLC\t\tdocked\n(+14 offline players not listed; POI is busy.)\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\n74827ca81fe0e0308810c5c071b3c76f\t[POLICE] Federation Patrol III - Cargo Lanes Freight Depot\tpolice\tnebula\t\tNTF-899ecde7 (overhead)\t\na94ab4289870c592c1ff418c36524429\t[POLICE] Federation Patrol II - Cargo Lanes Freight Depot\tpolice\tnebula\t\tOverhead (overhead)\t\n81aaa9980cc31bf64171d3d3b0b91479\t[POLICE] Federation Patrol IV - Cargo Lanes Freight Depot\tpolice\tnebula\t\tOverhead (overhead)\t\n",
+      "lowFuel": false,
+      "marketRows": [
+        {
+          "itemId": "vanadium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "8 ship(s) for sale at Cargo Lanes Freight Depot:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n1615a7455302eb39b63c987cb3961cf1\tBulk Terms\tT2\tCommercial\t44,560cr\t155/155\t1\t[Station Manager: Cargo Lanes Freight Depot]\nd037c3397eae1863dd99725950c33bb2\tFrost Dividend\tT1\tIndustrial\t14,352cr\t95/95\t1\t[Station Manager: Cargo Lanes Freight Depot]\n2f458e9c4ada0ff9ae583fea90e4daac\tEscort\tT1\t\t5,678cr\t120/120\t3\t[Station Manager: Cargo Lanes Freight Depot]\n0ef39ceb9a508c8f6bcac76f26339aa7\tOverhead\tT1\tCombat Support\t12,228cr\t110/110\t3\t[Station Manager: Cargo Lanes Freight Depot]\n4ce9d99fcd7d765faf00a50e8e6cde7f\tScaffold\tT3\tIndustrial\t579,799cr\t450/450\t0\t[Station Manager: Cargo Lanes Freight Depot]\n68024ad7daa9a5c3e51598272745d661\tConsortium\tT2\tCivilian\t51,913cr\t170/170\t0\t[Station Manager: Cargo Lanes Freight Depot]\n05c6eb126f5f190a35ef49de72bd6836\tArbitrage\tT2\tCovert\t77,410cr\t150/150\t2\t[Station Manager: Cargo Lanes Freight Depot]\n5c8c2994379fc237ca382703b4fa557e\tBenefit\tT2\tSupport\t60,969cr\t160/160\t0\t[Station Manager: Cargo Lanes Freight Depot]\n",
+      "marketInsightsText": "Trading insights at Cargo Lanes Freight Depot (trading skill 2):\npriority\tcategory\titem\titem_id\tinsight\n50\torder_warning\tVanadium Ore\tvanadium_ore\tYour sell order for Vanadium Ore at 22cr is 2100% above the best ask of 1cr — unlikely to fill soon.\n\nFound 1 trading insight at Cargo Lanes Freight Depot (trading level 2).\n"
+    },
+    "recordedPlan": {
+      "goal": "Find a buyer for Vanadium Ore cargo and continue toward milestone (Deep Core Extractor purchase, then mining skill 4 + 8k cr for Mining Laser III)",
+      "steps": [
+        {
+          "action": "jump",
+          "params": {
+            "id": "market_prime"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40293-blocked",
+    "note": "harvested from the production pilot (event 40293, 2026-07-16T23:22:35.832Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "No station at this location"
+      },
+      "statusSummary": "credits 187892, fuel 112/130, hull 95/95, cargo 21/100, undocked",
+      "recentEvents": [
+        "progress_heartbeat",
+        "action",
+        "status_snapshot",
+        "plan_budget_exceeded",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "cargo_lanes",
+          "gold_run",
+          "haven"
+        ],
+        "pois": [
+          {
+            "id": "the_beacon",
+            "name": "The Beacon",
+            "type": "sun",
+            "class": "F8V",
+            "hasBase": false
+          },
+          {
+            "id": "warehouse_world",
+            "name": "Warehouse World",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "auction_hall",
+            "name": "Auction Hall",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_gas_plume",
+            "name": "Market Prime Gas Plume",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_exchange",
+            "name": "Market Prime Exchange",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "auction_hall",
+          "name": "Auction Hall",
+          "type": "planet"
+        }
+      },
+      "cargo": {
+        "used": 21,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Find a buyer for Vanadium Ore cargo and continue toward milestone (Deep Core Extractor purchase, then mining skill 4 + 8k cr for Mining Laser III)",
+        "outcome": "blocked"
+      },
+      "chatMessages": [],
+      "nearbyText": "At auction_hall — 1 players, 0 pirates, 4 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n977928bd40795893301793474e9f9e9b\tmyMiner36\tProspect (prospect)\t\t\toffline\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\n28c0df40eecab8e704cf068d24fafdf4\t[POLICE] Federation Patrol I - Market Prime Exchange\tpolice\tnebula\t\tNTF-f8d18870 (overhead)\t\ne1e910680d0bd38ee9dfcfa66e73070a\t[POLICE] Federation Patrol II - Market Prime Exchange\tpolice\tnebula\t\tNTF-465bef4a (overhead)\t\nf9fcf134c1c92711446014785b843a3b\t[POLICE] Federation Patrol V - Market Prime Exchange\tpolice\tnebula\t\tNTF-36fcf6fe (overhead)\t\na660dd325092693da4dce5da57a8042b\t[POLICE] Federation Patrol IV - Market Prime Exchange\tpolice\tnebula\t\tNTF-1a3c9c0f (overhead)\t\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Reach a station to sell Vanadium Ore cargo and continue toward Deep Core Extractor purchase",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "market_prime_exchange"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        },
+        {
+          "action": "sell",
+          "params": {
+            "id": "vanadium_ore",
+            "quantity": 21
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40307-blocked",
+    "note": "harvested from the production pilot (event 40307, 2026-07-16T23:30:20.838Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "blocked",
+        "detail": "Sold 0 Vanadium Ore for 0cr. 21 unsold (no buyers)."
+      },
+      "statusSummary": "credits 187892, fuel 111/130, hull 95/95, cargo 21/100, docked",
+      "recentEvents": [
+        "status_snapshot",
+        "status_snapshot",
+        "status_snapshot",
+        "steward_resteer",
+        "wake"
+      ],
+      "instruction": "No measurable progress in any dimension (credits, ore, missions, trades, skills, achievements) for a while. Change approach: pick a concrete productive goal you can act on from here, and pursue it.",
+      "surroundings": {
+        "systemId": "market_prime",
+        "systemName": "Market Prime",
+        "connections": [
+          "cargo_lanes",
+          "gold_run",
+          "haven"
+        ],
+        "pois": [
+          {
+            "id": "the_beacon",
+            "name": "The Beacon",
+            "type": "sun",
+            "class": "F8V",
+            "hasBase": false
+          },
+          {
+            "id": "warehouse_world",
+            "name": "Warehouse World",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "auction_hall",
+            "name": "Auction Hall",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_gas_plume",
+            "name": "Market Prime Gas Plume",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "market_prime_exchange",
+            "name": "Market Prime Exchange",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "market_prime_exchange",
+        "currentPoi": {
+          "id": "market_prime_exchange",
+          "name": "Market Prime Exchange",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 21,
+        "capacity": 100,
+        "items": [
+          {
+            "itemId": "vanadium_ore",
+            "name": "Vanadium Ore",
+            "quantity": 21
+          }
+        ]
+      },
+      "previousGoal": {
+        "goal": "Reach a station to sell Vanadium Ore cargo and continue toward Deep Core Extractor purchase",
+        "outcome": "blocked"
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Market Prime Exchange (14):\n--- Grazer Cull [grazer_cull] (combat, difficulty 2) ---\nBelt-grazer herds have grown thick enough to foul mining operations. The station board pays a bounty per head culled.\nFrom: Station Bounty Board (Wildlife Control Notice)\n\"POSTED: Belt-grazers are clogging the asteroid belts and the mining crews are filing complaints. Use get_nearby at any asteroid belt to spot them, then hunt 8. They barely fight back — this is clean work. Carapace you strip off the carcasses is yours to sell.\"\nRewards: 1,200cr, +10 weapons XP, +20 xenobiology XP\nObjectives:\n  - Hunt 8 Belt-Grazers\nRepeatable: yes\n--- Titanium Extraction Contract [titanium_extraction_contract] (mining, difficulty 3) ---\nTitanium is in high demand for hull plating. Mine a batch from the local asteroid belts.\nFrom: Procurement Agent Vasquez (Materials Acquisition)\n\"Titanium prices are through the roof and our suppliers can't keep up. Willing to pay premium rates for 20 units of titanium ore.\"\nRewards: 3,500cr, +25 mining XP\nObjectives:\n  - Mine 20 units of Titanium Ore\n--- Leviathan Bounty [leviathan_bounty] (combat, difficulty 6) ---\nA Molt Leviathan — the void-leviathan of spacer legend — is preying on traffic through the deep belts. There is a standing bounty on its heartcore. Bring a warship.\nFrom: Hunters' Registry (Standing Apex Bounty)\n\"STANDING BOUNTY: A Molt Leviathan is working the deep belts — the ship-sized lobster the old captains call a void-leviathan. It hunts ships,…",
+      "nearbyText": "At market_prime_exchange — 6 players, 0 pirates, 1 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n59f2f11dea451202a8d84c6c663c311f\tILC Adjuster\tProspect (prospect)\tIRLC\t\tdocked\n14db2b65958c1174d13cf26daa0966bd\tCarson\tFutures (futures)\tNOIR\t\tdocked\n8d9255dbc6a22837b76ccb30425f338c\tArbiter59\tDust Devil (dust_devil)\tNOIR\t\tdocked\n8d166571daff32d64cc4f65ebac79383\tPike Market Bot 9\tProspect (prospect)\t\t\tdocked\nfc920d942b786df325d6c40aeb2884ac\tAriaStarsmith\tProspect (prospect)\t\t\tdocked\n6b5ee9794b5c6c97e0790f97fb0abbf4\tWexler EWK-0R\tPrayer (prayer)\tWEXL\t\tdocked\n(+27 offline players not listed; POI is busy.)\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\nac61429b587b332dc2638df9fa30e5d8\t[POLICE] Federation Patrol VI - Market Prime Exchange\tpolice\tnebula\t\tNTF-ac917868 (overhead)\t\n",
+      "lowFuel": false,
+      "marketRows": [
+        {
+          "itemId": "vanadium_ore",
+          "buyQty": 0
+        }
+      ],
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "16 ship(s) for sale at Market Prime Exchange:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n396577d2ce2eb2884c9fdfb1239e7a72\tBonanza\tT1\tIndustrial\t28,233cr\t75/75\t3\t[Station Manager: Market Prime Exchange]\nebe351195539dfb8dadada7c2896b882\tFloor Price\tT1\tCommercial\t10,974cr\t55/55\t1\t[Station Manager: Market Prime Exchange]\n774d56409c2dde4f78837e46c1478756\tConsortium\tT2\tCivilian\t53,163cr\t170/170\t0\t[Station Manager: Market Prime Exchange]\n386562e1576f53c440ad1494cab5f92c\tLeverage\tT1\tCommercial\t15,460cr\t120/120\t2\t[Station Manager: Market Prime Exchange]\nf640edc1281e860732b58fe831fc95ff\tYield\tT1\tIndustrial\t15,095cr\t100/100\t1\t[Station Manager: Market Prime Exchange]\nd7f76244e6de646fe2a7306096252ca7\tBenefit\tT2\tSupport\t62,007cr\t160/160\t0\t[Station Manager: Market Prime Exchange]\n69e6b1847184ff74863b1b34e9b83393\tReserve\tT3\tCommercial\t277,197cr\t380/380\t1\t[Station Manager: Market Prime Exchange]\nb66e01b9bd2285541fd24f6edb6fae61\tNebula Tender\tT1\tCivilian\t10,271cr\t70/70\t1\t[Station Manager: Market Prime Exchange]\n3c19008d88dff9a5d3f30ab7e1a206bd\tArbitrage\tT2\tCovert\t78,263cr\t150/150\t2\t[Station Manager: Market Prime Exchange]\na85613f589c35ad7db2a2cffdfc6fd34\tDividend\tT1\tCommercial\t14,242cr\t110/110\t2\t[Station Manager: Market Prime Exchange]\nefbdfd9a384a5ebaf74707bda7bb0a11\tOverhead\tT1\tCombat Support\t15,146cr\t110/110\t3\t[Station Manager: Market Prime Exchange]\nf3f7a34dda97c163fce672fda38b0538\tGas Tanker\tT3\tIndustrial\t213,202cr\t320/320\t3\t[Station Manager: Market Prime Exchange]\nbfef61222fad0be7c74d6…",
+      "marketInsightsText": "No trading opportunities found at Market Prime Exchange. Try acquiring goods to sell, or place exchange orders."
+    },
+    "recordedPlan": {
+      "goal": "Clear the no-buyer vanadium ore block by listing it on the player exchange, then move to a new system to hunt for actual ore buyers and Deep Core Extractor Mk I availability",
+      "steps": [
+        {
+          "action": "create_sell_order",
+          "params": {
+            "item_id": "vanadium_ore",
+            "quantity": 21
+          }
+        },
+        {
+          "action": "jump",
+          "params": {
+            "id": "cargo_lanes"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40335-no-plan",
+    "note": "harvested from the production pilot (event 40335, 2026-07-16T23:54:12.819Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "no_plan"
+      },
+      "statusSummary": "credits 187886, fuel 110/130, hull 95/95, cargo 0/100, undocked",
+      "recentEvents": [
+        "status_snapshot",
+        "plan_budget_exceeded",
+        "status_snapshot",
+        "status_snapshot",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "cargo_lanes",
+        "systemName": "Cargo Lanes",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "bunda",
+          "alrakis",
+          "alula"
+        ],
+        "pois": [
+          {
+            "id": "waymark",
+            "name": "Waymark",
+            "type": "sun",
+            "class": "F5V",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_i",
+            "name": "Cargo Lanes I",
+            "type": "planet",
+            "class": "scorched",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_ii",
+            "name": "Cargo Lanes II",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_iii",
+            "name": "Cargo Lanes III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_gas_cloud",
+            "name": "Cargo Lanes Gas Cloud",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_freight_depot",
+            "name": "Cargo Lanes Freight Depot",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "cargo_lanes_gas_cloud",
+          "name": "Cargo Lanes Gas Cloud",
+          "type": "gas_cloud"
+        }
+      },
+      "cargo": {
+        "used": 0,
+        "capacity": 100,
+        "items": []
+      },
+      "chatMessages": [],
+      "nearbyText": "At cargo_lanes_gas_cloud — 9 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\n936d3a201c297a6f931cb119b99548c9\tORB-Main\tProspect (prospect)\tORBK\t\tonline\n9aa4164b136b8ead2a195e47edd7d915\tNeutronStar_TC\tProspector (prospector)\t\t\toffline\na93d09ea11ae8150036bac6638bdc247\tBlueNova_TC\tProspector (prospector)\t\t\toffline\ndf454a904fb2c17ce3b99f52dc07c7b3\tmyMiner8\tProspect (prospect)\t\t\toffline\nd811a883d8ad5f18001059c178faa9ce\tHamm\tBonanza (bonanza)\tALPH\t\toffline\n4f85884599c3a46ffacbd51d9e97effe\tVoidWalker_TC\tProspector (prospector)\t\t\toffline\nb93d274b1071056dda2a885448ca1996\tMist913\tProspect (prospect)\t\t\toffline\n06bc7d1ee7d435ca161aa9e0ecc6293f\tnaomi6\tCold Storage (cold_storage)\tSTRG\t\toffline\n11c17e42725f5917805a39f57a139edb\tWarpDrive_TC\tProspector (prospector)\t\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Head to the local station to check missions and market for a Mining Laser III / progress mining skill, since no ore deposits are available at the gas cloud",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "cargo_lanes_freight_depot"
+          }
+        },
+        {
+          "action": "dock",
+          "params": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40346-no-plan",
+    "note": "harvested from the production pilot (event 40346, 2026-07-16T23:57:21.987Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "no_plan"
+      },
+      "statusSummary": "credits 187886, fuel 109/130, hull 95/95, cargo 0/100, docked",
+      "recentEvents": [
+        "wake",
+        "deploy_marker",
+        "status_snapshot",
+        "plan_budget_exceeded",
+        "wake"
+      ],
+      "surroundings": {
+        "systemId": "cargo_lanes",
+        "systemName": "Cargo Lanes",
+        "connections": [
+          "gold_run",
+          "market_prime",
+          "bunda",
+          "alrakis",
+          "alula"
+        ],
+        "pois": [
+          {
+            "id": "waymark",
+            "name": "Waymark",
+            "type": "sun",
+            "class": "F5V",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_i",
+            "name": "Cargo Lanes I",
+            "type": "planet",
+            "class": "scorched",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_ii",
+            "name": "Cargo Lanes II",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_iii",
+            "name": "Cargo Lanes III",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_gas_cloud",
+            "name": "Cargo Lanes Gas Cloud",
+            "type": "gas_cloud",
+            "class": "molecular_cloud",
+            "hasBase": false
+          },
+          {
+            "id": "cargo_lanes_freight_depot",
+            "name": "Cargo Lanes Freight Depot",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": "cargo_lanes_freight_depot",
+        "currentPoi": {
+          "id": "cargo_lanes_freight_depot",
+          "name": "Cargo Lanes Freight Depot",
+          "type": "station"
+        }
+      },
+      "cargo": {
+        "used": 0,
+        "capacity": 100,
+        "items": []
+      },
+      "chatMessages": [],
+      "missionsText": "Missions at Cargo Lanes Freight Depot (12):\n--- Nebula Drift Hunt [nebula_drift_hunt] (combat, difficulty 2) ---\nRefineries want the crystallized bio-gas that sift-rays carry, and the only way to collect it is to put them down. Hunt the drifting grazers in gas clouds and nebulae.\nFrom: Station Bounty Board (Refinery Procurement Notice)\n\"POSTED: Sift-rays graze the gas clouds and nebulae and crystallize clean-burning gas in their gut. Hunt 6. They flee at the first shot, so close fast and hit hard. Mind the deep belts — the leviathans hunting out there are not prey.\"\nRewards: 1,300cr, +10 weapons XP, +20 xenobiology XP\nObjectives:\n  - Hunt 6 Sift-Rays\nRepeatable: yes\n--- Deep Space Cartography [deep_space_cartography] (exploration, difficulty 4) ---\nChart frontier systems to expand our knowledge of the galaxy's outer reaches.\nFrom: Dr. Yun-Seo Park (Galactic Survey Institute)\n\"The Institute needs fresh navigation data from frontier space. Visit The Crucible and Horizon systems - both are in regions where our data is sparse.\"\nRewards: 4,000cr, +25 navigation XP, +40 exploration XP\nObjectives:\n  - Visit The Crucible system\n    Target system: the_crucible\n  - Visit the Horizon system\n    Target system: horizon\n--- First Haul [first_haul] (equipment, difficulty 1) ---\nThe salvage yard foreman needs someone to tow in a wreck. A good way to learn the business.\nFrom: Yard Foreman Dak (Salvage Yard Supervisor)\n\"New to salvaging? Here's how it works. Wrecks are scattered across the gal…",
+      "nearbyText": "At cargo_lanes_freight_depot — 2 players, 0 pirates, 1 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nb0ecb61240d489b8df3445db9a5efcc9\tILC Registrar\tProspect (prospect)\tIRLC\t\tdocked\n381c269f0ab6c784b4cf8e5189805011\tmarketbot_cargo_lanes\tAppraisal (appraisal)\t DB \t\tdocked\n(+14 offline players not listed; POI is busy.)\nEmpire NPCs:\nid\tname\trole\tempire\tfleet\tship\tcombat\n9794c9560e21db5bc1f5fc3de6a4dfae\t[POLICE] Federation Patrol I - Cargo Lanes Freight Depot\tpolice\tnebula\t\tOverhead (overhead)\t\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ],
+      "shipyardText": "8 ship(s) for sale at Cargo Lanes Freight Depot:\nlisting\tship\ttier\tcat\tprice\thull\tmods\tseller\n1615a7455302eb39b63c987cb3961cf1\tBulk Terms\tT2\tCommercial\t44,353cr\t155/155\t1\t[Station Manager: Cargo Lanes Freight Depot]\nd037c3397eae1863dd99725950c33bb2\tFrost Dividend\tT1\tIndustrial\t14,418cr\t95/95\t1\t[Station Manager: Cargo Lanes Freight Depot]\n2f458e9c4ada0ff9ae583fea90e4daac\tEscort\tT1\t\t5,678cr\t120/120\t3\t[Station Manager: Cargo Lanes Freight Depot]\n0ef39ceb9a508c8f6bcac76f26339aa7\tOverhead\tT1\tCombat Support\t12,352cr\t110/110\t3\t[Station Manager: Cargo Lanes Freight Depot]\n4ce9d99fcd7d765faf00a50e8e6cde7f\tScaffold\tT3\tIndustrial\t571,381cr\t450/450\t0\t[Station Manager: Cargo Lanes Freight Depot]\n68024ad7daa9a5c3e51598272745d661\tConsortium\tT2\tCivilian\t49,890cr\t170/170\t0\t[Station Manager: Cargo Lanes Freight Depot]\n05c6eb126f5f190a35ef49de72bd6836\tArbitrage\tT2\tCovert\t75,351cr\t150/150\t2\t[Station Manager: Cargo Lanes Freight Depot]\n5c8c2994379fc237ca382703b4fa557e\tBenefit\tT2\tSupport\t58,274cr\t160/160\t0\t[Station Manager: Cargo Lanes Freight Depot]\n",
+      "purchaseEstimates": [
+        {
+          "itemId": "deep_core_extractor_mk_i",
+          "name": "Deep Core Extractor Mk I",
+          "text": "Estimate: 1 Deep Core Extractor Mk I would cost 0cr (0 available). 1 unfilled."
+        },
+        {
+          "itemId": "mining_laser_iii",
+          "name": "Mining Laser III",
+          "text": "Estimate: 1 Mining Laser III would cost 0cr (0 available). 1 unfilled."
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "No mining ore or target modules available here; take on the exploration mission for income while continuing to work toward the mining skill/laser milestone at a later system.",
+      "steps": [
+        {
+          "action": "accept_mission",
+          "params": {
+            "template_id": "deep_space_cartography"
+          }
+        },
+        {
+          "action": "travel_to",
+          "params": {
+            "system_id": "the_crucible"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40375-plan-done",
+    "note": "harvested from the production pilot (event 40375, 2026-07-17T00:22:35.279Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "plan_done"
+      },
+      "statusSummary": "credits 187886, fuel 88/130, hull 95/95, cargo 0/100, undocked",
+      "recentEvents": [
+        "action",
+        "status_snapshot",
+        "wake",
+        "purchase_estimate_error",
+        "purchase_estimate_error"
+      ],
+      "surroundings": {
+        "systemId": "the_crucible",
+        "systemName": "The Crucible",
+        "connections": [
+          "bharani",
+          "valor",
+          "iron_reach",
+          "stillwater",
+          "the_rampart"
+        ],
+        "pois": [
+          {
+            "id": "fury_minor",
+            "name": "Fury Minor",
+            "type": "sun",
+            "class": "M3V",
+            "hasBase": false
+          },
+          {
+            "id": "crucible_prime",
+            "name": "Crucible Prime",
+            "type": "planet",
+            "class": "terran",
+            "hasBase": false
+          },
+          {
+            "id": "crucible_vents",
+            "name": "Crucible Vents",
+            "type": "gas_cloud",
+            "class": "atmospheric",
+            "hasBase": false
+          },
+          {
+            "id": "the_crucible_garrison",
+            "name": "The Crucible Garrison",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "fury_minor",
+          "name": "Fury Minor",
+          "type": "sun"
+        }
+      },
+      "cargo": {
+        "used": 0,
+        "capacity": 100,
+        "items": []
+      },
+      "previousGoal": {
+        "goal": "No mining ore or target modules available here; take on the exploration mission for income while continuing to work toward the mining skill/laser milestone at a later system.",
+        "outcome": "completed"
+      },
+      "chatMessages": [],
+      "activeMissionsText": "Active missions (1/5):\n--- Deep Space Cartography [3fb614214b19179c5fb4844bd9c9f9fa] (exploration, difficulty 4) ---\nChart frontier systems to expand our knowledge of the galaxy's outer reaches.\nProgress: 50%\nObjectives:\n  - Visit The Crucible system: 1/1 [DONE]\n    Target: The Crucible (the_crucible)\n  - Visit the Horizon system: 0/1\n    Target: Horizon (horizon)\nRewards: 4,000cr, +40 exploration XP, +25 navigation XP\nExpires in: 34410 ticks\n",
+      "activeMissions": [
+        {
+          "missionId": "3fb614214b19179c5fb4844bd9c9f9fa",
+          "expiresInTicks": 34410,
+          "percentComplete": 50,
+          "objectives": [
+            {
+              "type": "visit_system",
+              "required": 1,
+              "current": 1,
+              "completed": true,
+              "systemId": "the_crucible"
+            },
+            {
+              "type": "visit_system",
+              "required": 1,
+              "current": 0,
+              "completed": false,
+              "systemId": "horizon"
+            }
+          ]
+        }
+      ],
+      "nearbyText": "At fury_minor — 7 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\nc2230f225d3afffaaf0ed759ddfaca90\tAustinPowers\tThreshold (threshold)\tENDL\t\tonline\ne6eeb5174637f69d5868bb4b0420af5d\tScarlet Brand\tSiege Drill (siege_drill)\tSTRG\t\toffline\ncd3546a7f5c9c24c3f5ac52f381d1411\tSolVigil-36\tArchimedes (archimedes)\t\t\toffline\neabc72faaf8aa00fbccaa4300c8a6837\tSolVigil-38\tTheoria (theoria)\t\t\toffline\n7ae166dc19533c6a68482c397b9e1e76\tKiro\tShard (shard)\t\t\toffline\n77e36c1c08e489397aeb51648d4d6f63\tDriftKeep\tSiege Drill (siege_drill)\t\t\toffline\n8cc26ac2db9096b1e83c19234f0beea0\tSpettro Cremisi\tShard (shard)\tSTRG\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Travel to Horizon system to complete the Deep Space Cartography mission's second objective, then turn in the mission for 4,000cr",
+      "steps": [
+        {
+          "action": "travel_to",
+          "params": {
+            "system_id": "horizon"
+          }
+        },
+        {
+          "action": "complete_mission",
+          "params": {
+            "id": "3fb614214b19179c5fb4844bd9c9f9fa"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "prod-40408-heartbeat",
+    "note": "harvested from the production pilot (event 40408, 2026-07-17T00:53:33.226Z); recorded plan is the live sonnet planner's",
+    "ctx": {
+      "persona": "A pragmatic ore miner and trader. Priorities: fill cargo, sell at the best nearby price, keep fuel above 25%, avoid combat entirely; retreat and dock if threatened. Keep plans short and concrete. Prefer missions for income over selling common ore at ~8cr/unit.\n",
+      "goals": [
+        "Milestone step 1: buy a Deep Core Extractor Mk I (deep_core_extractor_mk_i, ~3,000cr) as soon as one is for sale - it triples mining power and unlocks rare-ore veins like palladium",
+        "Milestone step 2 (operator-confirmed milestone): raise mining skill to 4, save ~8,000cr, then buy a Mining Laser III (mining_laser_iii)"
+      ],
+      "wake": {
+        "reason": "heartbeat"
+      },
+      "statusSummary": "credits 187886, fuel 62/130, hull 95/95, cargo 0/100, undocked",
+      "recentEvents": [
+        "action",
+        "status_snapshot",
+        "wake",
+        "purchase_estimate_error",
+        "purchase_estimate_error"
+      ],
+      "surroundings": {
+        "systemId": "unknown_edge",
+        "systemName": "Unknown Edge",
+        "connections": [
+          "distant_light",
+          "altais",
+          "last_light",
+          "the_telescope"
+        ],
+        "pois": [
+          {
+            "id": "edgelight",
+            "name": "Edgelight",
+            "type": "sun",
+            "class": "B3V",
+            "hasBase": false
+          },
+          {
+            "id": "unknown_edge_i",
+            "name": "Unknown Edge I",
+            "type": "planet",
+            "class": "scorched",
+            "hasBase": false
+          },
+          {
+            "id": "unknown_edge_ii",
+            "name": "Unknown Edge II",
+            "type": "planet",
+            "class": "arid",
+            "hasBase": false
+          },
+          {
+            "id": "unknown_edge_iii",
+            "name": "Unknown Edge III",
+            "type": "planet",
+            "class": "tundra",
+            "hasBase": false
+          },
+          {
+            "id": "unknown_edge_mineral_fields",
+            "name": "Unknown Edge Mineral Fields",
+            "type": "asteroid_belt",
+            "class": "mixed",
+            "hasBase": false
+          },
+          {
+            "id": "unknown_edge_waystation",
+            "name": "Unknown Edge Waystation",
+            "type": "station",
+            "hasBase": true
+          },
+          {
+            "id": "mobile_capital",
+            "name": "Mobile Capital",
+            "type": "station",
+            "hasBase": true
+          }
+        ],
+        "dockedAt": null,
+        "currentPoi": {
+          "id": "edgelight",
+          "name": "Edgelight",
+          "type": "sun"
+        }
+      },
+      "cargo": {
+        "used": 0,
+        "capacity": 100,
+        "items": []
+      },
+      "previousGoal": {
+        "goal": "Travel to Horizon system to complete the Deep Space Cartography mission's second objective, then turn in the mission for 4,000cr",
+        "outcome": "superseded"
+      },
+      "chatMessages": [],
+      "activeMissionsText": "Active missions (1/5):\n--- Deep Space Cartography [3fb614214b19179c5fb4844bd9c9f9fa] (exploration, difficulty 4) ---\nChart frontier systems to expand our knowledge of the galaxy's outer reaches.\nProgress: 50%\nObjectives:\n  - Visit The Crucible system: 1/1 [DONE]\n    Target: The Crucible (the_crucible)\n  - Visit the Horizon system: 0/1\n    Target: Horizon (horizon)\nRewards: 4,000cr, +40 exploration XP, +25 navigation XP\nExpires in: 34227 ticks\n",
+      "activeMissions": [
+        {
+          "missionId": "3fb614214b19179c5fb4844bd9c9f9fa",
+          "expiresInTicks": 34227,
+          "percentComplete": 50,
+          "objectives": [
+            {
+              "type": "visit_system",
+              "required": 1,
+              "current": 1,
+              "completed": true,
+              "systemId": "the_crucible"
+            },
+            {
+              "type": "visit_system",
+              "required": 1,
+              "current": 0,
+              "completed": false,
+              "systemId": "horizon"
+            }
+          ]
+        }
+      ],
+      "nearbyText": "At edgelight — 3 players, 0 pirates, 0 empire NPCs, 0 creatures nearby.\nPlayers:\nid\tname\tship\tfaction\tcombat\tstatus\na3a06264ccbdfa4be0d166e92a1b982f\tShackleton\tFutures (futures)\tNOIR\t\tonline\n218d506eeba51499a5152882593d0c2a\tCinnamonCleeks\tWarranty Void (warranty_void)\t\t\toffline\n6b44fee5c6d1218802834eb3c8a72a67\tMesa Howler\tCobble (cobble)\tSTRG\t\toffline\n",
+      "lowFuel": false,
+      "shipFit": {
+        "cpuUsed": 4,
+        "cpuCapacity": 13,
+        "powerUsed": 10,
+        "powerCapacity": 26,
+        "slots": {
+          "weapon": 1,
+          "defense": 1,
+          "utility": 2
+        }
+      },
+      "fittedModules": [
+        {
+          "typeId": "mining_laser_i",
+          "type": "mining",
+          "miningPower": 5,
+          "slot": "utility",
+          "name": "Mining Laser I"
+        },
+        {
+          "typeId": "pulse_laser_i",
+          "type": "weapon",
+          "slot": "weapon",
+          "name": "Pulse Laser I"
+        }
+      ]
+    },
+    "recordedPlan": {
+      "goal": "Mine ore at the local asteroid field to build mining skill toward 4 (progress on milestone step 2), since credits already exceed the 8,000cr savings target and no Deep Core Extractor/Mining Laser III purchase listing is known here",
+      "steps": [
+        {
+          "action": "travel",
+          "params": {
+            "id": "unknown_edge_mineral_fields"
+          }
+        },
+        {
+          "action": "mine",
+          "params": {},
+          "until": "cargo_full"
+        }
+      ]
+    }
+  }
+]

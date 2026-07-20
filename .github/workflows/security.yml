@@ -1,0 +1,132 @@
+# Security regression CI (#172): two independent checks, deliberately in
+# their own workflow — container.yml owns build/publish (and the concurrent
+# #171 provenance change owns that file); mixing repo-hygiene enforcement into
+# it would couple two unrelated failure domains.
+#
+#   * scorecard — OpenSSF Scorecard on push-to-main + weekly schedule. Private
+#     repo: publish_results stays false, no badge, no aggregate-score API; we
+#     consume the JSON ourselves (job log + uploaded artifact). Report-only
+#     EXCEPT two invariants that hard-fail the job:
+#       - Dangerous-Workflow must score 10 (no pull_request_target, no
+#         script-injection patterns — the classic CI exfiltration holes).
+#       - Zero "GitHubAction not pinned by hash" findings (every action here
+#         is pinned to a commit SHA; this enforces it stays that way).
+#     The Pinned-Dependencies gate keys on the finding TEXT, not the score:
+#     the score also deducts for the Dockerfile's receipted npm-by-version
+#     install (npm-not-curl, security-controls.md), so a numeric threshold
+#     would either false-fire on the accepted state or sit low enough to hide
+#     a real unpinned action. Documented false-negative: Branch-Protection
+#     scores 0 on private repos (the pre-push hook is invisible to it) —
+#     reported, never gated.
+#   * gitleaks — full-history secrets scan on every push, PR, and the weekly
+#     schedule. History verified clean at adoption (255 commits, 2026-07-14);
+#     this keeps it that way. ANY finding fails the job. Binary pinned by
+#     version + SHA256 from the release checksums.txt (never curl|bash),
+#     --redact so a hit's value never lands in CI logs. PRs are scanned too:
+#     catching a leak pre-merge beats detecting it after it's in main history.
+#
+# Same trigger-security posture as container.yml: `pull_request` (never
+# `pull_request_target`), GitHub-hosted ephemeral runners, least-privilege
+# tokens, every action pinned to a commit SHA. No path filters on purpose:
+# a secret can land in ANY file, and scorecard's subjects (workflows,
+# Dockerfile) are cheap to re-check on every push.
+name: security
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1" # weekly, Monday 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scorecard:
+    # scorecard-action only runs against the default branch (push/schedule);
+    # PRs get gitleaks, scorecard catches up on merge.
+    #
+    # Token experiment (#208): scorecard's private-repo GraphQL (ListCommits)
+    # failed with "Resource not accessible by integration" under the default
+    # GITHUB_TOKEN (run 29294226997) and "...by personal access token" under a
+    # fine-grained PAT — fine-grained PATs have only partial GraphQL support,
+    # so that path is a dead end. Hypothesis: the default token failed from
+    # PERMISSION STARVATION, not token class — GITHUB_TOKEN is an installation
+    # token with full GraphQL support, but this job granted only
+    # contents:read while scorecard's commit query touches PR/author fields.
+    # So: widen the job to the full read-only set below and run with the
+    # default token (SCORECARD_PAT, if ever provisioned, still overrides via
+    # the `||` fallback). A classic PAT would also work but was rejected on
+    # blast radius (grants every repo the user can reach). If this experiment
+    # still 403s, the fallback is a GitHub App installed on this single repo
+    # (contents/PRs/issues/checks, all read — upstream's documented set) — see issue #208.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Run Scorecard (private repo — no publish, no badge)
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: scorecard.json
+          results_format: json
+          publish_results: false
+          repo_token: ${{ secrets.SCORECARD_PAT || github.token }}
+      - name: Report all check scores (report-only tier)
+        run: |
+          jq -r '.checks[] | [(.score|tostring), .name, .reason] | @tsv' scorecard.json \
+            | sort -rn | column -t -s $'\t'
+      - name: "Gate: Dangerous-Workflow == 10 and actions stay SHA-pinned"
+        run: |
+          fail=0
+          dw=$(jq -r '.checks[] | select(.name=="Dangerous-Workflow") | .score' scorecard.json)
+          if [ "$dw" != "10" ]; then
+            echo "::error::Dangerous-Workflow scored ${dw:-<missing>} (must be 10)"
+            jq -r '.checks[] | select(.name=="Dangerous-Workflow") | .details[]?' scorecard.json
+            fail=1
+          fi
+          # Presence check first: a gate that silently passes when its input
+          # vanishes is a fail-open verification (register oversight rule 1).
+          pd=$(jq -r '.checks[] | select(.name=="Pinned-Dependencies") | .score' scorecard.json)
+          if [ -z "$pd" ]; then
+            echo "::error::Pinned-Dependencies check missing from results"
+            fail=1
+          elif jq -r '.checks[] | select(.name=="Pinned-Dependencies") | .details[]?' scorecard.json \
+              | grep -F 'GitHubAction not pinned by hash'; then
+            echo "::error::unpinned GitHub Action detected — pin it to a commit SHA"
+            fail=1
+          fi
+          exit $fail
+      - name: Keep full results for later inspection
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: scorecard.json
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0 # full history — the scan covers every commit, not the tip
+      - name: Fetch gitleaks v8.30.1 (checksum-verified)
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: Scan full history (any finding fails the job)
+        run: ./gitleaks git --no-banner --redact .

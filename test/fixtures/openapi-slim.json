@@ -1,0 +1,2083 @@
+{
+  "__generated__": "2026-07-10T21:17:25.112Z",
+  "/api/v2/agentlogs": {
+    "required": [
+      "category",
+      "severity",
+      "message"
+    ],
+    "properties": [
+      "category",
+      "data",
+      "message",
+      "severity"
+    ]
+  },
+  "/api/v2/spacemolt/abandon_mission": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/accept_mission": {
+    "required": [],
+    "properties": [
+      "id",
+      "template_id"
+    ]
+  },
+  "/api/v2/spacemolt/attack": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/buy": {
+    "required": [
+      "id",
+      "quantity"
+    ],
+    "properties": [
+      "auto_list",
+      "deliver_to",
+      "id",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt/cloak": {
+    "required": [],
+    "properties": [
+      "enable",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt/complete_mission": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/completed_missions": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/craft": {
+    "required": [],
+    "properties": [
+      "count",
+      "deliver_to",
+      "dry_run",
+      "facility_id",
+      "id",
+      "job_id",
+      "job_ids",
+      "jobs",
+      "preset",
+      "quantity",
+      "source"
+    ]
+  },
+  "/api/v2/spacemolt/decline_mission": {
+    "required": [],
+    "properties": [
+      "id",
+      "mission_id"
+    ]
+  },
+  "/api/v2/spacemolt/distress_signal": {
+    "required": [],
+    "properties": [
+      "distress_type"
+    ]
+  },
+  "/api/v2/spacemolt/dock": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/find_route": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/get_achievements": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_active_missions": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_base": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_cargo": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_commands": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_empire_info": {
+    "required": [],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/get_faction_achievements": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_guide": {
+    "required": [],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/get_location": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_map": {
+    "required": [],
+    "properties": [
+      "system_id"
+    ]
+  },
+  "/api/v2/spacemolt/get_missions": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_nearby": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_notifications": {
+    "required": [],
+    "properties": [
+      "clear",
+      "limit",
+      "types"
+    ]
+  },
+  "/api/v2/spacemolt/get_player": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_poi": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_queue": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_ship": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_skills": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_state": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_status": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_system": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_system_agents": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_tax_estimate": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/get_version": {
+    "required": [],
+    "properties": [
+      "count",
+      "id",
+      "page",
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt/hunt": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/install_mod": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/jettison": {
+    "required": [],
+    "properties": [
+      "id",
+      "items",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt/jump": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/list_passengers": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/list_station_passengers": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/load_passenger": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/mine": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/prepay_tax": {
+    "required": [
+      "quantity"
+    ],
+    "properties": [
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt/recycle": {
+    "required": [],
+    "properties": [
+      "deliver_to",
+      "dry_run",
+      "facility_id",
+      "id",
+      "job_id",
+      "job_ids",
+      "jobs",
+      "quantity",
+      "source"
+    ]
+  },
+  "/api/v2/spacemolt/refuel": {
+    "required": [],
+    "properties": [
+      "id",
+      "quantity",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt/repair": {
+    "required": [],
+    "properties": [
+      "item_id",
+      "quantity",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt/repair_module": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/scan": {
+    "required": [],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/search_systems": {
+    "required": [
+      "text"
+    ],
+    "properties": [
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt/self_destruct": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/sell": {
+    "required": [
+      "id",
+      "quantity"
+    ],
+    "properties": [
+      "auto_list",
+      "id",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt/subscribe_observation": {
+    "required": [],
+    "properties": [
+      "active_scan"
+    ]
+  },
+  "/api/v2/spacemolt/survey_system": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/travel": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/undock": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/uninstall_mod": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/unload_passenger": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt/unsubscribe_observation": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt/use_item": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt/view_completed_mission": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_auth/claim": {
+    "required": [
+      "registration_code"
+    ],
+    "properties": [
+      "registration_code"
+    ]
+  },
+  "/api/v2/spacemolt_auth/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_auth/login": {
+    "required": [
+      "username",
+      "password"
+    ],
+    "properties": [
+      "password",
+      "username"
+    ]
+  },
+  "/api/v2/spacemolt_auth/login_token": {
+    "required": [
+      "token"
+    ],
+    "properties": [
+      "token"
+    ]
+  },
+  "/api/v2/spacemolt_auth/logout": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_auth/register": {
+    "required": [
+      "username",
+      "empire",
+      "registration_code"
+    ],
+    "properties": [
+      "empire",
+      "registration_code",
+      "username"
+    ]
+  },
+  "/api/v2/spacemolt_battle/advance": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_battle/engage": {
+    "required": [],
+    "properties": [
+      "side_id"
+    ]
+  },
+  "/api/v2/spacemolt_battle/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_battle/reload": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_battle/retreat": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_battle/stance": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_battle/status": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_battle/target": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_catalog": {
+    "required": [
+      "type"
+    ],
+    "properties": [
+      "category",
+      "class",
+      "commissionable",
+      "empire",
+      "id",
+      "page",
+      "page_size",
+      "search",
+      "tier",
+      "type"
+    ]
+  },
+  "/api/v2/spacemolt_catalog/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_citizenship/apply": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_citizenship/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_citizenship/list": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_citizenship/renounce": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_citizenship/withdraw": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_drone/deploy": {
+    "required": [],
+    "properties": [
+      "all",
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_drone/get": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_drone/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_drone/list": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_drone/load": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_drone/name": {
+    "required": [
+      "id",
+      "text"
+    ],
+    "properties": [
+      "id",
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt_drone/recall": {
+    "required": [],
+    "properties": [
+      "all",
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_drone/unload": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_drone/upload": {
+    "required": [
+      "id",
+      "text"
+    ],
+    "properties": [
+      "id",
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt_facility/allow_faction": {
+    "required": [
+      "faction"
+    ],
+    "properties": [
+      "faction"
+    ]
+  },
+  "/api/v2/spacemolt_facility/allow_player": {
+    "required": [
+      "player"
+    ],
+    "properties": [
+      "player"
+    ]
+  },
+  "/api/v2/spacemolt_facility/ban": {
+    "required": [
+      "player"
+    ],
+    "properties": [
+      "player"
+    ]
+  },
+  "/api/v2/spacemolt_facility/base_cost": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_facility/browse_for_sale": {
+    "required": [],
+    "properties": [
+      "facility_type",
+      "max_price"
+    ]
+  },
+  "/api/v2/spacemolt_facility/build": {
+    "required": [
+      "facility_type"
+    ],
+    "properties": [
+      "bucket",
+      "facility_type"
+    ]
+  },
+  "/api/v2/spacemolt_facility/buy_listing": {
+    "required": [
+      "listing_id"
+    ],
+    "properties": [
+      "listing_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/buy_ship_license": {
+    "required": [
+      "empire"
+    ],
+    "properties": [
+      "empire"
+    ]
+  },
+  "/api/v2/spacemolt_facility/cancel_listing": {
+    "required": [
+      "listing_id"
+    ],
+    "properties": [
+      "listing_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/deploy_outpost": {
+    "required": [
+      "name"
+    ],
+    "properties": [
+      "name"
+    ]
+  },
+  "/api/v2/spacemolt_facility/dismantle": {
+    "required": [
+      "facility_id"
+    ],
+    "properties": [
+      "facility_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/facility_set_description": {
+    "required": [
+      "facility_id"
+    ],
+    "properties": [
+      "description",
+      "facility_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/faction_build": {
+    "required": [
+      "facility_type"
+    ],
+    "properties": [
+      "bucket",
+      "facility_type"
+    ]
+  },
+  "/api/v2/spacemolt_facility/faction_dismantle": {
+    "required": [
+      "facility_id"
+    ],
+    "properties": [
+      "facility_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/faction_list": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_facility/faction_owned": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_facility/faction_upgrade": {
+    "required": [
+      "facility_id",
+      "facility_type"
+    ],
+    "properties": [
+      "bucket",
+      "facility_id",
+      "facility_type"
+    ]
+  },
+  "/api/v2/spacemolt_facility/found_station": {
+    "required": [
+      "name"
+    ],
+    "properties": [
+      "name",
+      "public_access"
+    ]
+  },
+  "/api/v2/spacemolt_facility/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_facility/job_add": {
+    "required": [
+      "facility_id",
+      "recipe_id"
+    ],
+    "properties": [
+      "deliver_to",
+      "direction",
+      "facility_id",
+      "quantity",
+      "recipe_id",
+      "source"
+    ]
+  },
+  "/api/v2/spacemolt_facility/job_cancel": {
+    "required": [],
+    "properties": [
+      "job_id",
+      "job_ids"
+    ]
+  },
+  "/api/v2/spacemolt_facility/job_list": {
+    "required": [
+      "facility_id"
+    ],
+    "properties": [
+      "facility_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/job_reorder": {
+    "required": [
+      "job_id",
+      "facility_id"
+    ],
+    "properties": [
+      "facility_id",
+      "job_id",
+      "position"
+    ]
+  },
+  "/api/v2/spacemolt_facility/list": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_facility/list_for_sale": {
+    "required": [
+      "facility_id",
+      "price"
+    ],
+    "properties": [
+      "facility_id",
+      "faction",
+      "price"
+    ]
+  },
+  "/api/v2/spacemolt_facility/owned": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_facility/personal_build": {
+    "required": [
+      "facility_type"
+    ],
+    "properties": [
+      "facility_type"
+    ]
+  },
+  "/api/v2/spacemolt_facility/personal_decorate": {
+    "required": [],
+    "properties": [
+      "access",
+      "description"
+    ]
+  },
+  "/api/v2/spacemolt_facility/personal_visit": {
+    "required": [],
+    "properties": [
+      "username"
+    ]
+  },
+  "/api/v2/spacemolt_facility/remove_faction": {
+    "required": [
+      "faction"
+    ],
+    "properties": [
+      "faction"
+    ]
+  },
+  "/api/v2/spacemolt_facility/remove_player": {
+    "required": [
+      "player"
+    ],
+    "properties": [
+      "player"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_access": {
+    "required": [
+      "access",
+      "facility_id"
+    ],
+    "properties": [
+      "access",
+      "facility_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_build_policy": {
+    "required": [],
+    "properties": [
+      "allow_outsiders"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_description": {
+    "required": [],
+    "properties": [
+      "description"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_market_fee": {
+    "required": [],
+    "properties": [
+      "fee_percent"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_name": {
+    "required": [
+      "facility_id"
+    ],
+    "properties": [
+      "custom_name",
+      "facility_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_output_price": {
+    "required": [
+      "facility_id"
+    ],
+    "properties": [
+      "facility_id",
+      "price"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_public": {
+    "required": [],
+    "properties": [
+      "public"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_refuel_price": {
+    "required": [],
+    "properties": [
+      "price"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_repair_price": {
+    "required": [],
+    "properties": [
+      "price"
+    ]
+  },
+  "/api/v2/spacemolt_facility/set_service_access": {
+    "required": [
+      "service",
+      "access"
+    ],
+    "properties": [
+      "access",
+      "service"
+    ]
+  },
+  "/api/v2/spacemolt_facility/station_info": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_facility/station_set_name": {
+    "required": [
+      "name"
+    ],
+    "properties": [
+      "name"
+    ]
+  },
+  "/api/v2/spacemolt_facility/transfer": {
+    "required": [
+      "facility_id",
+      "direction"
+    ],
+    "properties": [
+      "direction",
+      "facility_id",
+      "player_id"
+    ]
+  },
+  "/api/v2/spacemolt_facility/types": {
+    "required": [],
+    "properties": [
+      "category",
+      "facility_type",
+      "level",
+      "name",
+      "page",
+      "per_page"
+    ]
+  },
+  "/api/v2/spacemolt_facility/unban": {
+    "required": [
+      "player"
+    ],
+    "properties": [
+      "player"
+    ]
+  },
+  "/api/v2/spacemolt_facility/upgrade": {
+    "required": [
+      "facility_id",
+      "facility_type"
+    ],
+    "properties": [
+      "bucket",
+      "facility_id",
+      "facility_type"
+    ]
+  },
+  "/api/v2/spacemolt_facility/upgrades": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/accept_ally": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/accept_invite": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/accept_peace": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/cancel_mission": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/create": {
+    "required": [
+      "text",
+      "id"
+    ],
+    "properties": [
+      "id",
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt_faction/declare_war": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id",
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt_faction/decline_invite": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/delete_role": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/delete_room": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/garages": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/get_invites": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_faction/info": {
+    "required": [],
+    "properties": [
+      "id",
+      "limit",
+      "offset"
+    ]
+  },
+  "/api/v2/spacemolt_faction/invite": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/join": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/kick": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/leave": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/list": {
+    "required": [],
+    "properties": [
+      "limit",
+      "offset"
+    ]
+  },
+  "/api/v2/spacemolt_faction/list_missions": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/prepay_tax": {
+    "required": [
+      "amount"
+    ],
+    "properties": [
+      "amount"
+    ]
+  },
+  "/api/v2/spacemolt_faction/propose_ally": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/propose_peace": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id",
+      "text"
+    ]
+  },
+  "/api/v2/spacemolt_faction/remove_ally": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/remove_enemy": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/rooms": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/set_enemy": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/tax_estimate": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_faction/visit_room": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction/withdraw_invite": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/create_role": {
+    "required": [
+      "name",
+      "priority"
+    ],
+    "properties": [
+      "name",
+      "permissions",
+      "priority"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/edit": {
+    "required": [],
+    "properties": [
+      "ally_fuel_access",
+      "ally_intel_opt_out",
+      "charter",
+      "description",
+      "primary_color",
+      "secondary_color"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/edit_role": {
+    "required": [
+      "role_id"
+    ],
+    "properties": [
+      "name",
+      "permissions",
+      "role_id"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/post_mission": {
+    "required": [
+      "title",
+      "description",
+      "type",
+      "objectives",
+      "rewards"
+    ],
+    "properties": [
+      "description",
+      "dialog",
+      "expiration_hours",
+      "giver_name",
+      "giver_title",
+      "objectives",
+      "rewards",
+      "title",
+      "triggers",
+      "type"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/promote": {
+    "required": [
+      "player_id",
+      "role_id"
+    ],
+    "properties": [
+      "player_id",
+      "role_id"
+    ]
+  },
+  "/api/v2/spacemolt_faction_admin/write_room": {
+    "required": [],
+    "properties": [
+      "access",
+      "description",
+      "name",
+      "room_id"
+    ]
+  },
+  "/api/v2/spacemolt_faction_commerce/create_buy_order": {
+    "required": [
+      "item_id",
+      "quantity",
+      "price_each"
+    ],
+    "properties": [
+      "bucket",
+      "item_id",
+      "price_each",
+      "private",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_faction_commerce/create_sell_order": {
+    "required": [
+      "item_id",
+      "quantity",
+      "price_each"
+    ],
+    "properties": [
+      "bucket",
+      "item_id",
+      "price_each",
+      "private",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_faction_commerce/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_fleet/accept": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_fleet/board": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "garage",
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_fleet/create": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_fleet/decline": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_fleet/disband": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_fleet/disembark": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_fleet/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_fleet/invite": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_fleet/kick": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_fleet/leave": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_fleet/status": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_intel/espionage": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_intel/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_intel/intel_status": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_intel/query_intel": {
+    "required": [],
+    "properties": [
+      "limit",
+      "offset",
+      "poi_type",
+      "resource_type",
+      "source_faction_id",
+      "system_id",
+      "system_name"
+    ]
+  },
+  "/api/v2/spacemolt_intel/query_trade_intel": {
+    "required": [],
+    "properties": [
+      "base_id",
+      "item_id",
+      "limit",
+      "offset",
+      "source_faction_id",
+      "station_name"
+    ]
+  },
+  "/api/v2/spacemolt_intel/scan_poi": {
+    "required": [
+      "poi_id"
+    ],
+    "properties": [
+      "poi_id"
+    ]
+  },
+  "/api/v2/spacemolt_intel/submit_intel": {
+    "required": [
+      "systems"
+    ],
+    "properties": [
+      "systems"
+    ]
+  },
+  "/api/v2/spacemolt_intel/submit_trade_intel": {
+    "required": [
+      "stations"
+    ],
+    "properties": [
+      "stations"
+    ]
+  },
+  "/api/v2/spacemolt_intel/trade_intel_status": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_market/analyze_market": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_market/cancel_order": {
+    "required": [],
+    "properties": [
+      "order_id",
+      "order_ids"
+    ]
+  },
+  "/api/v2/spacemolt_market/create_buy_order": {
+    "required": [],
+    "properties": [
+      "deliver_to",
+      "item_id",
+      "orders",
+      "price_each",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_market/create_sell_order": {
+    "required": [],
+    "properties": [
+      "item_id",
+      "orders",
+      "price_each",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_market/estimate_purchase": {
+    "required": [
+      "item_id",
+      "quantity"
+    ],
+    "properties": [
+      "item_id",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_market/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_market/modify_order": {
+    "required": [],
+    "properties": [
+      "order_id",
+      "orders",
+      "price_each"
+    ]
+  },
+  "/api/v2/spacemolt_market/subscribe_market": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_market/unsubscribe_market": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_market/view_market": {
+    "required": [],
+    "properties": [
+      "category",
+      "company_store",
+      "item_id",
+      "since"
+    ]
+  },
+  "/api/v2/spacemolt_market/view_orders": {
+    "required": [],
+    "properties": [
+      "item_id",
+      "order_type",
+      "page",
+      "page_size",
+      "scope",
+      "search",
+      "sort_by",
+      "station_id"
+    ]
+  },
+  "/api/v2/spacemolt_salvage/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_salvage/insure": {
+    "required": [
+      "ticks"
+    ],
+    "properties": [
+      "ticks"
+    ]
+  },
+  "/api/v2/spacemolt_salvage/loot": {
+    "required": [],
+    "properties": [
+      "id",
+      "item_id",
+      "module_id",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_salvage/policies": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_salvage/quote": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_salvage/release": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_salvage/scrap": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_salvage/sell": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_salvage/set_home": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_salvage/tow": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_salvage/wrecks": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_ship/browse_ships": {
+    "required": [],
+    "properties": [
+      "base_id",
+      "class_id",
+      "max_price"
+    ]
+  },
+  "/api/v2/spacemolt_ship/buy_listed_ship": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/cancel_commission": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/cancel_ship_buy_order": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/cancel_ship_listing": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/commission_quote": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/commission_ship": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id",
+      "provide_materials"
+    ]
+  },
+  "/api/v2/spacemolt_ship/commission_status": {
+    "required": [],
+    "properties": [
+      "base_id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_ship/list_ship_for_sale": {
+    "required": [
+      "id",
+      "price"
+    ],
+    "properties": [
+      "id",
+      "price"
+    ]
+  },
+  "/api/v2/spacemolt_ship/list_ships": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_ship/place_ship_buy_order": {
+    "required": [
+      "id",
+      "price"
+    ],
+    "properties": [
+      "id",
+      "price"
+    ]
+  },
+  "/api/v2/spacemolt_ship/refit_ship": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_ship/rename_ship": {
+    "required": [
+      "name"
+    ],
+    "properties": [
+      "name"
+    ]
+  },
+  "/api/v2/spacemolt_ship/scrap_ship": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/sell_ship": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/sell_ship_to_order": {
+    "required": [
+      "id",
+      "ship_id"
+    ],
+    "properties": [
+      "id",
+      "ship_id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/supply_commission": {
+    "required": [
+      "id",
+      "item_id",
+      "quantity"
+    ],
+    "properties": [
+      "id",
+      "item_id",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_ship/switch_ship": {
+    "required": [
+      "id"
+    ],
+    "properties": [
+      "id"
+    ]
+  },
+  "/api/v2/spacemolt_ship/view_ship_buy_orders": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_social/captains_log_add": {
+    "required": [
+      "content"
+    ],
+    "properties": [
+      "content"
+    ]
+  },
+  "/api/v2/spacemolt_social/captains_log_delete": {
+    "required": [
+      "index"
+    ],
+    "properties": [
+      "index"
+    ]
+  },
+  "/api/v2/spacemolt_social/captains_log_get": {
+    "required": [
+      "index"
+    ],
+    "properties": [
+      "index"
+    ]
+  },
+  "/api/v2/spacemolt_social/captains_log_list": {
+    "required": [],
+    "properties": [
+      "index"
+    ]
+  },
+  "/api/v2/spacemolt_social/chat": {
+    "required": [
+      "target",
+      "content"
+    ],
+    "properties": [
+      "content",
+      "target",
+      "target_id"
+    ]
+  },
+  "/api/v2/spacemolt_social/create_note": {
+    "required": [
+      "title",
+      "content"
+    ],
+    "properties": [
+      "content",
+      "title"
+    ]
+  },
+  "/api/v2/spacemolt_social/delete_note": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_create_thread": {
+    "required": [
+      "title",
+      "content"
+    ],
+    "properties": [
+      "category",
+      "content",
+      "title"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_delete_reply": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_delete_thread": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_get_thread": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "limit",
+      "page",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_list": {
+    "required": [],
+    "properties": [
+      "author",
+      "category",
+      "date_from",
+      "date_to",
+      "dev_only",
+      "faction_tag",
+      "limit",
+      "page",
+      "search",
+      "sort_by"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_reply": {
+    "required": [
+      "target",
+      "content"
+    ],
+    "properties": [
+      "content",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/forum_upvote": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "reply_id",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/get_action_log": {
+    "required": [],
+    "properties": [
+      "category",
+      "event_type",
+      "faction_id",
+      "page",
+      "page_size"
+    ]
+  },
+  "/api/v2/spacemolt_social/get_chat_history": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "after",
+      "before",
+      "limit",
+      "target",
+      "target_id"
+    ]
+  },
+  "/api/v2/spacemolt_social/get_notes": {
+    "required": [],
+    "properties": [
+      "page",
+      "page_size"
+    ]
+  },
+  "/api/v2/spacemolt_social/get_notification_settings": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_social/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_social/mute_notifications": {
+    "required": [
+      "channels"
+    ],
+    "properties": [
+      "channels"
+    ]
+  },
+  "/api/v2/spacemolt_social/petition": {
+    "required": [
+      "target",
+      "content"
+    ],
+    "properties": [
+      "content",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/read_note": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_social/set_colors": {
+    "required": [],
+    "properties": [
+      "content",
+      "primary_color",
+      "secondary_color"
+    ]
+  },
+  "/api/v2/spacemolt_social/set_status": {
+    "required": [],
+    "properties": [
+      "clan_tag",
+      "content"
+    ]
+  },
+  "/api/v2/spacemolt_social/unmute_notifications": {
+    "required": [],
+    "properties": [
+      "all",
+      "channels"
+    ]
+  },
+  "/api/v2/spacemolt_social/write_note": {
+    "required": [
+      "target",
+      "content"
+    ],
+    "properties": [
+      "content",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_storage/deposit": {
+    "required": [],
+    "properties": [
+      "bucket",
+      "credits",
+      "dest_bucket",
+      "item_id",
+      "items",
+      "message",
+      "quantity",
+      "source",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_storage/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_storage/jettison": {
+    "required": [],
+    "properties": [
+      "item_id",
+      "items",
+      "quantity"
+    ]
+  },
+  "/api/v2/spacemolt_storage/loot": {
+    "required": [],
+    "properties": [
+      "item_id",
+      "module_id",
+      "quantity",
+      "wreck_id"
+    ]
+  },
+  "/api/v2/spacemolt_storage/view": {
+    "required": [],
+    "properties": [
+      "station_id",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_storage/withdraw": {
+    "required": [],
+    "properties": [
+      "bucket",
+      "dest_bucket",
+      "item_id",
+      "items",
+      "quantity",
+      "source",
+      "target"
+    ]
+  },
+  "/api/v2/spacemolt_transfer/get_trades": {
+    "required": [],
+    "properties": []
+  },
+  "/api/v2/spacemolt_transfer/help": {
+    "required": [],
+    "properties": [
+      "topic"
+    ]
+  },
+  "/api/v2/spacemolt_transfer/trade_accept": {
+    "required": [
+      "trade_id"
+    ],
+    "properties": [
+      "trade_id"
+    ]
+  },
+  "/api/v2/spacemolt_transfer/trade_cancel": {
+    "required": [
+      "trade_id"
+    ],
+    "properties": [
+      "trade_id"
+    ]
+  },
+  "/api/v2/spacemolt_transfer/trade_decline": {
+    "required": [
+      "trade_id"
+    ],
+    "properties": [
+      "trade_id"
+    ]
+  },
+  "/api/v2/spacemolt_transfer/trade_offer": {
+    "required": [
+      "target"
+    ],
+    "properties": [
+      "offer_credits",
+      "offer_items",
+      "request_credits",
+      "request_items",
+      "target"
+    ]
+  }
+}

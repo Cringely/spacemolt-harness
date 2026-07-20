@@ -1,0 +1,782 @@
+{
+  "_meta": {
+    "captured": "2026-07-16",
+    "account": "miner (nebula)",
+    "method": "live HTTP v2 probe (Batch 0, PR #302 follow-up). Read-only queries only: session bootstrap + login + get_status/get_system/get_poi. Zero mutations.",
+    "purpose": "verify/falsify the ASSUMED flag on PR #302: get_poi deposit resource_id values share the catalog item_id space",
+    "note": "get_poi takes no parameters (openapi-v2 GetPOI request schema is an empty object) -- it is presence-only, so this capture covers ONLY the POI the pilot was at during capture.",
+    "redactions": "session ids, password, username, player ids, and 24+-hex/UUID ids scrubbed before write",
+    "verdict": {
+      "question": "do get_poi deposit resource_id values share the catalog item_id space? (the ASSUMED flag on PR 302)",
+      "answer": "VERIFIED at this POI: all 4 deposit resource_ids are byte-exact catalog item ids",
+      "comparison": [
+        {
+          "resource_id": "carbon_ore",
+          "catalog_item": "Carbon Ore (category: ore)",
+          "match": "exact"
+        },
+        {
+          "resource_id": "vanadium_ore",
+          "catalog_item": "Vanadium Ore (category: ore)",
+          "match": "exact"
+        },
+        {
+          "resource_id": "palladium_ore",
+          "catalog_item": "Palladium Ore (category: ore)",
+          "match": "exact"
+        },
+        {
+          "resource_id": "gold_ore",
+          "catalog_item": "Gold Ore (category: ore)",
+          "match": "exact"
+        }
+      ],
+      "compared_against": "src/catalog/catalog.data.json (710 items)"
+    },
+    "limitations": [
+      "get_poi takes no parameters (openapi-v2: empty request schema), so it reports only the POI the pilot is physically at. This capture is one POI: gold_run_mineral_fields (asteroid_belt, system gold_run) -- which is the live incident site the digest deposit-check was built for.",
+      "No other belt/ice-field could be probed without travel (a 1-per-tick mutation, out of scope for this read-only probe). The id-space claim is verified for these 4 ore ids; other resource classes (ice, gas) are unprobed but now have 4/4 evidence the spaces coincide.",
+      "titanium_ore (the stalled mission objective id) exists in the catalog and is ABSENT from this belt deposit list -- confirming the digest deposit-membership verdict that mining here cannot advance that objective."
+    ]
+  },
+  "queries": {
+    "spacemolt/get_status": {
+      "status": 200,
+      "body": {
+        "result": "[REDACTED] [nebula] | 187,117cr | Gold Run\nShip: Prospect (prospect) | Hull: 95/95 | Shield: 50/50 (+1/tick) | Armor: 4 | Speed: 1\nFuel: 122/130 | Cargo: 11/100 | CPU: 4/13 | Power: 10/26\nSecurity: Low Security (slow police response)\nConnections: cargo_lanes, market_prime, bunda, copernicus, wealth_lane\nResources (4):\nresource\trichness\tremaining\tsupports_power\nCarbon Ore\t48\t31\t1\nVanadium Ore\t46\t30\t1\nPalladium Ore\t30\t29\t1\nGold Ore\t25\t30\t1\nNearby players (10):\nname\tship\tfaction\tcombat\tstatus\nGeminiFleet_01\tprospect\t\t\toffline\nVoidTrader\tprospect\t\t\toffline\nStarMapper\tprospect\t\t\toffline\ncaptian godzilla\tprospector\t\t\toffline\nmyMiner9\tprospect\t\t\toffline\nLiberation\tcobble\t[o7]\t\toffline\nQuantumDrift\tprospector\t\t\toffline\nZapity\tprospect\t\t\toffline\nMiningBuddy36\tprospect\t\t\toffline\nGeminiCommander\taxiom\t\t\toffline\nModules (2):\nid\ttype\tslot\tsize\twear\tstats\n[REDACTED_ID]\tmining_laser_i\tutility\t10\tPristine\tmining_power:5\n[REDACTED_ID]\tpulse_laser_i\tweapon\t10\tPristine\treach:3 cooldown:1 damage:10 damage_type:0 range:10\nCargo (4 items):\nitem\tqty\tsize\nCarbon Ore\t5\t1\nVanadium Ore\t2\t1\nPalladium Ore\t3\t1\nGold Ore\t1\t1\nSkills (12):\nskill\tlevel\txp\tnext_level\npiloting\t9\t1,976\t3,525\nsmuggling\t1\t30\t165\ntrading\t2\t215\t340\ngunnery\t0\t6\t60\nleadership\t0\t8\t60\nnebula_attunement\t0\t35\t60\ntactics\t0\t54\t60\nweapons\t0\t2\t60\ndeep_core_mining\t2\t203\t340\nexploration\t2\t255\t340\nmining\t8\t1,813\t2,860\nnavigation\t5\t1,153\t1,285\nEmpire standings:\nempire\trep\tbaseline\tbounty\nsolarian\t10\t10\t0\nvoidborn\t10\t10\t0\ncrimson\t10\t10\t0\nnebula\t20\t20\t0\nouterrim\t10\t10\t0\npirates\t-30\t-30\t0\n",
+        "structuredContent": {
+          "cargo": [
+            {
+              "item_id": "carbon_ore",
+              "item_name": "Carbon Ore",
+              "quantity": 5,
+              "size": 1
+            },
+            {
+              "item_id": "vanadium_ore",
+              "item_name": "Vanadium Ore",
+              "quantity": 2,
+              "size": 1
+            },
+            {
+              "item_id": "palladium_ore",
+              "item_name": "Palladium Ore",
+              "quantity": 3,
+              "size": 1
+            },
+            {
+              "item_id": "gold_ore",
+              "item_name": "Gold Ore",
+              "quantity": 1,
+              "size": 1
+            }
+          ],
+          "location": {
+            "connections": [
+              "cargo_lanes",
+              "market_prime",
+              "bunda",
+              "copernicus",
+              "wealth_lane"
+            ],
+            "docked_at": null,
+            "empire": "nebula",
+            "nearby_empire_npc_count": 0,
+            "nearby_empire_npcs": [],
+            "nearby_pirate_count": 0,
+            "nearby_pirates": [],
+            "nearby_player_count": 10,
+            "nearby_players": [
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospect",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospect",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospect",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospector",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospect",
+                "username": "[REDACTED]"
+              },
+              {
+                "faction_tag": "[o7]",
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "cobble",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospector",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospect",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "prospect",
+                "username": "[REDACTED]"
+              },
+              {
+                "in_combat": false,
+                "offline": true,
+                "player_id": "[REDACTED]",
+                "ship_class": "axiom",
+                "username": "[REDACTED]"
+              }
+            ],
+            "poi_id": "gold_run_mineral_fields",
+            "poi_name": "Gold Run Mineral Fields",
+            "poi_type": "asteroid_belt",
+            "resources": [
+              {
+                "item_id": "carbon_ore",
+                "item_name": "Carbon Ore",
+                "remaining": 31,
+                "richness": 48,
+                "supported_power": 1
+              },
+              {
+                "item_id": "vanadium_ore",
+                "item_name": "Vanadium Ore",
+                "remaining": 30,
+                "richness": 46,
+                "supported_power": 1
+              },
+              {
+                "item_id": "palladium_ore",
+                "item_name": "Palladium Ore",
+                "remaining": 29,
+                "richness": 30,
+                "supported_power": 1
+              },
+              {
+                "item_id": "gold_ore",
+                "item_name": "Gold Ore",
+                "remaining": 30,
+                "richness": 25,
+                "supported_power": 1
+              }
+            ],
+            "security_status": "Low Security (slow police response)",
+            "system_id": "gold_run",
+            "system_name": "Gold Run"
+          },
+          "message": "Current game state",
+          "missions": {
+            "active": [],
+            "max_missions": 5
+          },
+          "modules": [
+            {
+              "cpu_usage": 2,
+              "module_id": "[REDACTED_ID]",
+              "name": "Mining Laser I",
+              "power_usage": 5,
+              "size": 10,
+              "slot": "utility",
+              "stats": {
+                "mining_power": 5
+              },
+              "type": "mining",
+              "type_id": "mining_laser_i",
+              "wear": 0,
+              "wear_status": "Pristine"
+            },
+            {
+              "cpu_usage": 2,
+              "module_id": "[REDACTED_ID]",
+              "name": "Pulse Laser I",
+              "power_usage": 5,
+              "size": 10,
+              "slot": "weapon",
+              "stats": {
+                "cooldown": 1,
+                "damage": 10,
+                "damage_type": "energy",
+                "range": 10,
+                "reach": 3
+              },
+              "type": "weapon",
+              "type_id": "pulse_laser_i",
+              "wear": 0,
+              "wear_status": "Pristine"
+            }
+          ],
+          "player": {
+            "citizenships": [
+              "nebula"
+            ],
+            "clan_tag": "",
+            "credits": 187117,
+            "empire": "nebula",
+            "home_base": "grand_exchange_station",
+            "home_poi": "grand_exchange",
+            "home_system": "haven",
+            "id": "[REDACTED_ID]",
+            "is_cloaked": false,
+            "primary_color": "#FFFFFF",
+            "secondary_color": "#000000",
+            "standings": {
+              "crimson": {
+                "baseline": 10,
+                "outstanding_bounty": 0,
+                "reputation": 10
+              },
+              "nebula": {
+                "baseline": 20,
+                "outstanding_bounty": 0,
+                "reputation": 20
+              },
+              "outerrim": {
+                "baseline": 10,
+                "outstanding_bounty": 0,
+                "reputation": 10
+              },
+              "pirates": {
+                "baseline": -30,
+                "outstanding_bounty": 0,
+                "reputation": -30
+              },
+              "solarian": {
+                "baseline": 10,
+                "outstanding_bounty": 0,
+                "reputation": 10
+              },
+              "voidborn": {
+                "baseline": 10,
+                "outstanding_bounty": 0,
+                "reputation": 10
+              }
+            },
+            "stats": {
+              "bases_destroyed": 0,
+              "battles_fled": 0,
+              "battles_started": 0,
+              "captains_log_entries": 26,
+              "chat_messages_sent": 4,
+              "cloak_activations": 0,
+              "consumables_used": 0,
+              "contraband_sold": 0,
+              "credits_earned": 201697,
+              "credits_earned_taxable": 201697,
+              "credits_earned_taxable_by_category": {
+                "market": 168397,
+                "mission": 33300
+              },
+              "credits_earned_taxable_by_category_snapshot": {
+                "market": 3348
+              },
+              "credits_earned_taxable_snapshot": 3348,
+              "credits_gifted": 0,
+              "credits_spent": 13830,
+              "customs_evaded": 0,
+              "damage_dealt": 20,
+              "damage_taken": 196,
+              "deaths_by_pirate": 1,
+              "deaths_by_player": 0,
+              "deaths_by_self_destruct": 1,
+              "deaths_by_wildlife": 0,
+              "deep_core_pois_discovered": 0,
+              "distance_traveled": 225147,
+              "exchange_credits_earned": 168397,
+              "exchange_items_bought": 15,
+              "exchange_items_sold": 3072,
+              "facilities_built": 0,
+              "facility_items_produced": 0,
+              "forum_posts_created": 0,
+              "gifts_received": 0,
+              "gifts_sent": 0,
+              "insurance_claims_made": 0,
+              "insurance_payouts_received": 0,
+              "insurance_policies_bought": 0,
+              "items_crafted": 0,
+              "items_jettisoned": 2154,
+              "jumps_completed": 610,
+              "last_income_tax_assessed_at": 1783877320,
+              "last_property_tax_assessed_at": 1783877320,
+              "market_purchases_deductible": 7656,
+              "market_purchases_deductible_snapshot": 878,
+              "missions_abandoned": 1,
+              "missions_accepted": 8,
+              "missions_completed": 9,
+              "modules_installed": 0,
+              "npcs_destroyed": 0,
+              "ore_mined": 9123,
+              "pirates_destroyed": 0,
+              "prayer_distance_traveled": 0,
+              "refuels_given": 0,
+              "repairs_given": 0,
+              "scans_performed": 0,
+              "self_destructs": 1,
+              "ships_commissioned": 0,
+              "ships_destroyed": 0,
+              "ships_lost": 2,
+              "ships_purchased": 0,
+              "systems_explored": 77,
+              "time_played": 313980,
+              "times_docked": 668,
+              "trades_completed": 170,
+              "void_drifts": 0,
+              "wormholes_traversed": 0,
+              "wreck_items_looted": 0,
+              "wrecks_scrapped": 0,
+              "wrecks_sold": 0
+            },
+            "status_message": "",
+            "username": "[REDACTED]"
+          },
+          "queue": {
+            "has_pending": false
+          },
+          "ship": {
+            "armor": 4,
+            "cargo_capacity": 100,
+            "cargo_used": 11,
+            "class_id": "prospect",
+            "class_name": "Prospect",
+            "cpu_capacity": 13,
+            "cpu_used": 4,
+            "defense_slots": 1,
+            "fuel": 122,
+            "hull": 95,
+            "id": "[REDACTED_ID]",
+            "max_fuel": 130,
+            "max_hull": 95,
+            "max_shield": 50,
+            "name": "Prospect",
+            "power_capacity": 26,
+            "power_used": 10,
+            "shield": 50,
+            "shield_recharge": 1,
+            "speed": 1,
+            "utility_slots": 2,
+            "weapon_slots": 1
+          },
+          "skills": {
+            "deep_core_mining": {
+              "category": "Industry",
+              "level": 2,
+              "max_level": 100,
+              "name": "Deep Core Mining",
+              "next_level_xp": 340,
+              "xp": 203
+            },
+            "exploration": {
+              "category": "Exploration",
+              "level": 2,
+              "max_level": 100,
+              "name": "Exploration",
+              "next_level_xp": 340,
+              "xp": 255
+            },
+            "gunnery": {
+              "category": "Combat",
+              "level": 0,
+              "max_level": 100,
+              "name": "Gunnery",
+              "next_level_xp": 60,
+              "xp": 6
+            },
+            "leadership": {
+              "category": "Combat",
+              "level": 0,
+              "max_level": 100,
+              "name": "Leadership",
+              "next_level_xp": 60,
+              "xp": 8
+            },
+            "mining": {
+              "category": "Industry",
+              "level": 8,
+              "max_level": 100,
+              "name": "Mining",
+              "next_level_xp": 2860,
+              "xp": 1813
+            },
+            "navigation": {
+              "category": "Ships",
+              "level": 5,
+              "max_level": 100,
+              "name": "Navigation",
+              "next_level_xp": 1285,
+              "xp": 1153
+            },
+            "nebula_attunement": {
+              "category": "Empire",
+              "level": 0,
+              "max_level": 100,
+              "name": "Nebula Attunement",
+              "next_level_xp": 60,
+              "xp": 35
+            },
+            "piloting": {
+              "category": "Ships",
+              "level": 9,
+              "max_level": 100,
+              "name": "Piloting",
+              "next_level_xp": 3525,
+              "xp": 1976
+            },
+            "smuggling": {
+              "category": "Commerce",
+              "level": 1,
+              "max_level": 100,
+              "name": "Smuggling",
+              "next_level_xp": 165,
+              "xp": 30
+            },
+            "tactics": {
+              "category": "Combat",
+              "level": 0,
+              "max_level": 100,
+              "name": "Tactics",
+              "next_level_xp": 60,
+              "xp": 54
+            },
+            "trading": {
+              "category": "Commerce",
+              "level": 2,
+              "max_level": 100,
+              "name": "Trading",
+              "next_level_xp": 340,
+              "xp": 215
+            },
+            "weapons": {
+              "category": "Combat",
+              "level": 0,
+              "max_level": 100,
+              "name": "Weapons",
+              "next_level_xp": 60,
+              "xp": 2
+            }
+          },
+          "version": "0.516.0"
+        },
+        "notifications": null,
+        "session": {
+          "id": "[REDACTED]",
+          "player_id": "[REDACTED]",
+          "created_at": "2026-07-16T22:26:25.856743759Z",
+          "expires_at": "2026-07-16T22:56:26.354906274Z"
+        }
+      }
+    },
+    "spacemolt/get_system": {
+      "status": 200,
+      "body": {
+        "result": "System: Gold Run (gold_run) | Empire: nebula | Security: Low Security (slow police response)\nPOIs (9):\nid\tname\ttype\tclass\tbase\tonline\naurelia\tAurelia\tsun\tK3V\t\t0\ngold_run_i\tGold Run I\tplanet\tarid\t\t0\ngold_run_ii\tGold Run II\tplanet\tterran\t\t0\ngold_run_iii\tGold Run III\tplanet\tterran\t\t0\ngold_run_iv\tGold Run IV\tplanet\tjovian\t\t0\ngold_run_v\tGold Run V\tplanet\tglacial\t\t0\ngold_run_mineral_fields\tGold Run Mineral Fields\tasteroid_belt\tmetallic\t\t1\ngold_run_cryobelt\tGold Run Cryobelt\tice_field\tkuiper\t\t0\ngold_run_extraction_hub\tGold Run Extraction Hub\tstation\t\tGold Run Extraction Hub\t26\nConnections (5):\nsystem_id\tname\tdistance\ncargo_lanes\tCargo Lanes\t227 GU\nmarket_prime\tMarket Prime\t357 GU\nbunda\tBunda\t452 GU\ncopernicus\tCopernicus\t543 GU\nwealth_lane\tWealth Lane\t723 GU\n",
+        "structuredContent": {
+          "action": "get_system",
+          "poi": {
+            "class": "metallic",
+            "fuel_reserve": 0,
+            "has_base": false,
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "online": 1,
+            "position": {
+              "x": 3,
+              "y": -1
+            },
+            "type": "asteroid_belt"
+          },
+          "security_status": "Low Security (slow police response)",
+          "system": {
+            "connections": [
+              {
+                "distance": 227,
+                "name": "Cargo Lanes",
+                "system_id": "cargo_lanes"
+              },
+              {
+                "distance": 357,
+                "name": "Market Prime",
+                "system_id": "market_prime"
+              },
+              {
+                "distance": 452,
+                "name": "Bunda",
+                "system_id": "bunda"
+              },
+              {
+                "distance": 543,
+                "name": "Copernicus",
+                "system_id": "copernicus"
+              },
+              {
+                "distance": 723,
+                "name": "Wealth Lane",
+                "system_id": "wealth_lane"
+              }
+            ],
+            "empire": "nebula",
+            "id": "gold_run",
+            "is_stronghold": false,
+            "name": "Gold Run",
+            "pois": [
+              {
+                "class": "K3V",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "aurelia",
+                "name": "Aurelia",
+                "online": 0,
+                "position": {
+                  "x": 0,
+                  "y": 0
+                },
+                "type": "sun"
+              },
+              {
+                "class": "arid",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_i",
+                "name": "Gold Run I",
+                "online": 0,
+                "position": {
+                  "x": 1,
+                  "y": 0.3
+                },
+                "type": "planet"
+              },
+              {
+                "class": "terran",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_ii",
+                "name": "Gold Run II",
+                "online": 0,
+                "position": {
+                  "x": 2,
+                  "y": -0.3
+                },
+                "type": "planet"
+              },
+              {
+                "class": "terran",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_iii",
+                "name": "Gold Run III",
+                "online": 0,
+                "position": {
+                  "x": 3,
+                  "y": -0.3
+                },
+                "type": "planet"
+              },
+              {
+                "class": "jovian",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_iv",
+                "name": "Gold Run IV",
+                "online": 0,
+                "position": {
+                  "x": 4,
+                  "y": -0.3
+                },
+                "type": "planet"
+              },
+              {
+                "class": "glacial",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_v",
+                "name": "Gold Run V",
+                "online": 0,
+                "position": {
+                  "x": 5,
+                  "y": 0.3
+                },
+                "type": "planet"
+              },
+              {
+                "class": "metallic",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_mineral_fields",
+                "name": "Gold Run Mineral Fields",
+                "online": 1,
+                "position": {
+                  "x": 3,
+                  "y": -1
+                },
+                "type": "asteroid_belt"
+              },
+              {
+                "class": "kuiper",
+                "fuel_reserve": 0,
+                "has_base": false,
+                "id": "gold_run_cryobelt",
+                "name": "Gold Run Cryobelt",
+                "online": 0,
+                "position": {
+                  "x": 4,
+                  "y": 1
+                },
+                "type": "ice_field"
+              },
+              {
+                "base_id": "gold_run_extraction_hub",
+                "base_name": "Gold Run Extraction Hub",
+                "fuel_capacity": 200000,
+                "fuel_price": 2,
+                "fuel_reserve": 199942,
+                "has_base": true,
+                "id": "gold_run_extraction_hub",
+                "name": "Gold Run Extraction Hub",
+                "online": 26,
+                "position": {
+                  "x": 2.5,
+                  "y": 0.3
+                },
+                "type": "station"
+              }
+            ],
+            "police_level": 55,
+            "security_status": "Low Security (slow police response)"
+          }
+        },
+        "notifications": null,
+        "session": {
+          "id": "[REDACTED]",
+          "player_id": "[REDACTED]",
+          "created_at": "2026-07-16T22:26:25.856743759Z",
+          "expires_at": "2026-07-16T22:56:26.639013673Z"
+        }
+      }
+    },
+    "spacemolt/get_poi": {
+      "status": 200,
+      "body": {
+        "result": "POI: Gold Run Mineral Fields (gold_run_mineral_fields) | Type: asteroid_belt (metallic)\nResources (4):\nresource\trichness\tremaining\tsupports_power\nCarbon Ore\t48\t31\t1\nVanadium Ore\t46\t30\t1\nPalladium Ore\t30\t29\t1\nGold Ore\t25\t30\t1\n",
+        "structuredContent": {
+          "poi": {
+            "class": "metallic",
+            "description": "The richest mineral deposits in Nebula space. Carbon, vanadium, palladium, and gold \u2014 the raw ingredients of Federation commerce. Three shifts, around the clock, year after year.",
+            "id": "gold_run_mineral_fields",
+            "name": "Gold Run Mineral Fields",
+            "position": {
+              "x": 3,
+              "y": -1
+            },
+            "resources": [
+              {
+                "max_remaining": 30000,
+                "remaining": 31,
+                "resource_id": "carbon_ore",
+                "richness": 48
+              },
+              {
+                "max_remaining": 25000,
+                "remaining": 30,
+                "resource_id": "vanadium_ore",
+                "richness": 46
+              },
+              {
+                "max_remaining": 5000,
+                "remaining": 29,
+                "resource_id": "palladium_ore",
+                "richness": 30
+              },
+              {
+                "max_remaining": 8000,
+                "remaining": 30,
+                "resource_id": "gold_ore",
+                "richness": 25
+              }
+            ],
+            "system_id": "gold_run",
+            "type": "asteroid_belt"
+          },
+          "resources": [
+            {
+              "depletion_percent": 99.89666666666666,
+              "max_remaining": 30000,
+              "name": "Carbon Ore",
+              "remaining": 31,
+              "remaining_display": "31 units",
+              "resource_id": "carbon_ore",
+              "richness": 48,
+              "supported_power": 1
+            },
+            {
+              "depletion_percent": 99.88,
+              "max_remaining": 25000,
+              "name": "Vanadium Ore",
+              "remaining": 30,
+              "remaining_display": "30 units",
+              "resource_id": "vanadium_ore",
+              "richness": 46,
+              "supported_power": 1
+            },
+            {
+              "depletion_percent": 99.42,
+              "max_remaining": 5000,
+              "name": "Palladium Ore",
+              "remaining": 29,
+              "remaining_display": "29 units",
+              "resource_id": "palladium_ore",
+              "richness": 30,
+              "supported_power": 1
+            },
+            {
+              "depletion_percent": 99.625,
+              "max_remaining": 8000,
+              "name": "Gold Ore",
+              "remaining": 30,
+              "remaining_display": "30 units",
+              "resource_id": "gold_ore",
+              "richness": 25,
+              "supported_power": 1
+            }
+          ]
+        },
+        "notifications": null,
+        "session": {
+          "id": "[REDACTED]",
+          "player_id": "[REDACTED]",
+          "created_at": "2026-07-16T22:26:25.856743759Z",
+          "expires_at": "2026-07-16T22:56:26.856906652Z"
+        }
+      }
+    }
+  }
+}

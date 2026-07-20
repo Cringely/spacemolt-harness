@@ -1,0 +1,1591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SpaceMolt Harness &mdash; Command Center</title>
+<style>
+  /*
+   * App-shell layout modelled on the SpaceMolt Command Center (read-only
+   * visual inspection of https://www.spacemolt.com, 2026-07-11): a fixed
+   * left nav rail with eyebrow-grouped sections, a heavy uppercase heading
+   * with a short accent underline, and a right telemetry rail with a live
+   * event feed and a comms-style input at the bottom.
+   *
+   * IP restraint: no proprietary asset is copied. No logo image, no font
+   * file, no CDN request of any kind (zero external requests -- a server
+   * test asserts there is no external <script src>/<link href>). The brand
+   * glyph is a hand-built inline SVG hexagon + node cluster approximating
+   * the molecule/crab motif, not their artwork. "Space Grotesk" leads the
+   * font stack as a same-family nod but is never fetched -- it silently
+   * falls through to system-ui unless already installed. The "HARNESS"
+   * subtag makes clear this is our monitoring tool, not the real product.
+   */
+  :root {
+    color-scheme: dark;
+    --bg:        #0a0e17;  /* near-black navy page background */
+    --bg-rail:   #0c1220;  /* sidebar / rail, a hair lighter than page */
+    --bg-panel:  #0e1626;  /* card surface */
+    --bg-inset:  #070b13;  /* recessed wells (feed, inputs) */
+    --border:    #1b2838;  /* 1px steel/navy hairline */
+    --border-lo: #141e2c;  /* dimmer hairline for internal splits */
+    --fg:        #e9f3f8;  /* bright near-white for values */
+    --fg-body:   #6b8fa3;  /* muted steel-blue body text */
+    --fg-dim:    #3f5568;  /* dimmest labels / disabled */
+    --cyan:      #22d3ee;  /* primary */
+    --cyan-dim:  #164e5b;  /* cyan at low intensity (eyebrows, tracks) */
+    --teal:      #2dd4bf;  /* online / live / running */
+    --green:     #34d399;  /* success (sell verified, plan done) */
+    --amber:     #f5b04a;  /* warning (stalled, backoff, fallback) */
+    --red:       #f87171;  /* error / blocked */
+    --violet:    #a78bfa;  /* reflex / log */
+    --orange:    #ff6b35;  /* primary CTA only */
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", "Consolas", monospace;
+    --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--fg-body);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- three-column app shell ---- */
+  .shell {
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr) 330px;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ================= LEFT SIDEBAR ================= */
+  .sidebar {
+    background: var(--bg-rail);
+    border-right: 1px solid var(--border);
+    padding: 1.1rem 0.85rem 1rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.4rem;
+  }
+  .brand { display: flex; align-items: center; gap: 0.6rem; }
+  .brand .glyph { flex: 0 0 auto; width: 30px; height: 30px; }
+  .brand .lockup { display: flex; flex-direction: column; line-height: 1.05; }
+  .brand .word {
+    font-weight: 700;
+    font-size: 0.98rem;
+    letter-spacing: 0.19em;
+    color: var(--fg);
+  }
+  .brand .word b { color: var(--cyan); font-weight: 700; }
+  .brand .subtag {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.28em;
+    color: var(--fg-dim);
+    margin-top: 0.28rem;
+  }
+
+  .navsec { display: flex; flex-direction: column; gap: 0.35rem; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    opacity: 0.65;
+    padding: 0 0.35rem;
+    margin-bottom: 0.15rem;
+  }
+  .nav-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.12rem; }
+  .nav-item, .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.45rem;
+    border-radius: 5px;
+    font-size: 0.82rem;
+    color: var(--fg-body);
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid transparent;
+    width: 100%;
+    background: none;
+    text-align: left;
+    font-family: inherit;
+  }
+  .nav-item:hover, .nav-link:hover { background: rgba(34, 211, 238, 0.06); color: var(--fg); }
+  .nav-item.sel { background: rgba(34, 211, 238, 0.10); border-color: var(--cyan-dim); color: var(--fg); }
+  .nav-item .id { font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.02em; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-link .ico { font-family: var(--mono); color: var(--fg-dim); font-size: 0.72rem; width: 1em; text-align: center; }
+
+  .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-dim); }
+  .dot.running { background: var(--teal); box-shadow: 0 0 6px rgba(45, 212, 191, 0.7); }
+  .dot.warn    { background: var(--amber); box-shadow: 0 0 6px rgba(245, 176, 74, 0.6); }
+  .dot.error   { background: var(--red); box-shadow: 0 0 6px rgba(248, 113, 113, 0.6); }
+  .dot.idle    { background: var(--fg-dim); }
+
+  .side-empty { font-size: 0.75rem; color: var(--fg-dim); padding: 0.3rem 0.45rem; }
+
+  /* ================= MAIN COLUMN ================= */
+  .main { overflow-y: auto; padding: 1.4rem 1.6rem 2.5rem; }
+  .cmd-head { margin-bottom: 1.4rem; }
+  .cmd-head .eyebrow { padding: 0; margin-bottom: 0.4rem; }
+  .cmd-head h1 {
+    margin: 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg);
+  }
+  .cmd-head .accent { width: 46px; height: 3px; background: var(--cyan); margin-top: 0.6rem; border-radius: 2px; }
+  .cmd-head .who { font-family: var(--mono); font-size: 0.78rem; color: var(--fg-body); margin-top: 0.7rem; }
+  .cmd-head .who b { color: var(--cyan); font-weight: 600; }
+
+  .card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.95rem 1.05rem 1.05rem;
+    margin-bottom: 1.15rem;
+  }
+  .card > h2 {
+    margin: 0 0 0.85rem;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--fg-body);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card > h2::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); flex: 0 0 auto; }
+
+  /* overview: grid of micro-label cells */
+  .ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1px; background: var(--border-lo); border: 1px solid var(--border-lo); border-radius: 6px; overflow: hidden; }
+  .ov-cell { background: var(--bg-panel); padding: 0.6rem 0.7rem; }
+  .ov-cell .lab { font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-dim); }
+  .ov-cell .val { font-family: var(--mono); font-size: 0.98rem; color: var(--fg); margin-top: 0.28rem; word-break: break-word; }
+  .ov-cell .val.state-running { color: var(--teal); }
+  .ov-cell .val.state-blocked { color: var(--red); }
+  .ov-cell .val.state-done { color: var(--green); }
+  .ov-cell .val.state-none { color: var(--fg-body); }
+  .ov-cell .val .await { color: var(--fg-dim); font-style: italic; font-size: 0.82rem; }
+  .foot-note { font-size: 0.68rem; color: var(--fg-dim); margin-top: 0.7rem; font-style: italic; }
+
+  /* cargo manifest under the CARGO vitals bar */
+  .manifest { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.6rem; }
+  .manifest .mitem {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    padding: 0.18rem 0.45rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: rgba(107, 143, 163, 0.08);
+    color: var(--fg-body);
+    white-space: nowrap;
+  }
+  .manifest .mitem b { color: var(--cyan); font-weight: 600; }
+
+  /* ship identity + module bay (ship-details panel) */
+  .ship-id { font-family: var(--mono); font-size: 0.95rem; color: var(--fg); margin-bottom: 0.45rem; display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.55rem; }
+  .ship-id .ship-class { font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-dim); }
+  .slots { margin-top: 0.65rem; border-top: 1px dotted var(--border-lo); padding-top: 0.5rem; }
+  .slot-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; margin: 0.32rem 0; }
+  .slot-row .slab { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-body); min-width: 108px; }
+  .slot-row .mitem {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    padding: 0.18rem 0.45rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: rgba(107, 143, 163, 0.08);
+    color: var(--fg-body);
+    white-space: nowrap;
+  }
+  .slot-row .mitem.empty { color: var(--fg-dim); font-style: italic; border-style: dashed; background: transparent; }
+
+  /* vitals-style bars */
+  .bar-row { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 0.7rem; margin: 0.55rem 0; }
+  .bar-row .blab { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-body); }
+  .bar-track { height: 7px; background: var(--bg-inset); border: 1px solid var(--border-lo); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: linear-gradient(90deg, var(--teal), var(--cyan)); border-radius: 3px; transition: width 0.3s ease; }
+  .bar-num { font-family: var(--mono); font-size: 0.76rem; color: var(--fg); text-align: right; min-width: 54px; }
+
+  /* pills (planner health + plan meta) */
+  .pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .pill {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.05em;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: rgba(107, 143, 163, 0.08);
+    color: var(--fg-body);
+    white-space: nowrap;
+  }
+  .pill.ok   { border-color: var(--cyan-dim); color: #8fd9e6; background: rgba(34, 211, 238, 0.07); }
+  .pill.warn { border-color: rgba(245, 176, 74, 0.45); color: var(--amber); background: rgba(245, 176, 74, 0.10); }
+  .pill.err  { border-color: rgba(248, 113, 113, 0.45); color: var(--red); background: rgba(248, 113, 113, 0.10); }
+  .plan-goal { font-size: 0.9rem; color: var(--fg); margin-bottom: 0.7rem; }
+  .plan-goal .lab { font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-dim); display: block; margin-bottom: 0.2rem; }
+  .plan-goal .none { color: var(--fg-dim); font-style: italic; }
+
+  /* usage / histogram rows */
+  .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 0.3rem 0; border-bottom: 1px dotted var(--border-lo); font-size: 0.8rem; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-body); }
+  .kv .v { font-family: var(--mono); color: var(--fg); }
+  /* Mission header: title gets its own full-width line (long game titles wrap
+     instead of colliding with the expiry in a two-column squeeze on phones);
+     the expiry sits beneath as a smaller dim line, raw tick count on hover. */
+  .mission-hd { padding: 0.3rem 0 0; }
+  .mission-hd + .mission-hd, .kv + .mission-hd { margin-top: 0.35rem; }
+  .mission-hd .mission-title { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-body); overflow-wrap: anywhere; }
+  .mission-hd .mission-exp { font-family: var(--mono); font-size: 0.62rem; color: var(--fg-dim); padding: 0.05rem 0 0.15rem; }
+  .hist-row { display: grid; grid-template-columns: 96px 1fr 34px; align-items: center; gap: 0.6rem; margin: 0.4rem 0; }
+  .hist-row .hk { font-family: var(--mono); font-size: 0.68rem; color: var(--fg-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-fill { height: 6px; background: var(--cyan-dim); border-radius: 3px; }
+  .hist-row .hn { font-family: var(--mono); font-size: 0.72rem; color: var(--fg); text-align: right; }
+  /* Failure-class rows (#158): wider label column -- class tokens run longer
+     than wake reasons -- and a NEW badge for never-seen-before classes. */
+  .hist-row.fcls { grid-template-columns: 170px 1fr 34px; }
+  .newcls {
+    font-family: var(--mono); font-size: 0.54rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--amber); border: 1px solid rgba(245, 176, 74, 0.4); border-radius: 3px;
+    padding: 0.02rem 0.28rem; margin-left: 0.35rem;
+  }
+
+  /* ================= RIGHT RAIL (telemetry) ================= */
+  .rail {
+    background: var(--bg-rail);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .rail-head {
+    padding: 1.1rem 1rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .rail-head .title { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg); display: flex; align-items: center; gap: 0.45rem; }
+  .rail-head .title .dot { width: 7px; height: 7px; }
+  #ws-state { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-dim); }
+  #ws-state.up { color: var(--teal); }
+  #ws-state.down { color: var(--red); }
+
+  .feed { flex: 1 1 auto; overflow-y: auto; padding: 0.5rem 0.6rem; }
+  .fe { display: grid; grid-template-columns: 12px 1fr auto; gap: 0.5rem; align-items: baseline; padding: 0.32rem 0.25rem; border-bottom: 1px solid var(--border-lo); }
+  .fe .fdot { width: 7px; height: 7px; border-radius: 50%; margin-top: 0.35rem; background: var(--cyan); flex: 0 0 auto; }
+  .fe .fdot.cyan { background: var(--cyan); }
+  .fe .fdot.teal { background: var(--teal); }
+  .fe .fdot.green { background: var(--green); }
+  .fe .fdot.amber { background: var(--amber); }
+  .fe .fdot.red { background: var(--red); }
+  .fe .fdot.violet { background: var(--violet); }
+  .fe .body { min-width: 0; }
+  .fe .who { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.06em; color: var(--cyan); opacity: 0.8; }
+  .fe .txt { font-family: var(--mono); font-size: 0.72rem; color: var(--fg-body); line-height: 1.35; word-break: break-word; }
+  .fe .txt b { color: var(--fg); font-weight: 600; }
+  .fe .ts { font-family: var(--mono); font-size: 0.6rem; color: var(--fg-dim); white-space: nowrap; }
+  .feed-empty { font-family: var(--mono); font-size: 0.72rem; color: var(--fg-dim); padding: 0.6rem 0.3rem; }
+
+  /* Event-type filter: a compact chip row above the feed. Reuses the mono
+     eyebrow + pill idiom already used by the health pills. An "on" chip shows
+     its type; clicking toggles. Selection persists in localStorage. */
+  .feed-filter { border-bottom: 1px solid var(--border); background: var(--bg-inset); padding: 0.5rem 0.6rem 0.55rem; }
+  .feed-filter .ff-lab { font-family: var(--mono); font-size: 0.56rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-dim); display: block; margin-bottom: 0.4rem; }
+  .feed-filter .ff-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+  .feed-filter .fchip {
+    font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 0.16rem 0.44rem; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent; color: var(--fg-dim);
+    cursor: pointer; white-space: nowrap; opacity: 0.55;
+  }
+  .feed-filter .fchip.on { border-color: var(--cyan-dim); color: #8fd9e6; background: rgba(34, 211, 238, 0.07); opacity: 1; }
+  .feed-filter .fchip:hover { border-color: var(--cyan); }
+
+  /* comms input */
+  .comms { border-top: 1px solid var(--border); padding: 0.8rem 0.8rem 0.9rem; background: var(--bg-inset); }
+  .comms .head { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-dim); margin-bottom: 0.5rem; display: flex; justify-content: space-between; }
+  .comms .head b { color: var(--cyan); font-weight: 600; }
+  .comms textarea {
+    width: 100%;
+    background: var(--bg-rail);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    padding: 0.5rem 0.6rem;
+    resize: vertical;
+    min-height: 3.1rem;
+  }
+  .comms textarea:focus { outline: none; border-color: var(--cyan); }
+  .comms textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+  .comms .send-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin-top: 0.5rem; }
+  .comms .count { font-family: var(--mono); font-size: 0.6rem; color: var(--fg-dim); }
+  .comms button {
+    background: var(--cyan);
+    color: #04121a;
+    font-weight: 700;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border: none;
+    border-radius: 5px;
+    padding: 0.45rem 1rem;
+    cursor: pointer;
+  }
+  .comms button:hover { background: #3ee0f5; }
+  .comms button:disabled { background: var(--border); color: var(--fg-dim); cursor: not-allowed; }
+  .comms .err { color: var(--red); font-family: var(--mono); font-size: 0.66rem; min-height: 1em; margin-top: 0.35rem; }
+
+  /* ---- Batch 2b: statistics & trends (health banner, charts, cost) ---- */
+  /* Full-width health banner above the panels -- the STUCK/THROTTLED state.
+     Reuses the red/amber vars and the pill visual language already in use. */
+  .alert-banner {
+    display: flex; align-items: baseline; gap: 0.6rem;
+    border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 1.15rem;
+    border: 1px solid transparent;
+  }
+  .alert-banner .tag {
+    font-family: var(--mono); font-weight: 700; font-size: 0.68rem;
+    letter-spacing: 0.16em; text-transform: uppercase; flex: 0 0 auto;
+  }
+  .alert-banner .msg { font-size: 0.8rem; color: var(--fg-body); }
+  .alert-banner.stuck { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.5); }
+  .alert-banner.stuck .tag { color: var(--red); }
+  .alert-banner.throttled { background: rgba(245, 176, 74, 0.12); border-color: rgba(245, 176, 74, 0.5); }
+  .alert-banner.throttled .tag { color: var(--amber); }
+
+  /* Wake-reason broken-signal banner, inside the Usage card. */
+  .wake-alert {
+    display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.7rem;
+    border-radius: 6px; padding: 0.5rem 0.65rem;
+    background: rgba(248, 113, 113, 0.10); border: 1px solid rgba(248, 113, 113, 0.45);
+    font-family: var(--mono); font-size: 0.72rem; color: var(--fg-body); line-height: 1.4;
+  }
+  .wake-alert .tag { color: var(--red); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; flex: 0 0 auto; }
+
+  /* Big headline metric (plan rate, est. $/day). */
+  .metric-hero { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.65rem; }
+  .metric-hero .big { font-family: var(--mono); font-size: 1.65rem; font-weight: 700; color: var(--fg); line-height: 1; }
+  .metric-hero .big.hot { color: var(--amber); }
+  .metric-hero .unit { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-dim); }
+  .est-tag {
+    font-family: var(--mono); font-size: 0.54rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--amber); border: 1px solid rgba(245, 176, 74, 0.4); border-radius: 3px; padding: 0.05rem 0.32rem;
+  }
+
+  /* Inline SVG charts. Stretched to full card width; strokes kept crisp with
+     non-scaling-stroke (applied per-element) despite preserveAspectRatio=none. */
+  .chart { width: 100%; display: block; }
+  .chart.spark { height: 60px; }
+  .chart.credits { height: 168px; }
+  .chart-empty { font-family: var(--mono); font-size: 0.72rem; color: var(--fg-dim); padding: 0.5rem 0.2rem; }
+  .chart-cap {
+    display: flex; justify-content: space-between; margin-top: 0.35rem;
+    font-family: var(--mono); font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-dim);
+  }
+  /* Chart legend/key: small swatch + label per series, plus the deploy marker.
+     The swatch inherits its series color via currentColor so line and dashed
+     variants share one rule. */
+  .chart-legend {
+    display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; margin-top: 0.4rem;
+    font-family: var(--mono); font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-dim);
+  }
+  .chart-legend .lg { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .chart-legend .sw { width: 15px; height: 0; border-top: 2px solid currentColor; flex: 0 0 auto; }
+  .chart-legend .sw.dash { border-top-style: dashed; }
+  .ct-hit { cursor: crosshair; }
+  /* Grafana-style hover overlay: a single global crosshair line + point dot +
+     floating value tooltip, positioned over whichever chart the cursor is on.
+     Lives on <body> (outside the re-rendered panel) so a poll re-render never
+     tears it down; a delegated mousemove drives it. */
+  #ctip {
+    position: fixed; z-index: 50; pointer-events: none; display: none;
+    background: rgba(12, 18, 26, 0.96); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.4rem 0.55rem; font-family: var(--mono); font-size: 0.68rem; color: var(--fg-body);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); white-space: nowrap;
+  }
+  #ctip .tt-time { color: var(--fg-dim); font-size: 0.6rem; letter-spacing: 0.05em; margin-bottom: 0.28rem; }
+  #ctip .tt-row { display: flex; align-items: center; gap: 0.4rem; }
+  #ctip .tt-dot { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+  #ctip .tt-lab { color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.6rem; }
+  #ctip .tt-val { color: var(--fg); font-weight: 600; margin-left: auto; padding-left: 0.9rem; }
+  #ccross { position: fixed; z-index: 49; pointer-events: none; display: none; width: 1px; background: rgba(230, 237, 243, 0.35); }
+  #cdot {
+    position: fixed; z-index: 49; pointer-events: none; display: none;
+    width: 8px; height: 8px; border-radius: 50%; border: 2px solid #0b1117; transform: translate(-50%, -50%);
+  }
+  /* Trend-window selector (1h / 7h / 1d / 2d / 10d). */
+  .win-sel { display: flex; align-items: center; gap: 0.3rem; margin: 0 0 1rem; font-family: var(--mono); flex-wrap: wrap; }
+  .win-sel .win-lab { font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-dim); margin-right: 0.2rem; }
+  .win-sel .win-opt {
+    font-size: 0.66rem; padding: 0.22rem 0.55rem; border: 1px solid var(--border);
+    background: transparent; color: var(--fg-dim); border-radius: 5px; cursor: pointer;
+  }
+  .win-sel .win-opt:hover { border-color: var(--cyan); color: var(--fg-body); }
+  .win-sel .win-opt.on { border-color: var(--cyan-dim); color: #8fd9e6; background: rgba(34, 211, 238, 0.09); }
+
+  /* Calls-per-model rows. */
+  .model-row { display: grid; grid-template-columns: 1fr auto; gap: 0.7rem; align-items: baseline; padding: 0.3rem 0; border-bottom: 1px dotted var(--border-lo); }
+  .model-row:last-of-type { border-bottom: none; }
+  .model-row .mname { font-family: var(--mono); font-size: 0.76rem; color: var(--fg); }
+  .model-row .mcalls { font-family: var(--mono); font-size: 0.7rem; color: var(--fg-body); }
+
+  /* scrollbars */
+  .sidebar::-webkit-scrollbar, .main::-webkit-scrollbar, .feed::-webkit-scrollbar { width: 8px; }
+  .sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb, .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ================= RESPONSIVE (< 900px) ================= */
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: auto; min-height: 100vh; overflow: visible; }
+    body { overflow-x: hidden; }
+    .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 1rem 1.4rem; border-right: none; border-bottom: 1px solid var(--border); overflow: visible; }
+    .sidebar .navsec { flex-direction: row; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .sidebar .nav-list { flex-direction: row; flex-wrap: wrap; }
+    .main { overflow-y: visible; }
+    .rail { border-left: none; border-top: 1px solid var(--border); max-height: 70vh; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ================= LEFT SIDEBAR ================= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <!-- hand-built molecule/crab motif: hex frame + node cluster, no proprietary asset -->
+        <polygon points="16,2 28,9 28,23 16,30 4,23 4,9" fill="none" stroke="#22d3ee" stroke-width="1.4" opacity="0.85"/>
+        <line x1="16" y1="16" x2="16" y2="7"  stroke="#2dd4bf" stroke-width="1.1"/>
+        <line x1="16" y1="16" x2="23" y2="20" stroke="#2dd4bf" stroke-width="1.1"/>
+        <line x1="16" y1="16" x2="9"  y2="20" stroke="#2dd4bf" stroke-width="1.1"/>
+        <circle cx="16" cy="16" r="3" fill="#22d3ee"/>
+        <circle cx="16" cy="7"  r="2" fill="#0a0e17" stroke="#22d3ee" stroke-width="1.2"/>
+        <circle cx="23" cy="20" r="2" fill="#0a0e17" stroke="#22d3ee" stroke-width="1.2"/>
+        <circle cx="9"  cy="20" r="2" fill="#0a0e17" stroke="#22d3ee" stroke-width="1.2"/>
+      </svg>
+      <div class="lockup">
+        <span class="word">SPACE<b>MOLT</b></span>
+        <span class="subtag">HARNESS &middot; MISSION CONTROL</span>
+      </div>
+    </div>
+
+    <nav class="navsec">
+      <div class="eyebrow">// Fleet</div>
+      <ul class="nav-list" id="agents"></ul>
+    </nav>
+
+    <nav class="navsec">
+      <div class="eyebrow">// Monitoring</div>
+      <a class="nav-link" href="#overview"><span class="ico">&#9633;</span> Overview</a>
+      <a class="nav-link" href="#missions"><span class="ico">&#9873;</span> Missions</a>
+      <a class="nav-link" href="#plan"><span class="ico">&#9776;</span> Plan</a>
+      <a class="nav-link" href="#plan-rate"><span class="ico">&#9650;</span> Trends</a>
+      <a class="nav-link" href="#model-usage"><span class="ico">&#36;</span> Cost</a>
+      <a class="nav-link" href="#telemetry"><span class="ico">&#9673;</span> Telemetry</a>
+      <a class="nav-link" href="#usage"><span class="ico">&#9002;</span> Usage</a>
+      <a class="nav-link" href="#failures"><span class="ico">&#9888;</span> Failures</a>
+    </nav>
+  </aside>
+
+  <!-- ================= MAIN COLUMN ================= -->
+  <main class="main">
+    <div class="cmd-head">
+      <div class="eyebrow">// Command</div>
+      <h1>Command Center</h1>
+      <div class="accent"></div>
+      <div class="who" id="selected-who">No agent selected</div>
+    </div>
+    <div id="main-body">
+      <div class="card"><div class="side-empty">Waiting for the harness to report agents&hellip;</div></div>
+    </div>
+  </main>
+
+  <!-- ================= RIGHT RAIL ================= -->
+  <aside class="rail" id="telemetry">
+    <div class="rail-head">
+      <span class="title"><span class="dot" id="ws-dot"></span> Telemetry</span>
+      <span id="ws-state" class="down">Connecting</span>
+    </div>
+    <div class="feed-filter" id="feed-filter">
+      <span class="ff-lab">// filter events</span>
+      <div class="ff-chips" id="ff-chips"></div>
+    </div>
+    <div class="feed" id="feed"><div class="feed-empty">No events yet.</div></div>
+    <div class="comms">
+      <div class="head"><span>// Comms</span><span>&rarr; <b id="comms-target">&mdash;</b></span></div>
+      <textarea id="instruct-text" maxlength="500" rows="2" placeholder="Send an instruction to the selected agent (max 500 chars)" disabled></textarea>
+      <div class="send-row">
+        <span class="count" id="instruct-count">0 / 500</span>
+        <button id="instruct-send" type="button" disabled>Transmit</button>
+      </div>
+      <div class="err" id="instruct-err"></div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // --- pure event-filter helpers (BEGIN; tested by test/event-filter.test.ts) ---
+  // Self-contained, no DOM / localStorage / window access, so the unit test can
+  // extract this exact block from the served HTML and exercise the real shipped
+  // logic (dashboard.html is a standalone static asset -- no bundler, so there
+  // is no importable module to share; testing the file's own text avoids drift).
+  //
+  // KNOWN_TYPES gets a per-type toggle; everything else the harness emits (the
+  // long tail of *_error / planner_* events) buckets into "other" so a new
+  // event type is never silently unfilterable -- it stays visible (default on)
+  // and toggles as a group. DEFAULT_HIDDEN starts status_snapshot OFF: it is
+  // high-volume telemetry, so the feed is useful by default.
+  var EVENT_FILTER = (function () {
+    var KNOWN_TYPES = [
+      "status_snapshot", "progress_heartbeat", "notification", "ledger", "wake", "plan", "plan_context", "action", "reflex",
+      "plan_thrash_backoff", "plan_budget_exceeded", "operator_alert", "deploy_marker",
+    ];
+    // plan_context (issue #263) joins status_snapshot as default-hidden: it is
+    // the offline eval's recording of the full digest inputs -- a few KB of
+    // machine-readable state per plan, useful to the harvester, unreadable in a
+    // human feed. Hidden by default, toggleable when you want to see it.
+    var DEFAULT_HIDDEN = ["status_snapshot", "plan_context"];
+    // Bucket an event type to its filter key: itself if known, else "other".
+    function bucket(type) { return KNOWN_TYPES.indexOf(type) === -1 ? "other" : type; }
+    // The default filter state: every key on, except DEFAULT_HIDDEN.
+    function defaults() {
+      var s = {};
+      KNOWN_TYPES.concat("other").forEach(function (k) { s[k] = DEFAULT_HIDDEN.indexOf(k) === -1; });
+      return s;
+    }
+    // An event is shown unless its bucket is explicitly toggled off.
+    function visible(state, type) { return state[bucket(type)] !== false; }
+    return { KNOWN_TYPES: KNOWN_TYPES, DEFAULT_HIDDEN: DEFAULT_HIDDEN, bucket: bucket, defaults: defaults, visible: visible };
+  })();
+  // --- pure event-filter helpers (END) ---
+
+  var FILTER_LS_KEY = "spacemolt.feedFilter.v1";
+  // Load persisted selection, layered over defaults so a KNOWN_TYPES entry
+  // added in a later build inherits its default rather than reading undefined
+  // from an older saved blob. Only known boolean keys are copied in.
+  function loadFilterState() {
+    var base = EVENT_FILTER.defaults();
+    try {
+      var saved = JSON.parse(localStorage.getItem(FILTER_LS_KEY) || "{}");
+      if (saved && typeof saved === "object") {
+        for (var k in base) {
+          if (Object.prototype.hasOwnProperty.call(saved, k) && typeof saved[k] === "boolean") base[k] = saved[k];
+        }
+      }
+    } catch (_) { /* corrupt/absent -> defaults */ }
+    return base;
+  }
+  function saveFilterState() {
+    try { localStorage.setItem(FILTER_LS_KEY, JSON.stringify(filterState)); } catch (_) { /* private mode / quota -> in-memory only */ }
+  }
+
+  // Snapshot poll interval: the WS stream carries individual events, not full
+  // agent snapshots (planState/goal/step, planner health) -- a slow poll fills
+  // that gap. 5s is well below the 10s game tick, so it never visibly lags.
+  const SNAPSHOT_POLL_MS = 5000;
+  // Fixed-interval WS reconnect (not exponential backoff): this socket only
+  // talks to the harness's own embedded server on the same host/LAN. If it's
+  // down the harness process itself is down -- no remote flaky-network case.
+  const WS_RECONNECT_MS = 3000;
+  const EVENTS_SEED_LIMIT = 40;   // per-agent history pulled on first load
+  const FEED_MAX_ROWS = 300;      // cap DOM growth on the live feed
+  const TS_REFRESH_MS = 20000;    // re-render relative timestamps periodically
+
+  const agentsEl   = document.getElementById("agents");
+  const mainBodyEl  = document.getElementById("main-body");
+  const whoEl       = document.getElementById("selected-who");
+  const feedEl      = document.getElementById("feed");
+  const ffChipsEl   = document.getElementById("ff-chips");
+  const wsStateEl   = document.getElementById("ws-state");
+  const wsDotEl     = document.getElementById("ws-dot");
+  const textEl      = document.getElementById("instruct-text");
+  const sendBtn     = document.getElementById("instruct-send");
+  const errEl       = document.getElementById("instruct-err");
+  const countEl     = document.getElementById("instruct-count");
+  const commsTarget = document.getElementById("comms-target");
+
+  const snapshots = new Map(); // id -> AgentSnapshot
+  const usageById = new Map(); // id -> UsageSummary
+  const failuresById = new Map(); // id -> FailureTaxonomy (#158)
+  const missionsById = new Map(); // id -> MissionSummary (per-player mission tracker)
+  const seeded    = new Set(); // agent ids whose history has been pulled once
+  // Recency of throttle/no-progress ALERT events per agent, tracked from the
+  // same event stream the feed consumes. plannerHealth.stuck (from the polled
+  // snapshot) is the primary STUCK signal; plan_budget_exceeded has no sticky
+  // snapshot flag, so its THROTTLED state is derived from event recency here.
+  const alertsById = new Map(); // id -> { throttledAt?, noProgressAt? }
+  const RECENT_ALERT_MS = 30 * 60 * 1000;
+  let order = [];              // stable agent id order (first-seen)
+  let selectedId = null;
+
+  // Retained event model (all agents), capped to FEED_MAX_ROWS. The feed DOM is
+  // rendered FROM this, filtered by filterState -- so hidden types are still
+  // retained and reappear instantly when their chip is toggled back on, with no
+  // refetch. `filterState` persists across reloads (localStorage).
+  const feedEvents = [];
+  let filterState = loadFilterState();
+
+  async function fetchJson(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      let detail = "";
+      try { detail = JSON.stringify(await res.json()); } catch (_) { /* no body */ }
+      throw new Error(res.status + " " + detail);
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  // Single quoting boundary: every interpolated value is routed through esc()
+  // before it reaches innerHTML. A hostile agent id, goal, event text, or
+  // instruction must never break out of its HTML context.
+  function esc(s) {
+    const d = document.createElement("div");
+    d.textContent = String(s == null ? "" : s);
+    return d.innerHTML;
+  }
+
+  function relTime(ts) {
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 8) return "just now";
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + "h";
+    return Math.floor(h / 24) + "d";
+  }
+
+  // ---- fleet status dot: derived from planState + plannerHealth ----
+  function fleetDotClass(a) {
+    const h = a.plannerHealth || {};
+    if (a.planState === "blocked") return "error";
+    if (h.stalled || h.usingFallback || (h.backoffUntil && h.backoffUntil > Date.now())) return "warn";
+    if (a.planState === "running") return "running";
+    return "idle";
+  }
+
+  function renderFleet() {
+    if (order.length === 0) {
+      agentsEl.innerHTML = '<li class="side-empty">No agents online</li>';
+      return;
+    }
+    agentsEl.innerHTML = order.map(function (id) {
+      const a = snapshots.get(id) || { plannerHealth: {} };
+      const sel = id === selectedId ? " sel" : "";
+      return '<li><button type="button" class="nav-item' + sel + '" data-id="' + esc(id) + '">' +
+             '<span class="dot ' + fleetDotClass(a) + '"></span>' +
+             '<span class="id">' + esc(id) + "</span></button></li>";
+    }).join("");
+  }
+
+  // ---- planner health pills (sticky flags the operator must see) ----
+  function healthPills(h) {
+    h = h || {};
+    const pills = [
+      ['<span class="pill ' + (h.stalled ? "err" : "ok") + '">stalled</span>'],
+      ['<span class="pill ' + (h.usingFallback ? "warn" : "ok") + '">fallback</span>'],
+      ['<span class="pill ' + (h.claudeDisabled ? "warn" : "ok") + '">claude-disabled</span>'],
+    ];
+    const backoff = h.backoffUntil && h.backoffUntil > Date.now();
+    pills.push([ backoff
+      ? '<span class="pill warn">backoff &rarr; ' + esc(new Date(h.backoffUntil).toLocaleTimeString()) + "</span>"
+      : '<span class="pill ok">no backoff</span>' ]);
+    return '<div class="pills">' + pills.join("") + "</div>";
+  }
+
+  function bar(label, used, total) {
+    const pct = total > 0 ? Math.max(0, Math.min(100, (used / total) * 100)) : 0;
+    return '<div class="bar-row"><span class="blab">' + esc(label) + "</span>" +
+           '<div class="bar-track"><div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+           '<span class="bar-num">' + esc(used) + " / " + esc(total) + "</span></div>";
+  }
+
+  // ---- inline SVG charts (no libraries; strokes stay crisp via non-scaling) ----
+  const SPARK_W = 1000, SPARK_H = 60;
+  const CRED_W = 1000, CRED_H = 168;
+
+  function clampN(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  // A full-plot transparent hit rect so a mousemove anywhere over the chart has
+  // a target (drives the crosshair overlay). Placed as the SVG's first child so
+  // the line/markers paint on top and keep their own hit behaviour.
+  function hitRect(W, H) {
+    return '<rect class="ct-hit" x="0" y="0" width="' + W + '" height="' + H +
+      '" fill="transparent" pointer-events="all"/>';
+  }
+
+  // Normalized hover points embedded on the SVG for the crosshair handler: x/y
+  // are fractions of the viewBox W/H (so pixel = rect.left + x*rect.width), t is
+  // epoch ms, v the raw value. Serialized into a single-quoted data-points attr
+  // (pure-number JSON -> no attribute-breaking chars).
+  function pointsAttr(series, xFor, yFor, W, H, valOf) {
+    const data = series.map(function (p) {
+      return { x: +(xFor(p.ts) / W).toFixed(4), y: +(yFor(valOf(p)) / H).toFixed(4), t: p.ts, v: valOf(p) };
+    });
+    return " data-points='" + JSON.stringify(data) + "'";
+  }
+
+  // Compact legend row: [{ color, label, dash? }]. color is a CSS color (e.g.
+  // "var(--green)"); dash renders the dashed deploy-marker swatch.
+  function chartLegend(items) {
+    return '<div class="chart-legend">' + items.map(function (it) {
+      return '<span class="lg"><span class="sw' + (it.dash ? " dash" : "") +
+        '" style="color:' + it.color + '"></span>' + esc(it.label) + "</span>";
+    }).join("") + "</div>";
+  }
+
+  const CREDITS_LEGEND = [
+    { color: "var(--green)", label: "credits" },
+    { color: "var(--violet)", label: "deploy — new build shipped", dash: true },
+  ];
+  const PLANRATE_LEGEND = [
+    { color: "var(--cyan)", label: "plans / hr" },
+    { color: "var(--violet)", label: "deploy — new build shipped", dash: true },
+  ];
+
+  // Vertical deploy-marker lines, mapped through xFor and clamped into the
+  // plot. Every marker in the window is drawn: a startup marker at/before the
+  // earliest data sits at the left edge, which reads correctly as "everything
+  // shown is on this build". buildId is escaped into the hover <title>.
+  function markerLines(markers, xFor, W, H, padX) {
+    if (!markers || !markers.length) return "";
+    return markers.map(function (m) {
+      const mx = clampN(xFor(m.ts), padX, W - padX).toFixed(1);
+      const t = "<title>build " + esc(m.buildId) + "</title>";
+      return '<line x1="' + mx + '" y1="4" x2="' + mx + '" y2="' + H + '" style="stroke:var(--violet)" ' +
+             'stroke-width="1.5" stroke-dasharray="3 3" opacity="0.8" vector-effect="non-scaling-stroke">' + t + "</line>" +
+             '<circle cx="' + mx + '" cy="4" r="3" style="fill:var(--violet)">' + t + "</circle>";
+    }).join("");
+  }
+
+  // Plan-rate sparkline: area + line over the bucketed series, deploy markers overlaid.
+  function planRateSpark(series, markers) {
+    if (!series || !series.length) return '<div class="chart-empty">Collecting plan-rate history&hellip;</div>';
+    const W = SPARK_W, H = SPARK_H, padX = 6, padTop = 8, padBot = 6;
+    const start = series[0].ts, end = series[series.length - 1].ts;
+    const span = Math.max(1, end - start);
+    const max = series.reduce(function (m, b) { return Math.max(m, b.count); }, 0) || 1;
+    const xFor = function (ts) { return padX + ((ts - start) / span) * (W - 2 * padX); };
+    const yFor = function (c) { return H - padBot - (c / max) * (H - padTop - padBot); };
+    const pts = series.map(function (b) { return xFor(b.ts).toFixed(1) + "," + yFor(b.count).toFixed(1); });
+    const area = "M " + padX + "," + (H - padBot) + " L " + pts.join(" L ") + " L " + (W - padX) + "," + (H - padBot) + " Z";
+    const attrs = " data-color='#22d3ee' data-label='plans' data-fmt='count'" +
+      pointsAttr(series, xFor, yFor, W, H, function (b) { return b.count; });
+    return '<svg class="chart spark" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="plan rate trend"' + attrs + ">" +
+      hitRect(W, H) +
+      '<path d="' + area + '" style="fill:var(--cyan)" opacity="0.10"/>' +
+      '<polyline points="' + pts.join(" ") + '" fill="none" style="stroke:var(--cyan)" stroke-width="2" vector-effect="non-scaling-stroke"/>' +
+      markerLines(markers, xFor, W, H, padX) +
+      "</svg>";
+  }
+
+  // Credits-over-time line chart from creditsSeries, deploy markers overlaid.
+  function creditsChart(series, markers) {
+    if (!series || series.length === 0) return '<div class="chart-empty">No credit samples in the window yet.</div>';
+    const W = CRED_W, H = CRED_H, padX = 6, padTop = 10, padBot = 10;
+    const start = series[0].ts, end = series[series.length - 1].ts;
+    const span = Math.max(1, end - start);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < series.length; i++) { const c = series[i].credits; if (c < lo) lo = c; if (c > hi) hi = c; }
+    const range = Math.max(1, hi - lo);
+    const xFor = function (ts) { return padX + ((ts - start) / span) * (W - 2 * padX); };
+    const yFor = function (c) { return padTop + (1 - (c - lo) / range) * (H - padTop - padBot); };
+    const markerSvg = markerLines(markers, xFor, W, H, padX);
+    const attrs = " data-color='#34d399' data-label='credits' data-fmt='cr'" +
+      pointsAttr(series, xFor, yFor, W, H, function (p) { return p.credits; });
+    if (series.length === 1) {
+      return '<svg class="chart credits" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="credits"' + attrs + ">" +
+        hitRect(W, H) + markerSvg + '<circle cx="' + xFor(start).toFixed(1) + '" cy="' + yFor(series[0].credits).toFixed(1) +
+        '" r="4" style="fill:var(--green)"/></svg>';
+    }
+    const pts = series.map(function (p) { return xFor(p.ts).toFixed(1) + "," + yFor(p.credits).toFixed(1); });
+    const area = "M " + padX + "," + (H - padBot) + " L " + pts.join(" L ") + " L " + (W - padX) + "," + (H - padBot) + " Z";
+    return '<svg class="chart credits" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="credits over time"' + attrs + ">" +
+      hitRect(W, H) +
+      '<path d="' + area + '" style="fill:var(--green)" opacity="0.10"/>' +
+      '<polyline points="' + pts.join(" ") + '" fill="none" style="stroke:var(--green)" stroke-width="2" vector-effect="non-scaling-stroke"/>' +
+      markerSvg + "</svg>";
+  }
+
+  // ---- statistics & trends blocks ----
+  function planRateBlock(u) {
+    if (!u) return '<div class="side-empty">Loading&hellip;</div>';
+    const rate = u.planRatePerHour || 0;
+    const hot = rate > 10; // 4-10/hr is the design target; above 10 is thrash territory
+    let out = '<div class="metric-hero"><span class="big' + (hot ? " hot" : "") + '">' + esc(rate) + "</span>" +
+      '<span class="unit">plans / hr &middot; trailing 60m</span></div>';
+    out += planRateSpark(u.planRateSeries, u.deployMarkers);
+    if (u.planRateSeries && u.planRateSeries.length) {
+      out += '<div class="chart-cap"><span>' + esc(relTime(u.planRateSeries[0].ts)) + " ago</span><span>now</span></div>";
+      out += chartLegend(PLANRATE_LEGEND);
+    }
+    if (hot) out += '<div class="foot-note">Above the 4&ndash;10/hr design target &mdash; possible planner thrash.</div>';
+    return out;
+  }
+
+  function modelBlock(u) {
+    if (!u) return '<div class="side-empty">Loading&hellip;</div>';
+    const models = Object.entries(u.callsPerModel || {}).sort(function (a, b) { return b[1] - a[1]; });
+    let out = '<div class="metric-hero"><span class="big">$' + Number(u.estimatedCostUsdPerDay || 0).toFixed(2) + "</span>" +
+      '<span class="unit">/ day</span><span class="est-tag">estimated</span></div>';
+    if (models.length === 0) {
+      out += '<div class="side-empty">No planner calls in the last ' + esc(u.windowHours) + "h.</div>";
+    } else {
+      out += models.map(function (m) {
+        return '<div class="model-row"><span class="mname">' + esc(m[0]) + "</span>" +
+               '<span class="mcalls">' + esc(m[1]) + " call" + (m[1] === 1 ? "" : "s") + "</span></div>";
+      }).join("");
+    }
+    out += '<div class="kv"><span class="k">Tokens in / out (est.)</span><span class="v">' +
+      (u.tokensIn != null ? esc(Math.round(u.tokensIn)) + " / " + esc(Math.round(u.tokensOut)) : "not available") + "</span></div>";
+    out += '<div class="kv"><span class="k">Planner error rate</span><span class="v">' +
+      esc((Number(u.plannerErrorRate || 0) * 100).toFixed(1)) + "%</span></div>";
+    out += '<div class="foot-note">Estimated: the Claude subscription is flat-rate and returns no token counts. ' +
+      'Captured prompt/response characters are priced at API list rates &mdash; a comparability number, not an invoice.</div>';
+    return out;
+  }
+
+  // STUCK/THROTTLED banner above the panels. STUCK (no verified progress across
+  // replans) outranks THROTTLED (rate-limited) since it is the worse state.
+  function healthBannerHtml(a) {
+    const h = a.plannerHealth || {};
+    const now = Date.now();
+    const al = alertsById.get(a.id) || {};
+    const stuck = !!h.stuck || (al.noProgressAt && now - al.noProgressAt < RECENT_ALERT_MS);
+    const throttled = (h.backoffUntil && h.backoffUntil > now) ||
+      (al.throttledAt && now - al.throttledAt < RECENT_ALERT_MS);
+    if (stuck) {
+      return '<div class="alert-banner stuck"><span class="tag">Stuck</span>' +
+        '<span class="msg">No verified game progress across replans &mdash; the agent is looping. ' +
+        'Planner calls are throttled to stop the burn. Send an instruction to steer it.</span></div>';
+    }
+    if (throttled) {
+      return '<div class="alert-banner throttled"><span class="tag">Throttled</span>' +
+        '<span class="msg">Planner replans are rate-limited (backoff or plan-budget ceiling). ' +
+        'In-flight plans keep executing deterministically.</span></div>';
+    }
+    return "";
+  }
+
+  // Track throttle/no-progress alert recency from the event stream. Returns true
+  // when the event was a relevant alert (so callers can re-render the banner).
+  function noteAlertEvent(e) {
+    if (!e || !e.agentId) return false;
+    const t = e.type, p = e.payload || {};
+    if (t === "plan_budget_exceeded" || t === "plan_thrash_backoff") {
+      const al = alertsById.get(e.agentId) || {}; al.throttledAt = e.ts; alertsById.set(e.agentId, al);
+      return true;
+    }
+    if (t === "operator_alert" && p.class === "no_progress") {
+      const al = alertsById.get(e.agentId) || {}; al.noProgressAt = e.ts; alertsById.set(e.agentId, al);
+      return true;
+    }
+    return false;
+  }
+
+  function renderMain() {
+    if (!selectedId || !snapshots.has(selectedId)) {
+      mainBodyEl.innerHTML = '<div class="card"><div class="side-empty">Select an agent from the Fleet.</div></div>';
+      whoEl.innerHTML = "No agent selected";
+      return;
+    }
+    const a = snapshots.get(selectedId);
+    const u = usageById.get(selectedId);
+    const f = failuresById.get(selectedId);
+    const m = missionsById.get(selectedId);
+    whoEl.innerHTML = "Monitoring <b>" + esc(a.id) + "</b>";
+
+    const stepStr = (a.totalSteps != null)
+      ? ((a.stepIndex != null ? a.stepIndex + 1 : 1) + " / " + a.totalSteps)
+      : "—";
+    const stateClass = "state-" + esc(a.planState);
+
+    // Ship telemetry retained from the agent's last api.status() fetch. Null
+    // until the first successful fetch -- ship-derived cells and the SHIP card
+    // then show a dim "awaiting telemetry" state instead of fabricating values.
+    const s = a.status;
+    const AWAIT = '<span class="await">awaiting telemetry</span>';
+
+    // HEALTH BANNER -- STUCK/THROTTLED state above everything, when active.
+    let html = healthBannerHtml(a);
+
+    // OVERVIEW -- plan state plus real ship telemetry (credits/system/docked)
+    // now that /api/agents carries StatusSnapshot via AgentSnapshot.status.
+    html +=
+      '<div class="card" id="overview"><h2>Overview</h2>' +
+        '<div class="ov-grid">' +
+          cell("Status", '<span class="val ' + stateClass + '">' + esc(a.planState) + "</span>") +
+          cell("Credits", s ? esc(s.credits.toLocaleString()) : AWAIT) +
+          cell("System", s ? esc(s.system || "unknown") : AWAIT) +
+          cell("Docked", s ? (s.docked ? "yes" : "no") : AWAIT) +
+          (s && s.inTransit ? cell("In Transit", '<span class="val state-running">yes</span>') : "") +
+          cell("Step", esc(stepStr)) +
+          cell("Op Goals", esc((a.goals || []).length)) +
+          cell("Blocked", a.blockedReason ? '<span class="val state-blocked">' + esc(a.blockedReason) + "</span>" : "—") +
+        "</div>" +
+      "</div>";
+
+    // MISSIONS -- per-player tracker (operator request): two count tiles
+    // (active now / lifetime completed) plus the active mission ids when known.
+    // Data from /api/agents/:id/missions -- point-in-time, no window selector.
+    html +=
+      '<div class="card" id="missions"><h2>Missions</h2>' +
+        missionsBlock(m) +
+      "</div>";
+
+    // SHIP -- identity line (name + class), thin labeled vitals bars
+    // (fuel/hull/cargo), the fitting grid (CPU/power) with the module bay by
+    // slot, plus a compact cargo manifest when the hold is non-empty. All of
+    // it retained from the agent's last api.status() fetch -- no extra query.
+    html +=
+      '<div class="card" id="ship"><h2>Ship</h2>' +
+        (s
+          ? shipIdentity(s) +
+            bar("Fuel", s.fuel, s.maxFuel) +
+            bar("Hull", s.hull, s.maxHull) +
+            bar("Cargo", s.cargoUsed, s.cargoCapacity) +
+            cargoManifest(s.cargo) +
+            fitBlock(s)
+          : '<div class="side-empty">Awaiting telemetry&hellip;</div>') +
+      "</div>";
+
+    // PROGRESS -- plan step progress as a vitals-style bar.
+    html +=
+      '<div class="card"><h2>Progress</h2>' +
+        (a.totalSteps != null
+          ? bar("Plan", (a.stepIndex != null ? a.stepIndex + 1 : 1), a.totalSteps)
+          : '<div class="side-empty">No active plan.</div>') +
+      "</div>";
+
+    // CURRENT PLAN
+    html +=
+      '<div class="card" id="plan"><h2>Current Plan</h2>' +
+        '<div class="plan-goal"><span class="lab">Goal</span>' +
+          (a.goal ? esc(a.goal) : '<span class="none">no active plan</span>') +
+        "</div>" +
+        healthPills(a.plannerHealth) +
+      "</div>";
+
+    // Trend-window selector: governs all four usage-fed cards below (their data
+    // comes from /usage, which this re-queries at the chosen window).
+    html += winSelectorHtml();
+
+    // PLAN RATE -- the cost + thrash canary: trailing-hour rate + sparkline,
+    // deploy markers overlaid so a build's effect on the rate is visible.
+    html +=
+      '<div class="card" id="plan-rate"><h2>Plan Rate</h2>' +
+        planRateBlock(u) +
+      "</div>";
+
+    // MODEL USAGE + COST -- calls per model and the ESTIMATED $/day.
+    html +=
+      '<div class="card" id="model-usage"><h2>Model Usage &amp; Cost</h2>' +
+        modelBlock(u) +
+      "</div>";
+
+    // CREDITS TREND -- game-performance signal from creditsSeries, markers overlaid.
+    html +=
+      '<div class="card" id="credits"><h2>Credits Trend</h2>' +
+        creditsChart(u ? u.creditsSeries : null, u ? u.deployMarkers : null) +
+        (u && u.creditsSeries && u.creditsSeries.length
+          ? '<div class="chart-cap"><span>' + esc(relTime(u.creditsSeries[0].ts)) + " ago</span>" +
+            "<span>now &middot; " + esc(Number(u.creditsSeries[u.creditsSeries.length - 1].credits).toLocaleString()) + " cr</span></div>" +
+            chartLegend(CREDITS_LEGEND)
+          : "") +
+      "</div>";
+
+    // USAGE + WAKE HISTOGRAM (from /api/agents/:id/usage)
+    html +=
+      '<div class="card" id="usage"><h2>Usage &amp; Wake History</h2>' +
+        usageBlock(u) +
+      "</div>";
+
+    // FAILURE CLASSES (#158, from /api/agents/:id/failures) -- what the game
+    // keeps refusing, normalized: window frequency table, NEW badge on
+    // never-seen classes, red banner per broken capability (lifetime ~100%
+    // failure -- the "buy failed 86/86 and nobody noticed" signal).
+    html +=
+      '<div class="card" id="failures"><h2>Failure Classes</h2>' +
+        failuresBlock(f) +
+      "</div>";
+
+    mainBodyEl.innerHTML = html;
+  }
+
+  function cell(label, valHtml) {
+    return '<div class="ov-cell"><div class="lab">' + esc(label) + "</div>" +
+           '<div class="val">' + valHtml + "</div></div>";
+  }
+
+  // Ship identity line above the vitals bars: the player-assigned ship name
+  // plus the class display name, both from the retained get_status ship block
+  // (live shape: ship.name / ship.class_name). Either field may be absent (a
+  // status captured before the harness retained them) -- render only what is
+  // known, and nothing when neither is.
+  function shipIdentity(s) {
+    if (!s.shipName && !s.shipClass) return "";
+    return '<div class="ship-id">' +
+      (s.shipName ? "<b>" + esc(s.shipName) + "</b>" : "") +
+      (s.shipClass ? '<span class="ship-class">' + esc(s.shipClass) + "-class</span>" : "") +
+      "</div>";
+  }
+
+  // Fitting grid + module bay: CPU/Power bars from the retained fit, then one
+  // row per slot kind. Undefined fit/modules mean UNKNOWN (the game's status
+  // didn't carry the block), so the affected part renders nothing rather than
+  // fabricating a zero grid or an empty bay.
+  function fitBlock(s) {
+    var out = "";
+    if (s.fit) out += bar("CPU", s.fit.cpuUsed, s.fit.cpuCapacity) + bar("Power", s.fit.powerUsed, s.fit.powerCapacity);
+    return out + slotRows(s.fit ? s.fit.slots : null, s.modules);
+  }
+
+  // One row per slot kind (weapon/defense/utility): fitted module names as
+  // chips, then a dashed "empty" chip per unoccupied slot so free capacity is
+  // visible at a glance. slots null (grid unknown) -> rows only for kinds that
+  // have fitted modules, capacity shown as "?". modules undefined (bay
+  // unknown) -> capacities only, no fabricated "empty" chips. Every module
+  // field goes through esc().
+  function slotRows(slots, modules) {
+    if (!slots && !modules) return "";
+    var kinds = ["weapon", "defense", "utility"];
+    var rows = kinds.map(function (kind) {
+      var fitted = (modules || []).filter(function (m) { return m.slot === kind; });
+      var cap = slots ? (slots[kind] || 0) : null;
+      if ((cap === null || cap === 0) && fitted.length === 0) return ""; // hull has no such slots
+      var chips = fitted.map(function (m) {
+        return '<span class="mitem">' + esc(m.name || m.typeId) + "</span>";
+      });
+      if (modules) {
+        for (var i = fitted.length; i < (cap === null ? 0 : cap); i++) chips.push('<span class="mitem empty">empty</span>');
+      }
+      return '<div class="slot-row"><span class="slab">' + esc(kind) + " " + esc(modules ? fitted.length : "?") +
+             " / " + esc(cap === null ? "?" : cap) + "</span>" + chips.join("") + "</div>";
+    }).join("");
+    return rows ? '<div class="slots">' + rows + "</div>" : "";
+  }
+
+  // Compact cargo manifest under the CARGO bar. Empty hold -> nothing rendered
+  // (the bar's "0 / N" already says it). Every item field goes through esc().
+  function cargoManifest(cargo) {
+    if (!cargo || cargo.length === 0) return "";
+    return '<div class="manifest">' + cargo.map(function (c) {
+      return '<span class="mitem"><b>' + esc(c.quantity) + "&times;</b> " + esc(c.name) + "</span>";
+    }).join("") + "</div>";
+  }
+
+  function usageBlock(u) {
+    if (!u) return '<div class="side-empty">Loading usage&hellip;</div>';
+    // Broken-signal banner: one wake reason dominating the mix (the
+    // "231/233 low_fuel" livelock shape). The >80% verdict is computed
+    // server-side (usage.ts wakeReasonAlert) and only rendered here.
+    let out = "";
+    if (u.wakeReasonAlert) {
+      const wa = u.wakeReasonAlert;
+      out += '<div class="wake-alert"><span class="tag">Signal</span><span>' +
+        esc(Math.round(wa.share * 100)) + '% of wakes are &ldquo;' + esc(wa.reason) + '&rdquo; (' +
+        esc(wa.count) + "/" + esc(wa.total) + ") &mdash; likely stuck repeating one trigger.</span></div>";
+    }
+    out +=
+      '<div class="kv"><span class="k">Replans / ' + esc(u.windowHours) + "h</span>" +
+        '<span class="v">' + esc(u.replanAttempts) + "</span></div>" +
+      '<div class="kv"><span class="k">Tokens in / out</span>' +
+        '<span class="v">' + (u.tokensIn != null ? esc(u.tokensIn) + " / " + esc(u.tokensOut) : "not available") + "</span></div>";
+
+    const entries = Object.entries(u.wakeReasonHistogram || {}).sort(function (x, y) { return y[1] - x[1]; });
+    if (entries.length === 0) {
+      out += '<div class="side-empty" style="margin-top:.6rem">No wakes in the last ' + esc(u.windowHours) + "h.</div>";
+    } else {
+      const max = entries[0][1] || 1;
+      out += '<div style="margin-top:.7rem">' + entries.map(function (e) {
+        const w = Math.max(6, (e[1] / max) * 100);
+        return '<div class="hist-row"><span class="hk">' + esc(e[0]) + "</span>" +
+               '<div class="hist-fill" style="width:' + w.toFixed(0) + '%"></div>' +
+               '<span class="hn">' + esc(e[1]) + "</span></div>";
+      }).join("") + "</div>";
+    }
+    return out;
+  }
+
+  // Failure-class card (#158). Data is fully computed server-side
+  // (failures.ts); this only renders. Sample text rides the row's title
+  // attribute -- hover shows the raw game text behind the class. All values
+  // esc()'d before innerHTML like every other card.
+  function failuresBlock(f) {
+    if (!f) return '<div class="side-empty">Loading failure classes&hellip;</div>';
+    let out = "";
+    (f.brokenCapabilities || []).forEach(function (b) {
+      out += '<div class="wake-alert"><span class="tag">Broken</span><span><b>' + esc(b.action) +
+        "</b> failed " + esc(b.failures) + "/" + esc(b.attempts) + " lifetime attempts (" +
+        esc(b.topClass) + ") &mdash; the pilot cannot do this at all.</span></div>";
+    });
+    const rows = f.classes || [];
+    if (rows.length === 0) {
+      out += '<div class="side-empty">No blocked actions in the last ' + esc(f.windowHours) + "h.</div>";
+      return out;
+    }
+    const max = rows[0].count || 1;
+    out += rows.map(function (r) {
+      const w = Math.max(6, (r.count / max) * 100);
+      const isNew = (f.newClasses || []).indexOf(r.class) !== -1;
+      return '<div class="hist-row fcls" title="' + esc(r.sample || "") + '"><span class="hk">' + esc(r.class) +
+             (isNew ? '<span class="newcls">new</span>' : "") + "</span>" +
+             '<div class="hist-fill" style="width:' + w.toFixed(0) + '%"></div>' +
+             '<span class="hn">' + esc(r.count) + "</span></div>";
+    }).join("");
+    return out;
+  }
+
+  // --- pure mission-expiry helper (BEGIN; tested by test/mission-expiry.test.ts) ---
+  // A game tick is 10 seconds (docs/game-reference/upstream/api.md: "default
+  // tick = 10 seconds"), so a raw count like "expires in 46352 ticks" is
+  // unreadable at a glance. Convert to a compact duration: whole minutes under
+  // an hour, one-decimal hours under a day, one-decimal days beyond. Self-
+  // contained (no DOM) so the unit test extracts this exact block from the
+  // served HTML and exercises the real shipped code.
+  var MISSION_EXPIRY = (function () {
+    var TICK_SECONDS = 10;
+    function humanizeTicks(ticks) {
+      var s = ticks * TICK_SECONDS;
+      if (s < 3600) return "~" + Math.max(1, Math.round(s / 60)) + "m";
+      if (s < 86400) return "~" + (s / 3600).toFixed(1) + "h";
+      return "~" + (s / 86400).toFixed(1) + "d";
+    }
+    return { TICK_SECONDS: TICK_SECONDS, humanizeTicks: humanizeTicks };
+  })();
+  // --- pure mission-expiry helper (END) ---
+
+  // Per-player mission tracker card. Two count tiles (active now / lifetime
+  // completed) from /api/agents/:id/missions, then each active mission by its
+  // human title (mission id when no title was captured -- events persisted
+  // before the title parse degrade to exactly the old id-only row) with an
+  // expiry hint, plus one indented line per objective: label + current/required
+  // + a check mark when completed. Server shapes everything (missions.ts);
+  // this only renders. All values esc()'d before innerHTML -- mission titles
+  // and objective labels are game prose, i.e. untrusted text.
+  function missionsBlock(m) {
+    if (!m) return '<div class="side-empty">Loading missions&hellip;</div>';
+    let out =
+      '<div class="ov-grid">' +
+        cell("Active", '<span class="val">' + esc(m.activeCount) + "</span>") +
+        cell("Completed", '<span class="val">' + esc(m.totalCompleted) + "</span>") +
+      "</div>";
+    const active = m.active || [];
+    if (active.length === 0) {
+      out += '<div class="side-empty" style="margin-top:.6rem">No active missions right now.</div>';
+      return out;
+    }
+    out += '<div style="margin-top:.7rem">' + active.map(function (a) {
+      const name = a.title ? esc(a.title)
+        : a.missionId ? esc(a.missionId)
+        : "(id not captured)";
+      // Title on its own full-width line; expiry as a smaller line beneath
+      // (humanized -- ticks are 10s each) with the raw tick count on hover.
+      // No expiresInTicks captured -> the expiry line is omitted entirely.
+      const exp = (typeof a.expiresInTicks === "number")
+        ? '<div class="mission-exp" title="expires in ' + esc(a.expiresInTicks) + ' ticks">expires ' +
+          esc(MISSION_EXPIRY.humanizeTicks(a.expiresInTicks)) + "</div>"
+        : "";
+      let row = '<div class="mission-hd"><div class="mission-title">' + name + "</div>" + exp + "</div>";
+      row += (a.objectives || []).map(function (o) {
+        const label = o.label ? esc(o.label) : "objective";
+        const prog = (typeof o.current === "number" || typeof o.required === "number")
+          ? esc(typeof o.current === "number" ? o.current : "?") + "/" +
+            esc(typeof o.required === "number" ? o.required : "?")
+          : "";
+        const v = o.completed ? (prog ? prog + " &#10003;" : "&#10003; done") : (prog || "—");
+        return '<div class="kv" style="padding-left:.8rem"><span class="k">' + label + "</span>" +
+               '<span class="v">' + v + "</span></div>";
+      }).join("");
+      return row;
+    }).join("") + "</div>";
+    return out;
+  }
+
+  // ---- event feed (right rail) ----
+  function eventDotClass(e) {
+    const t = e.type || "";
+    const p = e.payload || {};
+    if (t === "action") {
+      if (p.outcome === "blocked") return "red";
+      if (p.action === "sell" || p.outcome === "plan_done") return "green";
+      return "cyan";
+    }
+    if (t === "plan" || t === "plan_normalized" || t === "planner_recovered") return "teal";
+    if (t === "wake") return "cyan";
+    if (t === "reflex") return "violet";
+    // ledger: green when the net credit move is a gain, red on a net spend/loss,
+    // cyan for a cargo-only change (mining yield, no credits moved).
+    if (t === "ledger") {
+      if (p.credits && p.credits.delta < 0) return "red";
+      if (p.credits && p.credits.delta > 0) return "green";
+      return "cyan";
+    }
+    if (t === "notification") return "teal";
+    if (/error|fail|stalled|backoff|alert|limit/.test(t)) return "red";
+    return "cyan";
+  }
+
+  // Compact one-line summary of an event's payload. Kept short: the full JSON
+  // is noise in a scrolling rail. All values go through esc().
+  function eventText(e) {
+    const p = e.payload || {};
+    const t = e.type || "event";
+    if (t === "action") {
+      // 160 (was 80): "Sold 2 Carbon Ore for 4cr" and the like were being cut
+      // off mid-sentence -- the result string is exactly what the operator wants.
+      return "<b>" + esc(p.action || "action") + "</b> " + esc(p.outcome || "") +
+             (p.result ? " &middot; " + esc(String(p.result).slice(0, 160)) : "");
+    }
+    // notification: the game's own result feed (yields, sales, combat). Show the
+    // notification type and a compact slice of its data payload.
+    if (t === "notification") {
+      var nd = p.data != null ? " &middot; " + esc(JSON.stringify(p.data).slice(0, 160)) : "";
+      return "<b>note</b> " + esc(p.notifType || p.msgType || "notification") + nd;
+    }
+    // ledger: the per-tick credit/cargo delta ("+3 Carbon Ore, cargo 8->11 &middot; +4cr").
+    if (t === "ledger") {
+      var seg = [];
+      (p.cargo || []).forEach(function (c) {
+        seg.push((c.delta > 0 ? "+" : "") + esc(c.delta) + " " + esc(c.name || c.itemId || "item"));
+      });
+      if (p.cargoUsed) seg.push("cargo " + esc(p.cargoUsed.from) + "&rarr;" + esc(p.cargoUsed.to));
+      if (p.credits) seg.push((p.credits.delta > 0 ? "+" : "") + esc(p.credits.delta) + "cr");
+      return "<b>ledger</b> " + seg.join(" &middot; ");
+    }
+    if (t === "wake") return "<b>wake</b> " + esc(p.reason || "") + (p.detail ? " &middot; " + esc(String(p.detail).slice(0, 60)) : "");
+    if (t === "plan") return "<b>plan</b> " + esc(p.goal || "") + (p.steps != null ? " (" + esc(p.steps) + " steps)" : "");
+    if (p.message) return "<b>" + esc(t) + "</b> " + esc(String(p.message).slice(0, 90));
+    return "<b>" + esc(t) + "</b> " + esc(JSON.stringify(p).slice(0, 90));
+  }
+
+  function feedRow(e) {
+    return '<div class="fe" data-ts="' + Number(e.ts) + '">' +
+      '<span class="fdot ' + eventDotClass(e) + '"></span>' +
+      '<div class="body">' +
+        '<div class="who">' + esc(e.agentId) + "</div>" +
+        '<div class="txt">' + eventText(e) + "</div>" +
+      "</div>" +
+      '<span class="ts">' + esc(relTime(e.ts)) + "</span>" +
+    "</div>";
+  }
+
+  function appendEvent(e, atEnd) {
+    // Track throttle/no-progress recency for the health banner regardless of
+    // the feed filter (a hidden event type must not blind the operator to a
+    // STUCK/THROTTLED state); re-render the banner if it's the on-screen agent.
+    if (noteAlertEvent(e) && e.agentId === selectedId) renderMain();
+
+    // Retain in the model (capped, oldest out), then render only if the type
+    // passes the current filter.
+    if (atEnd) { feedEvents.push(e); if (feedEvents.length > FEED_MAX_ROWS) feedEvents.shift(); }
+    else       { feedEvents.unshift(e); if (feedEvents.length > FEED_MAX_ROWS) feedEvents.pop(); }
+    if (!EVENT_FILTER.visible(filterState, e.type)) return;
+
+    if (feedEl.firstChild && feedEl.firstChild.className === "feed-empty") feedEl.innerHTML = "";
+    const nearBottom = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 40;
+    feedEl.insertAdjacentHTML(atEnd ? "beforeend" : "afterbegin", feedRow(e));
+    while (feedEl.children.length > FEED_MAX_ROWS) feedEl.removeChild(feedEl.firstChild);
+    if (atEnd && nearBottom) feedEl.scrollTop = feedEl.scrollHeight;
+  }
+
+  // Full feed rebuild from the retained model under the current filter. Called
+  // on a filter toggle -- cheap (<=FEED_MAX_ROWS rows) and only on click.
+  function renderFeed() {
+    const shown = feedEvents.filter(function (e) { return EVENT_FILTER.visible(filterState, e.type); });
+    if (shown.length === 0) {
+      feedEl.innerHTML = '<div class="feed-empty">' +
+        (feedEvents.length ? "All event types filtered out." : "No events yet.") + "</div>";
+      return;
+    }
+    feedEl.innerHTML = shown.map(feedRow).join("");
+    feedEl.scrollTop = feedEl.scrollHeight;
+  }
+
+  // ---- event-type filter chips ----
+  function renderFilterChips() {
+    const keys = EVENT_FILTER.KNOWN_TYPES.concat("other");
+    ffChipsEl.innerHTML = keys.map(function (k) {
+      const on = filterState[k] !== false;
+      return '<button type="button" class="fchip' + (on ? " on" : "") + '" data-k="' + esc(k) +
+             '" aria-pressed="' + on + '">' + esc(k.replace(/_/g, " ")) + "</button>";
+    }).join("");
+  }
+
+  ffChipsEl.addEventListener("click", function (ev) {
+    const btn = ev.target.closest ? ev.target.closest(".fchip") : null;
+    if (!btn || !btn.dataset.k) return;
+    const k = btn.dataset.k;
+    filterState[k] = filterState[k] === false; // toggle (undefined/true -> false, false -> true)
+    saveFilterState();
+    renderFilterChips();
+    renderFeed();
+  });
+
+  function refreshTimestamps() {
+    const rows = feedEl.querySelectorAll(".fe");
+    for (let i = 0; i < rows.length; i++) {
+      const ts = Number(rows[i].getAttribute("data-ts"));
+      const tsEl = rows[i].querySelector(".ts");
+      if (tsEl) tsEl.textContent = relTime(ts);
+    }
+  }
+
+  // ---- selection ----
+  function selectAgent(id) {
+    if (!snapshots.has(id)) return;
+    selectedId = id;
+    commsTarget.textContent = id;
+    textEl.disabled = false;
+    sendBtn.disabled = false;
+    renderFleet();
+    renderMain();
+    refreshUsage(id);
+    refreshFailures(id);
+    refreshMissions(id);
+  }
+
+  agentsEl.addEventListener("click", function (ev) {
+    const btn = ev.target.closest ? ev.target.closest(".nav-item") : null;
+    if (btn && btn.dataset.id) selectAgent(btn.dataset.id);
+  });
+
+  // ---- instruction (comms) ----
+  function updateCount() { countEl.textContent = textEl.value.length + " / 500"; }
+  textEl.addEventListener("input", updateCount);
+
+  sendBtn.addEventListener("click", async function () {
+    errEl.textContent = "";
+    const text = textEl.value.trim();
+    if (!text || !selectedId) return;
+    sendBtn.disabled = true;
+    try {
+      await fetchJson("/api/agents/" + encodeURIComponent(selectedId) + "/instruct", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: text }),
+      });
+      textEl.value = "";
+      updateCount();
+    } catch (e) {
+      errEl.textContent = "failed to send: " + e.message;
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+
+  // ---- trend-window selector + Grafana-style hover crosshair ----
+  const WIN_OPTS = [{ h: 1, l: "1h" }, { h: 7, l: "7h" }, { h: 24, l: "1d" }, { h: 48, l: "2d" }, { h: 240, l: "10d" }];
+  let usageWindowHours = 24; // default 1 day
+  try {
+    const saved = Number(localStorage.getItem("smc.winHours"));
+    if (WIN_OPTS.some(function (o) { return o.h === saved; })) usageWindowHours = saved;
+  } catch (_) { /* no localStorage -> keep default */ }
+
+  function winSelectorHtml() {
+    return '<div class="win-sel"><span class="win-lab">Window</span>' + WIN_OPTS.map(function (o) {
+      return '<button type="button" class="win-opt' + (o.h === usageWindowHours ? " on" : "") +
+        '" data-h="' + o.h + '">' + o.l + "</button>";
+    }).join("") + "</div>";
+  }
+
+  // Delegated so it survives the panel's innerHTML re-render.
+  mainBodyEl.addEventListener("click", function (ev) {
+    const b = ev.target.closest ? ev.target.closest(".win-opt") : null;
+    if (!b || !b.dataset.h) return;
+    const h = Number(b.dataset.h);
+    if (h === usageWindowHours) return;
+    usageWindowHours = h;
+    try { localStorage.setItem("smc.winHours", String(h)); } catch (_) { /* ignore */ }
+    renderMain();                       // instant highlight on the new option
+    if (selectedId) { refreshUsage(selectedId); refreshFailures(selectedId); } // refetch at the chosen window
+  });
+
+  function fmtDateTime(ts) {
+    const d = new Date(ts);
+    const p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+      " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function fmtVal(v, fmt) {
+    if (fmt === "cr") return Number(v).toLocaleString() + " cr";
+    if (fmt === "count") return v + " plan" + (v === 1 ? "" : "s");
+    return String(v);
+  }
+
+  // One global crosshair line + point dot + tooltip, on <body> so a re-render
+  // never destroys them. pointer-events:none in CSS so they never eat the move.
+  const tipEl = document.createElement("div"); tipEl.id = "ctip";
+  const crossEl = document.createElement("div"); crossEl.id = "ccross";
+  const dotEl = document.createElement("div"); dotEl.id = "cdot";
+  document.body.appendChild(tipEl); document.body.appendChild(crossEl); document.body.appendChild(dotEl);
+  function hideCrosshair() { tipEl.style.display = "none"; crossEl.style.display = "none"; dotEl.style.display = "none"; }
+
+  mainBodyEl.addEventListener("mousemove", function (ev) {
+    const svg = ev.target.closest ? ev.target.closest("svg.chart") : null;
+    if (!svg || !svg.dataset.points) { hideCrosshair(); return; }
+    let pts;
+    try { pts = JSON.parse(svg.dataset.points); } catch (_) { hideCrosshair(); return; }
+    if (!pts.length) { hideCrosshair(); return; }
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0) { hideCrosshair(); return; }
+    // Nearest point by pixel x (points are fractions of the viewBox width, which
+    // maps linearly to the stretched box).
+    let best = pts[0], bestD = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.abs(rect.left + pts[i].x * rect.width - ev.clientX);
+      if (d < bestD) { bestD = d; best = pts[i]; }
+    }
+    const px = rect.left + best.x * rect.width;
+    const py = rect.top + best.y * rect.height;
+    const color = svg.dataset.color || "#22d3ee";
+    crossEl.style.display = "block";
+    crossEl.style.left = px + "px"; crossEl.style.top = rect.top + "px"; crossEl.style.height = rect.height + "px";
+    dotEl.style.display = "block";
+    dotEl.style.left = px + "px"; dotEl.style.top = py + "px"; dotEl.style.background = color;
+    tipEl.innerHTML = '<div class="tt-time">' + esc(fmtDateTime(best.t)) + "</div>" +
+      '<div class="tt-row"><span class="tt-dot" style="background:' + esc(color) + '"></span>' +
+      '<span class="tt-lab">' + esc(svg.dataset.label || "") + "</span>" +
+      '<span class="tt-val">' + esc(fmtVal(best.v, svg.dataset.fmt)) + "</span></div>";
+    tipEl.style.display = "block";
+    // Offset from the cursor; flip near the viewport edges so it never clips.
+    let tx = ev.clientX + 14, ty = ev.clientY + 14;
+    if (tx + tipEl.offsetWidth > window.innerWidth - 8) tx = ev.clientX - tipEl.offsetWidth - 14;
+    if (ty + tipEl.offsetHeight > window.innerHeight - 8) ty = ev.clientY - tipEl.offsetHeight - 14;
+    tipEl.style.left = tx + "px"; tipEl.style.top = ty + "px";
+  });
+  mainBodyEl.addEventListener("mouseleave", hideCrosshair);
+
+  // ---- data pulls ----
+  async function refreshUsage(id) {
+    try {
+      const u = await fetchJson("/api/agents/" + encodeURIComponent(id) + "/usage?hours=" + usageWindowHours);
+      usageById.set(id, u);
+      if (id === selectedId) renderMain();
+    } catch (_) { /* best-effort; last known value stays until next poll */ }
+  }
+
+  async function refreshFailures(id) {
+    try {
+      const f = await fetchJson("/api/agents/" + encodeURIComponent(id) + "/failures?hours=" + usageWindowHours);
+      failuresById.set(id, f);
+      if (id === selectedId) renderMain();
+    } catch (_) { /* best-effort; last known value stays until next refresh */ }
+  }
+
+  async function refreshMissions(id) {
+    try {
+      const m = await fetchJson("/api/agents/" + encodeURIComponent(id) + "/missions");
+      missionsById.set(id, m);
+      if (id === selectedId) renderMain();
+    } catch (_) { /* best-effort; last known value stays until next refresh */ }
+  }
+
+  async function seedEvents(id) {
+    try {
+      const events = await fetchJson("/api/agents/" + encodeURIComponent(id) + "/events?limit=" + EVENTS_SEED_LIMIT);
+      return events || [];
+    } catch (_) { return []; }
+  }
+
+  async function refreshSnapshots() {
+    let agents;
+    try {
+      agents = await fetchJson("/api/agents");
+    } catch (_) { return; } // transient fetch failure -- next poll retries
+    if (!Array.isArray(agents)) return;
+
+    let newIds = false;
+    const pending = [];
+    for (const a of agents) {
+      if (!snapshots.has(a.id)) { order.push(a.id); newIds = true; }
+      snapshots.set(a.id, a);
+      if (!seeded.has(a.id)) {
+        seeded.add(a.id);
+        pending.push(a.id);
+        refreshUsage(a.id);
+        refreshFailures(a.id);
+        refreshMissions(a.id);
+      }
+    }
+
+    // Seed history for any newly-seen agents, then merge chronologically into
+    // the feed so the initial view is not empty before the first live event.
+    if (pending.length) {
+      const batches = await Promise.all(pending.map(seedEvents));
+      const merged = [].concat.apply([], batches).sort(function (x, y) { return x.ts - y.ts; });
+      for (const e of merged) appendEvent(e, true);
+    }
+
+    if (!selectedId && order.length) selectAgent(order[0]);
+    renderFleet();
+    if (selectedId) renderMain();
+  }
+
+  // ---- websocket ----
+  function setWs(up) {
+    wsStateEl.textContent = up ? "Connected" : "Disconnected";
+    wsStateEl.className = up ? "up" : "down";
+    wsDotEl.className = "dot " + (up ? "running" : "error");
+  }
+
+  function connectWs() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(proto + "//" + location.host + "/ws");
+    ws.onopen = function () { setWs(true); };
+    ws.onclose = function () { setWs(false); setTimeout(connectWs, WS_RECONNECT_MS); };
+    ws.onerror = function () { ws.close(); };
+    ws.onmessage = function (ev) {
+      let e;
+      try { e = JSON.parse(ev.data); } catch (_) { return; }
+      // Track a not-yet-seen agent so its events are not silently dropped
+      // before the next snapshot poll registers it.
+      if (e.agentId && !snapshots.has(e.agentId) && order.indexOf(e.agentId) === -1) {
+        order.push(e.agentId);
+        renderFleet();
+      }
+      appendEvent(e, true);
+      if (e.type === "wake" && e.agentId) refreshUsage(e.agentId); // histogram/replan count just changed
+      // Failure table changes exactly when a blocked action lands -- refetch
+      // then, not on every ~10s action tick.
+      if (e.type === "action" && e.agentId && e.payload && e.payload.outcome === "blocked") refreshFailures(e.agentId);
+      // Mission counts change exactly when their two feeding events land: the
+      // active set is re-read from plan_context (emitted per replan), the
+      // lifetime completed total from status_snapshot (throttled to <=1/60s).
+      // Both are low-frequency and each refresh is one indexed SQLite read.
+      if ((e.type === "plan_context" || e.type === "status_snapshot") && e.agentId) refreshMissions(e.agentId);
+    };
+  }
+
+  renderFilterChips();
+  setWs(false);
+  refreshSnapshots();
+  setInterval(refreshSnapshots, SNAPSHOT_POLL_MS);
+  setInterval(refreshTimestamps, TS_REFRESH_MS);
+  connectWs();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+# Docs gate (#308): the doc-size gate lives in `bun test` (test/doc-size.test.ts),
+# but container.yml path-filters docs/** out of its triggers BY DESIGN — its
+# `paths` anchor gates the workflow, not individual jobs, so widening it to
+# docs/** would also run `verify` (a docker build per docs PR) and `publish`
+# (a container republish + re-attest + host redeploy per docs-only merge to
+# main). Result of the gap: the gate structurally could not fire on the class
+# of change it was built to catch — PR #305 (docs-only) merged a 402-word
+# decisions entry green past the 400-word cap. Same fix shape as security.yml's
+# now-retired compose-hardening job (deploy/** was also outside container.yml's
+# gate; job retired 2026-07-20, #478): a
+# small dedicated check at the right trigger, in its own workflow because
+# security.yml's charter is security regressions, not doc hygiene.
+#
+# Doc-size only, deliberately: prose-lint is NOT runnable here with zero new
+# dependencies — it needs the vale binary plus the operator's machine-global
+# styles kit, neither of which exists on a GitHub runner (see guardrails hook 4,
+# which degrades to a skip for the same reason). It stays a local hook +
+# doc-steward step 8.
+#
+# Same trigger-security posture as the other workflows: `pull_request` (never
+# `pull_request_target`), least-privilege token, actions pinned to commit SHAs.
+name: docs-gate
+on:
+  push:
+    branches: [main]
+    paths: &docs_paths
+      - "docs/**"
+      - "test/doc-size.test.ts"
+      - ".github/workflows/docs-gate.yml"
+  pull_request:
+    branches: [main]
+    paths: *docs_paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  doc-size:
+    runs-on: ubuntu-latest
+    container:
+      # Same digest-pinned image as container.yml's test job.
+      image: oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      # The gate imports only bun:test + node builtins — verified to pass in a
+      # fresh clone with no node_modules, so no `bun install` step.
+      - run: bun test test/doc-size.test.ts

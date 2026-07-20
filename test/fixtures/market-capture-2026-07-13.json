@@ -1,0 +1,159 @@
+{
+  "_meta": {
+    "captured": "2026-07-13",
+    "source": "live event store, read-only (harness.sqlite events table, action payloads)",
+    "purpose": "capture-first groundwork for #93 (market-awareness surfacing) and #152 (broken purchasing); L-15/L-16 — never guess a response shape",
+    "redactions": "no session ids, tokens, or account identifiers present in action result texts; station names are public game text",
+    "limitations": [
+      "The event store truncates action result texts at 120 characters, so multi-line sell Fills tables are cut mid-row. Full Fills shapes need a live capture at execution time, not from the store.",
+      "view_orders and analyze_market have NEVER been executed by the pilot — they appear only in operator steer text. Their response shapes are uncapturable offline.",
+      "get_missions raw listing is not persisted: the 2026-07-13 18:23Z deploy (a514def) injects the mission listing into the planner prompt (promptChars 25126 on the 18:26Z docked replan) but stores no event for it. Only the downstream accept_mission success proves the listing carried a usable template_id.",
+      "No action in the store lists purchasable items or prices at a station. Dock results are a bare 'Docked at X.' line. What a docked player sees as buyable is uncapturable offline."
+    ],
+    "key_facts": [
+      "buy expects an exact snake_case item ID (e.g. 'iron_ore') or full name (e.g. 'Iron Ore') — per the game's own invalid_item error text.",
+      "'fuel_cells' is NOT a valid item id: buy id=fuel_cells returns invalid_item, yet refuel's no_fuel_cells error says 'Buy fuel cells from a market or craft them.' The correct fuel-cell item id is unknown from the store — this contradiction is the heart of #152.",
+      "Mission template_id format is a snake_case template name (copper_requisition), not a UUID.",
+      "Sell Fills tables reveal buyer identity per fill (source=station, buyer=<station name>), so successful sells do surface who bought — but pre-sale buyer discovery (view_orders) remains unobserved."
+    ]
+  },
+  "entries": [
+    {
+      "action": "buy",
+      "params_shape": { "id": "fuel_cells", "quantity": 50 },
+      "outcome": "blocked",
+      "occurrences": 1,
+      "result_text": "invalid_item: Unknown item 'fuel_cells'. Use exact item ID (e.g. 'iron_ore') or full name (e.g. 'Iron Ore')."
+    },
+    {
+      "action": "buy",
+      "params_shape": { "id": "fuel_cells", "quantity": 5 },
+      "outcome": "blocked",
+      "occurrences": 1,
+      "result_text": "not_docked: You must be docked at a station to perform this action. Use 'dock' at a POI with a station, or use 'get_poi' to check if your current location has a station."
+    },
+    {
+      "action": "buy",
+      "params_shape": { "id": "fuel_cells", "quantity": 5 },
+      "outcome": "wait",
+      "occurrences": 84,
+      "result_text": "Another action is already in progress for this player",
+      "note": "harness-side concurrency gate, not a game response; all 84 'wait' buys are this text"
+    },
+    {
+      "action": "refuel",
+      "params_shape": {},
+      "outcome": "blocked",
+      "occurrences": 6,
+      "result_text": "no_fuel_cells: No fuel cells found in cargo. Buy fuel cells from a market or craft them.",
+      "note": "contradicts buy invalid_item for 'fuel_cells' — the real item id for fuel cells is unconfirmed"
+    },
+    {
+      "action": "refuel",
+      "params_shape": {},
+      "outcome": "continue",
+      "occurrences": 9,
+      "result_text": "Refueled 88 fuel for 352cr.",
+      "note": "station refuel spends credits directly without a buy action"
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "gold_ore", "quantity": 6 },
+      "outcome": "continue",
+      "occurrences": 16,
+      "result_text": "Sold 6 Gold Ore for 12cr."
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "vanadium_ore", "quantity": 11 },
+      "outcome": "continue",
+      "occurrences": 2,
+      "result_text": "Sold 11 Vanadium Ore for 24cr.\nFills:\nqty\tprice\tsubtotal\tsource\tbuyer\n2\t3cr\t6cr\tstation\tGold Run Extraction Hub\n9\t2cr\t18",
+      "note": "TRUNCATED at 120 chars by the event store; Fills table continues past the cut"
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "carbon_ore", "quantity": 20 },
+      "outcome": "continue",
+      "occurrences": 1,
+      "result_text": "Sold 20 Carbon Ore for 535cr. +5 trading XP (level 0).\nFills:\nqty\tprice\tsubtotal\tsource\tbuyer\n15\t27cr\t405cr\tstation\tCarg",
+      "note": "TRUNCATED at 120 chars; shows trading-XP variant of the success line"
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "vanadium_ore", "quantity": 13 },
+      "outcome": "continue",
+      "occurrences": 1,
+      "result_text": "Sold 6 Vanadium Ore for 6cr. 7 unsold (no buyers).\nFills:\nqty\tprice\tsubtotal\tsource\tbuyer\n2\t1cr\t2cr\tstation\tGold Run Ext",
+      "note": "TRUNCATED at 120 chars; partial-fill variant — sold some, remainder no buyers"
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "palladium_ore", "quantity": 7 },
+      "outcome": "blocked",
+      "occurrences": 38,
+      "result_text": "Sold 0 Palladium Ore for 0cr. 7 unsold (no buyers).",
+      "note": "the live no-buyers block (Market Prime Exchange episode) — regression fixture for #93"
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "gold", "quantity": 100 },
+      "outcome": "blocked",
+      "occurrences": 1,
+      "result_text": "invalid_item: Unknown item 'gold'. Use exact item ID (e.g. 'iron_ore') or full name (e.g. 'Iron Ore')."
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "iron_ore", "quantity": 35 },
+      "outcome": "blocked",
+      "occurrences": 1,
+      "result_text": "insufficient_items: Not enough Iron Ore in cargo. You have 0 but tried to sell 35."
+    },
+    {
+      "action": "sell",
+      "params_shape": { "id": "palladium_ore", "quantity": 7 },
+      "outcome": "blocked",
+      "occurrences": 36,
+      "result_text": "not_docked: You must be docked at a station to perform this action. Use 'dock' at a POI with a station, or use 'get_poi' to check if your current location has a station."
+    },
+    {
+      "action": "dock",
+      "params_shape": {},
+      "outcome": "continue",
+      "occurrences": 49,
+      "result_text": "Docked at Market Prime Exchange.",
+      "note": "dock success carries NO market/shop listing — nothing tells a docked player what is buyable"
+    },
+    {
+      "action": "dock",
+      "params_shape": {},
+      "outcome": "blocked",
+      "occurrences": 108,
+      "result_text": "No station at this location"
+    },
+    {
+      "action": "accept_mission",
+      "params_shape": { "template_id": "copper_requisition" },
+      "outcome": "continue",
+      "occurrences": 1,
+      "result_text": "Appreciated, pilot. The asteroid belts should have what we need. Template: copper_requisition. Expires: 2026-07-15T18:26",
+      "note": "TRUNCATED at 120 chars (expiry timestamp cut). Proves template_id is a snake_case template name and the post-deploy docked replan received a usable mission listing."
+    },
+    {
+      "action": "accept_mission",
+      "params_shape": {},
+      "outcome": "blocked",
+      "occurrences": 2,
+      "result_text": "invalid_payload: Must provide template_id (or mission_id) to accept a mission.",
+      "note": "game-side error for empty params"
+    },
+    {
+      "action": "accept_mission",
+      "params_shape": {},
+      "outcome": "blocked",
+      "occurrences": 2,
+      "result_text": "accept_mission needs a template_id (or id) from get_missions first",
+      "note": "harness-side gate added 2026-07-13, not game text"
+    }
+  ]
+}

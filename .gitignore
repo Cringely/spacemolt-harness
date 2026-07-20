@@ -1,0 +1,29 @@
+# Secrets — never committed (SpaceMolt passwords, registration code, tokens)
+# The codex-subscription auth artifact (secrets/auth.json, a ChatGPT session
+# token) is already covered by secrets/ below; .codex/ guards a stray local
+# `codex login` writing its home into the repo.
+secrets/
+.codex/
+.env
+
+# Runtime state
+*.sqlite
+*.sqlite-*
+.spacemolt-session.json
+# Local LLM-spend SSOT (scripts/spend-tally.ts) — machine-local, never committed
+spend-ledger.jsonl
+
+# Dependencies / build
+node_modules/
+dashboard/dist/
+
+# Machine-local Claude settings
+.claude/settings.local.json
+.claude/ceremony-ledger.json
+agents.yaml
+.claude/wave-state.md
+.infino/
+
+# Ephemeral agent worktrees — never tracked; also keeps code-context from
+# embedding N duplicate copies of the whole tree (WSL CPU runaway, 2026-07-17)
+.claude/worktrees/

@@ -1,0 +1,75 @@
+# Staging validation deploy. The reverse proxy runs elsewhere, not on the
+# staging host — staging containers are not label-routable, so this compose
+# file carries no reverse-proxy labels and instead publishes the dashboard
+# on the staging host's LAN IP for direct browser verification. This file is
+# the BUILD/VALIDATION target only; docker-compose.production.yml is the
+# production promotion (Batch K).
+services:
+  harness:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Tag scheme: short git SHA of the built commit. Never :latest — a
+    # floating tag is overwritten by every rebuild, destroying the
+    # previous image and the fast-rollback path with it.
+    image: spacemolt-harness:${HARNESS_IMAGE_TAG:?set HARNESS_IMAGE_TAG to the short git SHA}
+    container_name: spacemolt-harness
+    restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # 64m bounds tmpfs RAM use; the claude CLI's per-call scratch under
+      # HOME=/tmp is the only writer, well under this on a stateless
+      # single-shot invocation.
+      - /tmp:size=64m
+
+    volumes:
+      - harness_data:/app/data
+      # Bind-mount, read-write: src/config/config.ts's ensureCredentials
+      # writes newly-registered agents' password files here at mode 0o644
+      # (already the invariant-required mode in code). Host-side directory
+      # must be writable by container UID 10001.
+      - ./secrets:/app/secrets
+      # codex-subscription auth home (#311): SAME container path and mechanism
+      # as the production compose — a dedicated writable, persistent bind-mount
+      # at /app/codex-home. Staging validates the real prod path so a codex
+      # token refresh (which rewrites auth.json in place) is exercised here, not
+      # first discovered in prod (#311 security review, finding #5). Host dir
+      # ./secrets/codex-home must be writable by container UID 10001.
+      - ./secrets/codex-home:/app/codex-home
+      - ./agents.yaml:/app/agents.yaml:ro
+
+    env_file:
+      - .env
+
+    environment:
+      # codex-subscription planner (#311): both the codex CLI and the planner's
+      # existence-check resolve auth at $CODEX_HOME/auth.json
+      # (src/planner/codex-subscription.ts). Points at the writable, persistent
+      # codex-home bind-mount above — the SAME /app/codex-home path prod uses —
+      # so codex refreshes its OAuth token in place (rewriting auth.json) exactly
+      # as it will in production. Seed it with `codex login --device-auth` inside the
+      # container, or drop an existing auth.json into ./secrets/codex-home (see
+      # docs/wiki/operations.md). Inert unless a staging agent uses codex.
+      CODEX_HOME: /app/codex-home
+
+    # #173: deliberately NO HARNESS_DASHBOARD_TOKEN_FILE here. Staging has no
+    # reverse proxy to inject the X-Dashboard-Token header and validation is
+    # direct browser access on the LAN bind below — enabling the token would
+    # 401 every browser request. The harness starts with the barrier disabled
+    # and logs one loud warning; the LAN-IP bind stays the (only) staging control.
+
+    # Validation-only: published on the LAN IP, never 0.0.0.0, so the
+    # dashboard isn't reachable from outside the staging host's subnet.
+    # This directly contradicts the production "no published port" rule —
+    # deliberate, and confined to this file, per the PM-approved two-file
+    # split. docker-compose.production.yml has no ports: stanza at all.
+    ports:
+      - "${STAGING_BIND_IP}:${HARNESS_DASHBOARD_PORT}:${HARNESS_DASHBOARD_PORT}"
+
+volumes:
+  harness_data:

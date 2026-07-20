@@ -1,0 +1,187 @@
+# Container CI: verify on PRs (least-privilege), build+publish on main.
+#
+# The Dockerfile's own test stage re-runs the full suite inside the build, so a
+# failing gate makes the image unbuildable here too — the gate travels with the
+# Dockerfile, not the CI. Verify runs on PRs so a red build blocks the merge
+# instead of following it (promoted after CI ran red on main for hours because
+# merges landed on offline tests with no pre-merge build check).
+#
+# SECURITY (PR CI has real ramifications — mitigations in place):
+#   * Trigger is `pull_request`, NOT `pull_request_target` — a fork PR runs with
+#     a READ-ONLY token and NO access to repo secrets. `pull_request_target`
+#     (fork code + base secrets + write token) is the classic exfiltration hole;
+#     we never use it.
+#   * Least privilege: the `verify` job (runs on PRs) has `contents: read` only.
+#     `packages: write` lives solely on `publish`, which runs ONLY on push to
+#     main — a PR verifies, it never publishes and never holds a write token.
+#   * Runner is GitHub-hosted + ephemeral (never a self-hosted runner — untrusted
+#     PR code on your own infra is the other classic hole).
+#   * Actions are pinned to commit SHAs (supply-chain).
+#   * No secret is passed into `docker build`, so PR code can't read the token.
+#   If this repo ever goes public or gains outside collaborators, also enable
+#   "Require approval for all outside/first-time contributors" for workflow runs.
+name: container
+on:
+  push:
+    branches: [main]
+    paths: &gate_paths
+      - "src/**"
+      - "test/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - ".github/workflows/container.yml"
+  pull_request:
+    branches: [main]
+    paths: *gate_paths
+  workflow_dispatch:
+
+# Minimal default; jobs elevate only what they need.
+permissions:
+  contents: read
+
+# Cancel a superseded run for the same ref (cost + hygiene).
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast, explicit test gate: typecheck + full offline suite, run directly (no
+  # Docker layering) so a red test blocks the merge with a clear "test" check in
+  # ~1 min. Runs on PRs and pushes. The Dockerfile's own preflight (the `verify`
+  # job) re-runs the same suite as belt-and-suspenders AND catches build-context
+  # bugs the fast job can't (e.g. a file not COPYd into the image). contents:read
+  # only; no secrets, no publish.
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
+  # Verify the build (test gate inside the Dockerfile). PRs only. No publish,
+  # no write token.
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Build (test gate runs inside the Dockerfile — verifies the build)
+        run: docker build -t spacemolt-harness:verify .
+
+  # Build + publish to GHCR + attach signed SLSA provenance. Push to main (or
+  # manual dispatch) only.
+  #
+  # PROVENANCE (#171, SLSA Build L2 "L3-shaped"): key-based cosign, NOT
+  # actions/attest-build-provenance — GitHub artifact attestations require
+  # Enterprise Cloud on private repos (verified 2026-07-14: personal-plan
+  # private repo, the attestation API refuses). The signing key exists ONLY as
+  # Actions secrets (COSIGN_PRIVATE_KEY encrypted with COSIGN_PASSWORD), so a
+  # valid attestation proves "this exact digest was published by this repo's
+  # CI"; the host-side pull deployer verifies it FAIL-CLOSED before any
+  # compose up (deployer runbook lives in the operator's private GitOps repo).
+  #   * --tlog-upload=false: a private repo must not write its image path and
+  #     build metadata to the public Rekor transparency log; the deployer
+  #     verifies with --private-infrastructure to match. The key is the trust
+  #     root, not the log.
+  #   * cosign pinned to v2.6.3 (still-maintained v2 line): --tlog-upload is
+  #     deprecated in v3 (as of v3.0.3; still functional, removal planned for
+  #     v4), and v3's default push toward public-Sigstore signing-configs is
+  #     an offline-untestable change — pin v2 until the v3 path is
+  #     deliberately evaluated. Host binary is the same version.
+  #   * ORDER MATTERS: the sha7 tag is pushed and attested BEFORE latest-main
+  #     moves, so the deployer's watched rolling tag never points at a digest
+  #     whose attestation doesn't exist yet (would false-trip the fail-closed
+  #     gate).
+  publish:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Build (test gate runs inside the Dockerfile)
+        run: |
+          OWNER=${GITHUB_REPOSITORY_OWNER,,}  # GHCR requires lowercase
+          docker build \
+            -t ghcr.io/$OWNER/spacemolt-harness:${GITHUB_SHA::7} \
+            -t ghcr.io/$OWNER/spacemolt-harness:latest-main \
+            .
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push sha7 tag (creates the digest; latest-main released last)
+        id: push
+        run: |
+          OWNER=${GITHUB_REPOSITORY_OWNER,,}
+          IMAGE=ghcr.io/$OWNER/spacemolt-harness
+          docker push "$IMAGE:${GITHUB_SHA::7}"
+          DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:${GITHUB_SHA::7}" | cut -d@ -f2)
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::could not resolve pushed digest (got '$DIGEST')"; exit 1 ;;
+          esac
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v2.6.3"
+      - name: Attest SLSA provenance against the pushed digest
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        # The predicate is SLSA v1, self-attested by this workflow (no isolated
+        # builder — that's the honest "L2, L3-shaped" label): its integrity
+        # rests on the key being usable only inside this repo's Actions runs.
+        run: |
+          cat > "$RUNNER_TEMP/predicate.json" <<EOF
+          {
+            "buildDefinition": {
+              "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "$GITHUB_REF",
+                  "repository": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY",
+                  "path": ".github/workflows/container.yml"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+$GITHUB_SERVER_URL/$GITHUB_REPOSITORY@$GITHUB_REF",
+                  "digest": { "gitCommit": "$GITHUB_SHA" }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": { "id": "$GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF" },
+              "metadata": {
+                "invocationId": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+              }
+            }
+          }
+          EOF
+          cosign attest --yes \
+            --key env://COSIGN_PRIVATE_KEY \
+            --type slsaprovenance1 \
+            --predicate "$RUNNER_TEMP/predicate.json" \
+            --tlog-upload=false \
+            "${{ steps.push.outputs.image }}@${{ steps.push.outputs.digest }}"
+      - name: Release rolling tag latest-main (the deployer watches this)
+        run: |
+          OWNER=${GITHUB_REPOSITORY_OWNER,,}
+          docker push ghcr.io/$OWNER/spacemolt-harness:latest-main

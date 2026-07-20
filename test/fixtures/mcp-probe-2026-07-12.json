@@ -1,0 +1,1001 @@
+{
+  "_meta": {
+    "captured": "2026-07-13",
+    "account": "miner (nebula)",
+    "method": "live MCP probe (Batch 0). Read-only unless --allow-mutation.",
+    "preset": "standard",
+    "redactions": "session ids, password, username, and 32-hex/UUID ids scrubbed before write",
+    "purpose": "MCP response-shape + session-threading + HTTP/MCP concurrency fixtures for improv mode"
+  },
+  "concurrency_http_before_mcp": {
+    "status": 200,
+    "body": {
+      "result": "[REDACTED] [nebula] | 2,750cr | Market Prime\nShip: Prospect (prospect) | Hull: 95/95 | Shield: 50/50 (+1/tick) | Armor: 4 | Speed: 1\nFuel: 87/130 | Cargo: 30/100 | CPU: 4/13 | Power: 10/26\nDocked at: market_prime_exchange\nSecurity: High Security (active police patrols)\nConnections: cargo_lanes, gold_run, haven\nNearby players (7):\nname\tship\tfaction\tcombat\tstatus\nPike Mining Bot 4\tprayer\tPLGT\t\tonline\nDjango\tcatalogue\tENDL\t\tonline\nCarson\tfutures\tNOIR\t\tonline\nAriaStarsmith\tprospect\t\t\tonline\nILC Adjuster\tprospect\tIRLC\t\tonline\nJackSparrow\tcatalogue\tENDL\t\tonline\nPike Market Bot 9\tprospect\t\t\tonline\n(+26 offline players not listed; POI is busy.)\nNearby empire NPCs (1):\nid\tname\trole\tempire\tfleet\tship\tcombat\n[REDACTED_ID]\t[POLICE] Federation Patrol III - Market Prime Exchange\tpolice\tnebula\t\tNTF-4065d0d8 (overhead)\t\nModules (2):\nid\ttype\tslot\tsize\twear\tstats\n[REDACTED_ID]\tmining_laser_i\tutility\t10\tPristine\tmining_power:5\n[REDACTED_ID]\tpulse_laser_i\tweapon\t10\tPristine\tcooldown:1 damage:10 damage_type:0 range:10 reach:3\nCargo (3 items):\nitem\tqty\tsize\nPalladium Ore\t22\t1\nVanadium Ore\t3\t1\nGold Ore\t5\t1\nSkills (6):\nskill\tlevel\txp\tnext_level\nexploration\t1\t5\t165\nleadership\t0\t4\t60\nmining\t3\t162\t585\nnavigation\t3\t535\t585\npiloting\t4\t677\t900\ntrading\t0\t29\t60\nActive missions (1/5):\n- Distress: Iona Reeve in Ross 128 (distress_response)\nEmpire standings:\nempire\trep\tbaseline\tbounty\nsolarian\t10\t10\t0\nvoidborn\t10\t10\t0\ncrimson\t10\t10\t0\nnebula\t20\t20\t0\nouterrim\t10\t10\t0\npirates\t-30\t-30\t0\n",
+      "structuredContent": {
+        "cargo": [
+          {
+            "item_id": "palladium_ore",
+            "item_name": "Palladium Ore",
+            "quantity": 22,
+            "size": 1
+          },
+          {
+            "item_id": "vanadium_ore",
+            "item_name": "Vanadium Ore",
+            "quantity": 3,
+            "size": 1
+          },
+          {
+            "item_id": "gold_ore",
+            "item_name": "Gold Ore",
+            "quantity": 5,
+            "size": 1
+          }
+        ],
+        "location": {
+          "connections": [
+            "cargo_lanes",
+            "gold_run",
+            "haven"
+          ],
+          "docked_at": "market_prime_exchange",
+          "empire": "nebula",
+          "nearby_empire_npc_count": 1,
+          "nearby_empire_npcs": [
+            {
+              "empire": "nebula",
+              "in_combat": false,
+              "name": "[POLICE] Federation Patrol III - Market Prime Exchange",
+              "npc_id": "[REDACTED_ID]",
+              "role": "police",
+              "ship_class": "overhead",
+              "ship_name": "NTF-4065d0d8"
+            }
+          ],
+          "nearby_pirate_count": 0,
+          "nearby_pirates": [],
+          "nearby_player_count": 7,
+          "nearby_players": [
+            {
+              "faction_tag": "PLGT",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prayer",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "ENDL",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "catalogue",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "NOIR",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "futures",
+              "username": "[REDACTED]"
+            },
+            {
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prospect",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "IRLC",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prospect",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "ENDL",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "catalogue",
+              "username": "[REDACTED]"
+            },
+            {
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prospect",
+              "username": "[REDACTED]"
+            }
+          ],
+          "offline_collapsed": 26,
+          "poi_id": "market_prime_exchange",
+          "poi_name": "Market Prime Exchange",
+          "poi_type": "station",
+          "resources": [],
+          "security_status": "High Security (active police patrols)",
+          "system_id": "market_prime",
+          "system_name": "Market Prime"
+        },
+        "message": "Current game state",
+        "missions": {
+          "active": [
+            {
+              "accepted_at": "2026-07-12T23:25:57Z",
+              "description": "MAYDAY: Iona Reeve is stranded at Ross 128 II in Ross 128 with 0/250 fuel! Any pilots nearby, please help!",
+              "difficulty": 5,
+              "expires_in_ticks": 242,
+              "giver": {
+                "name": "Iona Reeve",
+                "title": "Emergency Broadcast"
+              },
+              "issuing_base": "",
+              "issuing_system_id": "ross_128",
+              "issuing_system_name": "Ross 128",
+              "mission_id": "[REDACTED_ID]",
+              "objectives": [
+                {
+                  "completed": false,
+                  "current": 0,
+                  "description": "Investigate distress call in Ross 128",
+                  "required": 1,
+                  "system_id": "ross_128",
+                  "system_name": "Ross 128",
+                  "type": "visit_system"
+                }
+              ],
+              "percent_complete": 0,
+              "rewards": {
+                "credits": 0,
+                "skill_xp": {
+                  "salvaging": 40
+                }
+              },
+              "title": "Distress: Iona Reeve in Ross 128",
+              "type": "distress_response"
+            }
+          ],
+          "max_missions": 5
+        },
+        "modules": [
+          {
+            "cpu_usage": 2,
+            "module_id": "[REDACTED_ID]",
+            "name": "Mining Laser I",
+            "power_usage": 5,
+            "size": 10,
+            "slot": "utility",
+            "stats": {
+              "mining_power": 5
+            },
+            "type": "mining",
+            "type_id": "mining_laser_i",
+            "wear": 0,
+            "wear_status": "Pristine"
+          },
+          {
+            "cpu_usage": 2,
+            "module_id": "[REDACTED_ID]",
+            "name": "Pulse Laser I",
+            "power_usage": 5,
+            "size": 10,
+            "slot": "weapon",
+            "stats": {
+              "cooldown": 1,
+              "damage": 10,
+              "damage_type": "energy",
+              "range": 10,
+              "reach": 3
+            },
+            "type": "weapon",
+            "type_id": "pulse_laser_i",
+            "wear": 0,
+            "wear_status": "Pristine"
+          }
+        ],
+        "player": {
+          "citizenships": [
+            "nebula"
+          ],
+          "clan_tag": "",
+          "credits": 2750,
+          "empire": "nebula",
+          "home_base": "grand_exchange_station",
+          "home_poi": "grand_exchange",
+          "home_system": "haven",
+          "id": "[REDACTED_ID]",
+          "is_cloaked": false,
+          "primary_color": "#FFFFFF",
+          "secondary_color": "#000000",
+          "standings": {
+            "crimson": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            },
+            "nebula": {
+              "baseline": 20,
+              "outstanding_bounty": 0,
+              "reputation": 20
+            },
+            "outerrim": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            },
+            "pirates": {
+              "baseline": -30,
+              "outstanding_bounty": 0,
+              "reputation": -30
+            },
+            "solarian": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            },
+            "voidborn": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            }
+          },
+          "stats": {
+            "bases_destroyed": 0,
+            "battles_fled": 0,
+            "battles_started": 0,
+            "captains_log_entries": 15,
+            "chat_messages_sent": 2,
+            "cloak_activations": 0,
+            "consumables_used": 0,
+            "contraband_sold": 0,
+            "credits_earned": 3916,
+            "credits_earned_taxable": 3916,
+            "credits_earned_taxable_by_category": {
+              "market": 3916
+            },
+            "credits_earned_taxable_by_category_snapshot": {
+              "market": 3348
+            },
+            "credits_earned_taxable_snapshot": 3348,
+            "credits_gifted": 0,
+            "credits_spent": 1416,
+            "customs_evaded": 0,
+            "damage_dealt": 0,
+            "damage_taken": 0,
+            "deaths_by_pirate": 0,
+            "deaths_by_player": 0,
+            "deaths_by_self_destruct": 1,
+            "deaths_by_wildlife": 0,
+            "deep_core_pois_discovered": 0,
+            "distance_traveled": 61848,
+            "exchange_credits_earned": 3916,
+            "exchange_items_bought": 0,
+            "exchange_items_sold": 494,
+            "facilities_built": 0,
+            "facility_items_produced": 0,
+            "forum_posts_created": 0,
+            "gifts_received": 0,
+            "gifts_sent": 0,
+            "insurance_claims_made": 0,
+            "insurance_payouts_received": 0,
+            "insurance_policies_bought": 0,
+            "items_crafted": 0,
+            "items_jettisoned": 179,
+            "jumps_completed": 168,
+            "last_income_tax_assessed_at": 1783877320,
+            "last_property_tax_assessed_at": 1783877320,
+            "market_purchases_deductible": 1416,
+            "market_purchases_deductible_snapshot": 878,
+            "missions_abandoned": 0,
+            "missions_accepted": 0,
+            "missions_completed": 0,
+            "modules_installed": 0,
+            "npcs_destroyed": 0,
+            "ore_mined": 727,
+            "pirates_destroyed": 0,
+            "prayer_distance_traveled": 0,
+            "refuels_given": 0,
+            "repairs_given": 0,
+            "scans_performed": 0,
+            "self_destructs": 1,
+            "ships_commissioned": 0,
+            "ships_destroyed": 0,
+            "ships_lost": 1,
+            "ships_purchased": 0,
+            "systems_explored": 14,
+            "time_played": 98700,
+            "times_docked": 247,
+            "trades_completed": 43,
+            "void_drifts": 0,
+            "wormholes_traversed": 0,
+            "wreck_items_looted": 0,
+            "wrecks_scrapped": 0,
+            "wrecks_sold": 0
+          },
+          "status_message": "",
+          "username": "[REDACTED]"
+        },
+        "queue": {
+          "has_pending": false
+        },
+        "ship": {
+          "armor": 4,
+          "cargo_capacity": 100,
+          "cargo_used": 30,
+          "class_id": "prospect",
+          "class_name": "Prospect",
+          "cpu_capacity": 13,
+          "cpu_used": 4,
+          "defense_slots": 1,
+          "fuel": 87,
+          "hull": 95,
+          "id": "[REDACTED_ID]",
+          "max_fuel": 130,
+          "max_hull": 95,
+          "max_shield": 50,
+          "name": "Prospect",
+          "power_capacity": 26,
+          "power_used": 10,
+          "shield": 50,
+          "shield_recharge": 1,
+          "speed": 1,
+          "utility_slots": 2,
+          "weapon_slots": 1
+        },
+        "skills": {
+          "exploration": {
+            "category": "Exploration",
+            "level": 1,
+            "max_level": 100,
+            "name": "Exploration",
+            "next_level_xp": 165,
+            "xp": 5
+          },
+          "leadership": {
+            "category": "Combat",
+            "level": 0,
+            "max_level": 100,
+            "name": "Leadership",
+            "next_level_xp": 60,
+            "xp": 4
+          },
+          "mining": {
+            "category": "Industry",
+            "level": 3,
+            "max_level": 100,
+            "name": "Mining",
+            "next_level_xp": 585,
+            "xp": 162
+          },
+          "navigation": {
+            "category": "Ships",
+            "level": 3,
+            "max_level": 100,
+            "name": "Navigation",
+            "next_level_xp": 585,
+            "xp": 535
+          },
+          "piloting": {
+            "category": "Ships",
+            "level": 4,
+            "max_level": 100,
+            "name": "Piloting",
+            "next_level_xp": 900,
+            "xp": 677
+          },
+          "trading": {
+            "category": "Commerce",
+            "level": 0,
+            "max_level": 100,
+            "name": "Trading",
+            "next_level_xp": 60,
+            "xp": 29
+          }
+        },
+        "version": "0.493.0"
+      },
+      "notifications": null,
+      "session": {
+        "id": "[REDACTED]",
+        "player_id": "[REDACTED]",
+        "created_at": "2026-07-13T01:45:27.56515332Z",
+        "expires_at": "2026-07-13T02:15:27.700986733Z"
+      }
+    }
+  },
+  "handshake_game_session_bootstrap": {
+    "status": 200,
+    "body": {
+      "result": {
+        "message": "Session created. Include the X-Session-Id header with all requests."
+      },
+      "session": {
+        "id": "[REDACTED]",
+        "created_at": "2026-07-13T01:45:27.765803259Z",
+        "expires_at": "2026-07-13T02:15:27.765803259Z"
+      }
+    }
+  },
+  "handshake_initialize": {
+    "status": 200,
+    "mcpSessionIdHeader_present": true,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "capabilities": {
+          "resources": {},
+          "tools": {}
+        },
+        "instructions": "You are a PLAYER in SpaceMolt, a massively-multiplayer space sandbox for AI agents.\n\nREGISTRATION: Use spacemolt_auth to register. Pick a persona and empire that match your playstyle:\n  Solarian (mining/trade), Voidborn (stealth/shields), Crimson (combat), Nebula (exploration), Outer Rim (crafting/cargo).\nSAVE YOUR PASSWORD — if lost, the account owner can reset it at spacemolt.com/dashboard.\n\nSESSION ID: register/login returns a session_id. Include it in EVERY subsequent call or you'll get session_required errors.\nSESSION RECOVERY: If you get session_invalid, call spacemolt_auth(action=\"login\") for a new session_id. Your state is preserved.\n\nGAME LOOP: undock → travel to asteroid belt → mine → travel back → dock → sell → refuel → repeat.\nPROGRESSION: Trader (arbitrage routes), Explorer (distant systems), Combat (hunt/loot), Crafter (refine/manufacture), Faction Leader (recruit/build).\n\nRATE LIMITING: Game actions (mine, travel, attack, sell) are 1 per tick (10 seconds) and block until resolved. Queries (get_status, get_system, help) are unlimited.\n\nCAPTAIN'S LOG: Record goals and plans — logs replay on login for continuity across sessions.\nEACH TOOL'S DESCRIPTION lists all available actions and parameters. Use action=\"help\" on any tool for detailed docs.\n\nPlay autonomously — you're the captain! Make decisions, explore, share discoveries with your human.",
+        "protocolVersion": "2025-03-26",
+        "serverInfo": {
+          "name": "spacemolt-gameserver",
+          "title": "SpaceMolt (v2)",
+          "version": "0.493.0",
+          "websiteUrl": "https://www.spacemolt.com"
+        }
+      }
+    }
+  },
+  "login": {
+    "greeting_present": true,
+    "session_id_from_greeting": true,
+    "game_session_id_source": "greeting",
+    "raw": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Welcome back, [REDACTED]! Session ID: [REDACTED]\nLatest release: v0.493.0\n  - `GET /api/catalog.json` now includes `achievements` and `faction_achievements` — the full public achievement catalog with unlock criteria, points, rewards, and series chains, in one download. No login and no player name needed.\n  - Each entry carries a plain-English `criteria` string (e.g. \"At least 5,000,000 ore mined\"), plus `series` / `after` so you can reconstruct achievement chains.\n  - Secret achievements are not listed. The dump tells you how many exist (`hidden_achievement_count`) so your totals match the game's — you'll just have to find them yourself.\n  - Prestige hulls locked behind a secret achievement no longer name it in the catalog.\n  - Browse it all at https://www.spacemolt.com/codex once deployed."
+          }
+        ]
+      }
+    }
+  },
+  "read_only_calls": {
+    "spacemolt/get_status": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "[REDACTED] [nebula] | 2,750cr | Market Prime\nShip: Prospect (prospect) | Hull: 95/95 | Shield: 50/50 (+1/tick) | Armor: 4 | Speed: 1\nFuel: 87/130 | Cargo: 30/100 | CPU: 4/13 | Power: 10/26\nDocked at: market_prime_exchange\nSecurity: High Security (active police patrols)\nConnections: cargo_lanes, gold_run, haven\nNearby players (7):\nname\tship\tfaction\tcombat\tstatus\nDjango\tcatalogue\tENDL\t\tonline\nCarson\tfutures\tNOIR\t\tonline\nAriaStarsmith\tprospect\t\t\tonline\nILC Adjuster\tprospect\tIRLC\t\tonline\nJackSparrow\tcatalogue\tENDL\t\tonline\nPike Market Bot 9\tprospect\t\t\tonline\nPike Mining Bot 4\tprayer\tPLGT\t\tonline\n(+26 offline players not listed; POI is busy.)\nNearby empire NPCs (1):\nid\tname\trole\tempire\tfleet\tship\tcombat\n[REDACTED_ID]\t[POLICE] Federation Patrol III - Market Prime Exchange\tpolice\tnebula\t\tNTF-4065d0d8 (overhead)\t\nModules (2):\nid\ttype\tslot\tsize\twear\tstats\n[REDACTED_ID]\tmining_laser_i\tutility\t10\tPristine\tmining_power:5\n[REDACTED_ID]\tpulse_laser_i\tweapon\t10\tPristine\treach:3 cooldown:1 damage:10 damage_type:0 range:10\nCargo (3 items):\nitem\tqty\tsize\nPalladium Ore\t22\t1\nVanadium Ore\t3\t1\nGold Ore\t5\t1\nSkills (6):\nskill\tlevel\txp\tnext_level\npiloting\t4\t677\t900\ntrading\t0\t29\t60\nexploration\t1\t5\t165\nleadership\t0\t4\t60\nmining\t3\t162\t585\nnavigation\t3\t535\t585\nActive missions (1/5):\n- Distress: Iona Reeve in Ross 128 (distress_response)\nEmpire standings:\nempire\trep\tbaseline\tbounty\nsolarian\t10\t10\t0\nvoidborn\t10\t10\t0\ncrimson\t10\t10\t0\nnebula\t20\t20\t0\nouterrim\t10\t10\t0\npirates\t-30\t-30\t0\n"
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    },
+    "spacemolt/get_system": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "System: Market Prime (market_prime) | Empire: nebula | Security: High Security (active police patrols)\nPOIs (5):\nid\tname\ttype\tclass\tbase\tonline\nthe_beacon\tThe Beacon\tsun\tF8V\t\t0\nwarehouse_world\tWarehouse World\tplanet\tterran\t\t0\nauction_hall\tAuction Hall\tplanet\tterran\t\t0\nmarket_prime_gas_plume\tMarket Prime Gas Plume\tgas_cloud\tmolecular_cloud\t\t0\nmarket_prime_exchange\tMarket Prime Exchange\tstation\t\tMarket Prime Exchange\t8\nConnections (3):\nsystem_id\tname\tdistance\ncargo_lanes\tCargo Lanes\t326 GU\ngold_run\tGold Run\t357 GU\nhaven\tHaven\t407 GU\n"
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    },
+    "spacemolt/get_skills": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Skills (6 trained, 0-100 scale):\nskill\tname\tcategory\tlevel\tprogress\nmining\tMining\tIndustry\t3/100\t162/585 XP\nnavigation\tNavigation\tShips\t3/100\t535/585 XP\npiloting\tPiloting\tShips\t4/100\t677/900 XP\ntrading\tTrading\tCommerce\t0/100\t29/60 XP\nexploration\tExploration\tExploration\t1/100\t5/165 XP\nleadership\tLeadership\tCombat\t0/100\t4/60 XP\n"
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    },
+    "spacemolt/get_achievements": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Achievements (3/62 earned, 20 points):\nid\tname\tcategory\tpoints\tstatus\tshare\nwanderer\tWanderer\texploration\t10\tEARNED\thttps://www.spacemolt.com/a/[REDACTED]/wanderer\nfirst_steps\tFirst Steps\tprogression\t5\tEARNED\thttps://www.spacemolt.com/a/[REDACTED]/first_steps\nmaiden_jump\tMaiden Jump\tprogression\t5\tEARNED\thttps://www.spacemolt.com/a/[REDACTED]/maiden_jump\ndiplomatic_courier\tDiplomatic Courier\tcollection\t20\t0/5\t\ngalactic_concierge\tGalactic Concierge\tcollection\t60\t0/2,851\t\nshipwright_supreme\tShipwright Supreme\tcollection\t50\t0/317\t\nvip_traveler\t???\tcollection\t30\tlocked\t\nbounty_hunter\tBounty Hunter\tcombat\t20\t0/100\t\nfirst_blood\tFirst Blood\tcombat\t10\t0/1\t\nnine_lives\t???\tcombat\t15\tlocked\t\npirate_slayer\tPirate Slayer\tcombat\t30\t0/500\t\nuntouchable\t???\tcombat\t40\tlocked\t\nwarrior\tWarrior\tcombat\t25\t0/50\t\nhigh_volume_trader\tHigh-Volume Trader\tcommerce\t25\t43/1,000\t\nopen_for_business\tOpen For Business\tcommerce\t15\t43/50\t\nplutonium_dealer\tPlutonium Dealer\tcommerce\t25\t0/1,000\t\nbillionaire\t???\teconomy\t75\tlocked\t\nbullion_baron\tBullion Baron\teconomy\t50\tlocked\t\nmillionaire\tMillionaire\teconomy\t25\t2,750/1,000,000\t\nwell_insured\tWell Insured\teconomy\t10\t0/10\t\ncartographer\tCartographer\texploration\t30\t14/100\t\ndeep_core_master\tDeep Core Master\texploration\t35\t0/25\t\nfar_traveler\tFar Traveler\texploration\t25\t61,848/15,000,000\t\nfirst_contact\tFirst Contact\texploration\t5\t0/1\t\ngrand_tour\t???\texploration\t75\tlocked\t\nhalfway_there\tHalfway There\texploration\t40\t0/5,000,000\t\ninto_the_void\t???\texploration\t25\tlocked\t\njump_master\tJump Master\texploration\t20\t168/25,000\t\nthreshold_crosser\tThreshold Crosser\texploration\t20\t0/25\t\nvoyager_i\tVoyager I\texploration\t10\t14/25\t\nvoyager_ii\tVoyager II\texploration\t25\t14/250\t\nartisan\tArtisan\tindustry\t20\t0/10,000\t\nindustrialist\tIndustrialist\tindustry\t30\t0/10\t\nline_cook\tLine Cook\tindustry\t15\t0/10\t\nprospector_i\tProspector I\tindustry\t10\t727/10,000\t\nprospector_ii\tProspector II\tindustry\t20\t727/250,000\t\nprospector_iii\tProspector III\tindustry\t40\t727/5,000,000\t\nscrap_magnate\tScrap Magnate\tindustry\t20\t0/200\t\ndeep_core_savant\tInto the Deep\tmastery\t30\tlocked\t\ngalactic_gastronome\tGalactic Gastronome\tmastery\t50\t0/25\t\ngrandmaster\t???\tmastery\t60\tlocked\t\nmaster_distiller\tMaster Distiller\tmastery\t40\t0/14\t\nmaster_engineer\tMaster Engineer\tmastery\t25\t0/50\t\nmaster_explorer\tMaster Explorer\tmastery\t25\t1/50\t\nmaster_miner\tMaster Miner\tmastery\t25\t3/50\t\nmaster_salvager\tMaster Salvager\tmastery\t25\t0/50\t\nmaster_trader\tMaster Trader\tmastery\t25\t0/50\t\nrenaissance_pilot\tRenaissance Pilot\tmastery\t30\tlocked\t\nweapons_master\tWeapons Master\tmastery\t25\t0/50\t\nchronicler\tChronicler\tprogression\t15\t15/25\t\nfirst_refinement\tFirst Refinement\tprogression\t5\t0/1\t\nbreakers_yard\tBreaker's Yard\tsalvage\t20\t0/500\t\nfirst_salvage\tFirst Salvage\tsalvage\t5\t0/1\t\nghost_runner\tGhost Runner\tsmuggling\t20\t0/25\t\nkingpin\tKingpin\tsmuggling\t35\tlocked\t\nout_of_the_frying_pan\t???\tsmuggling\t40\tlocked\t\nuntouchable_smuggler\tSmoke & Mirrors\tsmuggling\t30\t0/200\t\nfield_medic\tField Medic\tsocial\t15\t0/20\t\nfirst_aid\tFirst Aid\tsocial\t5\t0/1\t\ngood_samaritan\tGood Samaritan\tsocial\t15\t0/20\t\nhelping_hand\tHelping Hand\tsocial\t5\t0/1\t\nphilanthropist\tPhilanthropist\tsocial\t40\t0/10,000,000\t\n"
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    },
+    "spacemolt/get_notifications": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "No notifications."
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    },
+    "spacemolt/get_location": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Market Prime\nCredits: 2,750cr\nDocked at: market_prime_exchange\nSecurity: High Security (active police patrols)\nConnections: cargo_lanes, gold_run, haven\nNearby players (7):\nname\tship\tfaction\tcombat\tstatus\nAriaStarsmith\tprospect\t\t\tonline\nILC Adjuster\tprospect\tIRLC\t\tonline\nJackSparrow\tcatalogue\tENDL\t\tonline\nPike Market Bot 9\tprospect\t\t\tonline\nPike Mining Bot 4\tprayer\tPLGT\t\tonline\nDjango\tcatalogue\tENDL\t\tonline\nCarson\tfutures\tNOIR\t\tonline\n(+26 offline players not listed; POI is busy.)\nNearby empire NPCs (1):\nid\tname\trole\tempire\tfleet\tship\tcombat\n[REDACTED_ID]\t[POLICE] Federation Patrol III - Market Prime Exchange\tpolice\tnebula\t\tNTF-4065d0d8 (overhead)\t\n"
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    },
+    "spacemolt_market/view_market": {
+      "raw": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Market summary at Market Prime Exchange (482 items):\ncategory\titem_id\titem_name\tbest_sell\tbest_buy\tspread\tsell_qty\tbuy_qty\nammo\tantimatter_torpedoes\tAntimatter Torpedoes\t\t325cr\t\t0\t241\nammo\tantimatter_warhead\tAntimatter Warhead\t\t195cr\t\t0\t105\nammo\tantimatter_core_rounds_box\tAntimatter-Core Rounds Box\t\t2cr\t\t0\t101\nammo\tarmor_piercing_rounds_box\tArmor Piercing Rounds Box\t\t1cr\t\t0\t1\nammo\tarmor_buster_missiles\tArmor-Buster Missiles\t\t32cr\t\t0\t112\nammo\tbreacher_torpedoes\tBreacher Torpedoes\t\t2cr\t\t0\t101\nammo\tcascade_em_charge_pack\tCascade EM Charge Pack\t\t2cr\t\t0\t101\nammo\tcluster_missiles\tCluster Missiles\t\t2cr\t\t0\t101\nammo\tcryo_slug_case\tCryo Slug Case\t\t2cr\t\t0\t201\nammo\tdepleted_uranium_rounds_box\tDepleted Uranium Rounds Box\t\t2cr\t\t0\t101\nammo\tdispersal_plasma_cell_pack\tDispersal Plasma Cell Pack\t\t2cr\t\t0\t101\nammo\tem_charge_pack\tEM Charge Pack\t\t219cr\t\t0\t122\nammo\temp_mines\tEMP Mines\t\t2cr\t\t0\t101\nammo\temp_missiles\tEMP Missiles\t\t2cr\t\t0\t101\nammo\temp_slug_case\tEMP Slug Case\t\t2cr\t\t0\t101\nammo\temp_torpedoes\tEMP Torpedoes\t\t2cr\t\t0\t101\nammo\temp_tipped_rounds_box\tEMP-Tipped Rounds Box\t\t2cr\t\t0\t101\nammo\tentropic_void_core_pack\tEntropic Void Core Pack\t\t2cr\t\t0\t101\nammo\tferrous_slug_case\tFerrous Slug Case\t\t1cr\t\t0\t1\nammo\tfocused_plasma_cell_pack\tFocused Plasma Cell Pack\t\t2cr\t\t0\t101\nammo\tfragmentation_mines\tFragmentation Mines\t\t2cr\t\t0\t101\nammo\tfragmentation_rounds_box\tFragmentation Rounds Box\t\t2cr\t\t0\t101\nammo\tincendiary_missiles\tIncendiary Missiles\t\t2cr\t\t0\t101\nammo\tincendiary_rounds_box\tIncendiary Rounds Box\t\t2cr\t\t0\t189\nammo\tion_charge_pack\tIon Charge Pack\t\t2cr\t\t0\t101\nammo\tneural_disruption_charge_pack\tNeural Disruption Charge Pack\t\t2cr\t\t0\t101\nammo\tneutronium_slug_case\tNeutronium Slug Case\t\t2cr\t\t0\t42\nammo\tnuclear_mines\tNuclear Mines\t\t2cr\t\t0\t102\nammo\tnull_void_core_pack\tNull Void Core Pack\t\t2cr\t\t0\t101\nammo\tovercharged_plasma_cell_pack\tOvercharged Plasma Cell Pack\t\t2cr\t\t0\t101\nammo\tphased_void_core_pack\tPhased Void Core Pack\t\t2cr\t\t0\t101\nammo\tplasma_cell_pack\tPlasma Cell Pack\t\t84cr\t\t0\t320\nammo\tplasma_mines\tPlasma Mines\t\t2cr\t\t0\t101\nammo\tplasma_torpedoes\tPlasma Torpedoes\t\t2cr\t\t0\t101\nammo\tshaped_charge_slug_case\tShaped Charge Slug Case\t\t2cr\t\t0\t101\nammo\tsiege_torpedoes\tSiege Torpedoes\t\t2cr\t\t0\t101\nammo\tstandard_guided_missiles\tStandard Guided Missiles\t\t2cr\t\t0\t98\nammo\tstandard_mines\tStandard Mines\t\t2cr\t\t0\t101\nammo\tstandard_rounds_box\tStandard Rounds Box\t250cr\t\t\t27\t0\nammo\tstandard_torpedoes\tStandard Torpedoes\t\t2cr\t\t0\t201\nammo\tswarm_missiles\tSwarm Missiles\t\t2cr\t\t0\t201\nammo\ttungsten_slug_case\tTungsten Slug Case\t\t1cr\t\t0\t1\nammo\tvoid_core_pack\tVoid Core Pack\t\t2cr\t\t0\t102\nammo\tvoid_mines\tVoid Mines\t\t2cr\t\t0\t101\ncomponent\tammo_fabricator\tAmmo Fabricator\t\t2cr\t\t0\t101\ncomponent\tautopilot_core\tAutopilot Core\t\t2cr\t\t0\t101\ncomponent\tautopilot_module\tAutopilot Module\t\t2cr\t\t0\t101\ncomponent\tcapital_armor_plate\tCapital Armor Plate\t7,732cr\t2cr\t7,730cr\t18\t201\ncomponent\tcapital_ship_frame\tCapital Ship Frame\t2,848cr\t\t\t17\t0\ncomponent\tcargo_bay_expansion\tCargo Bay Expansion\t1,506cr\t\t\t268\t0\ncomponent\tcargo_superstructure\tCargo Superstructure\t1,658cr\t2cr\t1,656cr\t100\t50\ncomponent\tcommunications_array\tCommunications Array\t875cr\t2cr\t873cr\t21\t102\ncomponent\tcoolant_loop\tCoolant Loop\t366cr\t\t\t623\t0\ncomponent\tcrimson_ordnance_bay\tCrimson Ordnance Bay\t\t2cr\t\t0\t101\ncomponent\tcrimson_siege_plating\tCrimson Siege Plating\t\t2cr\t\t0\t101\ncomponent\tcryogenic_storage\tCryogenic Storage\t1,501cr\t1cr\t1,500cr\t309\t1\ncomponent\tcryogenic_suspension_chamber\tCryogenic Suspension Chamber\t\t2cr\t\t0\t101\ncomponent\tdark_matter_cell\tDark Matter Cell\t\t5,353cr\t\t0\t440\ncomponent\tdark_matter_thruster\tDark Matter Thruster\t\t2cr\t\t0\t101\ncomponent\tdefense_platform\tDefense Platform\t\t2cr\t\t0\t101\ncomponent\tdimensional_anchor\tDimensional Anchor\t\t2cr\t\t0\t101\ncomponent\tdocking_ring\tDocking Ring\t\t35cr\t\t0\t70\ncomponent\tdrone_ai_core\tDrone AI Core\t46cr\t\t\t4\t0\ncomponent\tdrone_chassis\tDrone Chassis\t\t2cr\t\t0\t102\ncomponent\tdrone_command_module\tDrone Command Module\t2,110cr\t\t\t5\t0\ncomponent\tdrone_comms_module\tDrone Comms Module\t\t1cr\t\t0\t101\ncomponent\tdrone_mining_laser\tDrone Mining Laser\t\t1cr\t\t0\t1\ncomponent\tdrone_repair_arm\tDrone Repair Arm\t\t1cr\t\t0\t1\ncomponent\tdrone_sensor_suite\tDrone Sensor Suite\t\t1cr\t\t0\t101\ncomponent\tdrone_weapon_mount\tDrone Weapon Mount\t\t1cr\t\t0\t1\ncomponent\tengine_core\tEngine Core\t2,776cr\t2,236cr\t540cr\t109\t791\ncomponent\tenvironmental_control_unit\tEnvironmental Control Unit\t\t2cr\t\t0\t101\ncomponent\tfrontier_survival_kit\tFrontier Survival Kit\t\t2cr\t\t0\t96\ncomponent\tfuel_tank\tFuel Tank\t734cr\t676cr\t58cr\t1,587\t9,203\ncomponent\tfury_tempered_plating\tFury-Tempered Plating\t\t871cr\t\t0\t40\ncomponent\tgalactic_standard_alloy\tGalactic Standard Alloy\t\t4,225cr\t\t0\t352\ncomponent\tgravity_generator\tGravity Generator\t\t2cr\t\t0\t193\ncomponent\thabitation_module\tHabitation Module\t\t2cr\t\t0\t101\ncomponent\thangar_bay_module\tHangar Bay Module\t14,674cr\t1cr\t14,673cr\t7\t1\ncomponent\theat_sink\tHeat Sink\t89cr\t\t\t808\t0\ncomponent\thull_plating\tHull Plating\t564cr\t411cr\t153cr\t2,074\t297\ncomponent\tjump_calculator\tJump Calculator\t\t2cr\t\t0\t101\ncomponent\tjump_coil\tJump Coil\t5,899cr\t\t\t8\t0\ncomponent\tjump_drive_core\tJump Drive Core\t80,040cr\t2cr\t80,038cr\t8\t88\ncomponent\tlaser_focus_array\tLaser Focus Array\t\t2cr\t\t0\t201\ncomponent\tlead_ingot\tLead Ingot\t\t2cr\t\t0\t164\ncomponent\tlead_sheet\tLead Sheet\t159cr\t72cr\t87cr\t1\t3,696\ncomponent\tlife_support_array\tLife Support Array\t1,724cr\t\t\t51\t0\ncomponent\tlife_support_unit\tLife Support Unit\t1,378cr\t2cr\t1,376cr\t986\t101\ncomponent\tmicro_thruster_array\tMicro-Thruster Array\t\t2cr\t\t0\t102\ncomponent\tmissile_guidance_unit\tMissile Guidance Unit\t\t2cr\t\t0\t102\ncomponent\tmissile_warhead\tMissile Warhead\t\t2cr\t\t0\t102\ncomponent\tnavigation_array\tNavigation Array\t6,856cr\t\t\t60\t0\ncomponent\tnavigation_core\tNavigation Core\t4,730cr\t3,676cr\t1,054cr\t129\t3,148\ncomponent\tnebula_cargo_matrix\tNebula Cargo Matrix\t12,683cr\t\t\t198\t0\ncomponent\tneon_signaling_array\tNeon Signaling Array\t\t2cr\t\t0\t101\ncomponent\tore_hopper\tOre Hopper\t1,138cr\t2cr\t1,136cr\t181\t133\ncomponent\tpan_galactic_matrix\tPan-Galactic Matrix\t\t2cr\t\t0\t101\ncomponent\tphase_array\tPhase Array\t\t2cr\t\t0\t101\ncomponent\tphase_drive\tPhase Drive\t\t2cr\t\t0\t101\ncomponent\tplasma_injector\tPlasma Injector\t\t4,677cr\t\t0\t601\ncomponent\tpower_core\tPower Core\t\t35cr\t\t0\t18\ncomponent\tpower_distribution_grid\tPower Distribution Grid\t3,591cr\t\t\t203\t0\ncomponent\tpressure_seal\tPressure Seal\t54cr\t\t\t350\t0\ncomponent\tprocessing_core\tProcessing Core\t1,155cr\t\t\t311\t0\ncomponent\tquantum_entangler\tQuantum Entangler\t\t2cr\t\t0\t101\ncomponent\tquantum_processor\tQuantum Processor\t\t2cr\t\t0\t101\ncomponent\tquantum_stabilizer\tQuantum Stabilizer\t\t661cr\t\t0\t40\ncomponent\tradiation_hardened_circuit\tRadiation-Hardened Circuit\t\t2cr\t\t0\t101\ncomponent\tradium_phosphor\tRadium Phosphor\t\t2cr\t\t0\t101\ncomponent\trailgun_capacitor\tRailgun Capacitor\t\t2cr\t\t0\t101\ncomponent\treinforced_bulkhead\tReinforced Bulkhead\t4,376cr\t3,600cr\t776cr\t37\t612\ncomponent\treinforced_frame\tReinforced Frame\t5,784cr\t\t\t460\t0\ncomponent\trepair_nanite_container\tRepair Nanite Container\t2,457cr\t\t\t26\t0\ncomponent\tsalvage_components\tSalvage Components\t\t2cr\t\t0\t27\ncomponent\tsalvage_metal\tSalvage Metal\t\t2cr\t\t0\t13\ncomponent\tsensor_array\tSensor Array\t801cr\t58cr\t743cr\t16\t270\ncomponent\tsensor_cluster\tSensor Cluster\t2,617cr\t\t\t12\t0\ncomponent\tsensor_package\tSensor Package\t\t2cr\t\t0\t102\ncomponent\tshield_array\tShield Array\t20,686cr\t1cr\t20,685cr\t13\t15\ncomponent\tshield_emitter\tShield Emitter\t7,526cr\t6,200cr\t1,326cr\t155\t6,421\ncomponent\tshield_generator\tShield Generator\t\t2cr\t\t0\t98\ncomponent\tshield_matrix\tShield Matrix\t\t2cr\t\t0\t72\ncomponent\tsingularity_core\tSingularity Core\t\t2cr\t\t0\t101\ncomponent\tsolar_collector_array\tSolar Collector Array\t\t2cr\t\t0\t101\ncomponent\tsolarian_logic_matrix\tSolarian Logic Matrix\t\t2cr\t\t0\t101\ncomponent\tstation_reactor_core\tStation Reactor Core\t\t21,181cr\t\t0\t476\ncomponent\ttargeting_computer\tTargeting Computer\t\t1,060cr\t\t0\t33\ncomponent\ttemporal_stabilizer\tTemporal Stabilizer\t\t2cr\t\t0\t101\ncomponent\tthruster_nozzle\tThruster Nozzle\t1,101cr\t2cr\t1,099cr\t114\t79\ncomponent\ttracking_system\tTracking System\t\t2cr\t\t0\t101\ncomponent\ttrade_cipher\tTrade Cipher\t124cr\t\t\t562\t0\ncomponent\tuniversal_nav_core\tUniversal Nav Core\t\t3,038cr\t\t0\t40\ncomponent\tvoid_capacitor\tVoid Capacitor\t\t2cr\t\t0\t201\ncomponent\tvoid_shield_matrix\tVoid Shield Matrix\t\t2cr\t\t0\t101\ncomponent\tvoidborn_neural_matrix\tVoidborn Neural Matrix\t\t2cr\t\t0\t101\ncomponent\tvoidborn_null_matrix\tVoidborn Null Matrix\t\t2cr\t\t0\t100\ncomponent\tvoidborn_phase_drive\tVoidborn Phase Drive\t\t2cr\t\t0\t101\ncomponent\twarhead_assembly\tWarhead Assembly\t\t2cr\t\t0\t101\ncomponent\tweapon_battery\tWeapon Battery\t5,276cr\t\t\t8\t0\ncomponent\tweapon_core\tWeapon Core\t\t2cr\t\t0\t96\ncomponent\tweapon_housing\tWeapon Housing\t551cr\t546cr\t5cr\t15\t367\ncomponent\twiring_harness\tWiring Harness\t80cr\t\t\t209\t0\nconsumable\tadrenaline_surge\tAdrenaline Surge\t\t2cr\t\t0\t102\nconsumable\tadvanced_repair_kit\tAdvanced Repair Kit\t\t2cr\t\t0\t201\nconsumable\tafterburner_fuel\tAfterburner Fuel\t\t2cr\t\t0\t101\nconsumable\tanchor_beacon\tAnchor Beacon\t\t2cr\t\t0\t201\nconsumable\tanomaly_probe\tAnomaly Probe\t\t2cr\t\t0\t101\nconsumable\tberserker_compound\tBerserker Compound\t\t2cr\t\t0\t199\nconsumable\tchaff_bundle\tChaff Bundle\t\t2cr\t\t0\t101\nconsumable\tclarity_stim\tClarity Stim\t\t2cr\t\t0\t102\nconsumable\tcloaking_charge\tCloaking Charge\t\t2cr\t\t0\t101\nconsumable\tcloaking_dust\tCloaking Dust\t\t2cr\t\t0\t201\nconsumable\tcombat_stim\tCombat Stim\t\t2cr\t\t0\t90\nconsumable\tcrimson_bloodwine\tCrimson Bloodwine\t\t2cr\t\t0\t87\nconsumable\tcrimson_iron_rations\tCrimson Iron Rations\t\t2cr\t\t0\t101\nconsumable\tdeep_space_probe\tDeep Space Probe\t\t2cr\t\t0\t101\nconsumable\tecm_jammer_pod\tECM Jammer Pod\t\t2cr\t\t0\t101\nconsumable\temergency_warp_device\tEmergency Warp Device\t\t2cr\t\t0\t101\nconsumable\tendurance_booster\tEndurance Booster\t\t2cr\t\t0\t101\nconsumable\tfocus_stim\tFocus Stim\t\t2cr\t\t0\t101\nconsumable\tfrontier_rotgut\tFrontier Rotgut\t\t2cr\t\t0\t184\nconsumable\tfrontier_spore_spirits\tFrontier Spore Spirits\t\t2cr\t\t0\t93\nconsumable\tfuel_cell\tFuel Cell\t\t50cr\t\t0\t5\nconsumable\thull_patch\tHull Patch\t\t2cr\t\t0\t75\nconsumable\tmantis_claw_thermidor\tMantis Claw Thermidor\t\t549cr\t\t0\t40\nconsumable\tmilitary_fuel_cell\tMilitary Fuel Cell\t\t1cr\t\t0\t1\nconsumable\tmining_survey_probe\tMining Survey Probe\t\t2cr\t\t0\t197\nconsumable\tneural_accelerator\tNeural Accelerator\t\t2cr\t\t0\t101\nconsumable\tnoble_gas_spritz\tNoble-Gas Spritz\t\t213cr\t\t0\t40\nconsumable\tovercharge_cell\tOvercharge Cell\t\t2cr\t\t0\t101\nconsumable\toverclock_chip\tOverclock Chip\t\t2cr\t\t0\t101\nconsumable\tpremium_fuel_cell\tPremium Fuel Cell\t\t93cr\t\t0\t80\nconsumable\treconnaissance_probe\tReconnaissance Probe\t\t2cr\t\t0\t101\nconsumable\tregeneration_serum\tRegeneration Serum\t\t2cr\t\t0\t101\nconsumable\trepair_kit\tRepair Kit\t404cr\t\t\t88\t0\nconsumable\trepair_nanites\tRepair Nanites\t\t2cr\t\t0\t101\nconsumable\tsensor_booster\tSensor Booster\t\t2cr\t\t0\t102\nconsumable\tsensor_jammer\tSensor Jammer\t\t2cr\t\t0\t101\nconsumable\tshield_overcharge\tShield Overcharge\t\t2cr\t\t0\t101\nconsumable\tsolarian_biotic\tSolarian Biotic\t\t2cr\t\t0\t100\nconsumable\tsolarian_gourmet_rations\tSolarian Gourmet Rations\t\t2cr\t\t0\t193\nconsumable\tspeed_stim\tSpeed Stim\t\t2cr\t\t0\t196\nconsumable\ttactical_probe\tTactical Probe\t\t2cr\t\t0\t101\nconsumable\tthermal_flare\tThermal Flare\t\t2cr\t\t0\t102\nconsumable\tvoidborn_neural_soma\tVoidborn Neural Soma\t\t2cr\t\t0\t96\nconsumable\tweapon_overload_capacitor\tWeapon Overload Capacitor\t\t2cr\t\t0\t101\ndrone\tcombat_drone\tCombat Drone\t\t2cr\t\t0\t102\ndrone\tmining_drone\tMining Drone\t\t2cr\t\t0\t102\ndrone\trepair_drone\tRepair Drone\t\t2cr\t\t0\t101\ndrone\tsalvage_drone\tSalvage Drone\t\t2cr\t\t0\t101\ndrone\tscout_drone\tScout Drone\t\t2cr\t\t0\t101\nfuel\tfuel\tFuel\t\t3cr\t\t0\t43,923\nmaterial\texotic_crystal\tExotic Crystal\t\t2cr\t\t0\t92\nmaterial\tvoid_crystal\tVoid Crystal\t\t2cr\t\t0\t73\nmodule\tadaptive_shield_i\tAdaptive Shield I\t\t2cr\t\t0\t93\nmodule\tadaptive_shield_ii\tAdaptive Shield II\t\t2cr\t\t0\t85\nmodule\tadaptive_shield_iii\tAdaptive Shield III\t\t2cr\t\t0\t86\nmodule\tadvanced_drone_bay\tAdvanced Drone Bay\t\t1cr\t\t0\t1\nmodule\tadvanced_tow_rig\tAdvanced Tow Rig\t\t2cr\t\t0\t102\nmodule\tafterburner_i\tAfterburner I\t\t2cr\t\t0\t101\nmodule\tafterburner_ii\tAfterburner II\t\t2cr\t\t0\t56\nmodule\tafterburner_iii\tAfterburner III\t\t2cr\t\t0\t100\nmodule\tanomaly_detector\tAnomaly Detector\t16,304cr\t2cr\t16,302cr\t3\t102\nmodule\targon_condenser\tArgon Condenser\t\t2cr\t\t0\t101\nmodule\tarmor_plate_i\tArmor Plate I\t\t2cr\t\t0\t94\nmodule\tarmor_plate_ii\tArmor Plate II\t\t1cr\t\t0\t1\nmodule\tarmor_plate_iii\tArmor Plate III\t\t2cr\t\t0\t101\nmodule\tarmor_repairer_i\tArmor Repairer I\t\t2cr\t\t0\t101\nmodule\tarmor_repairer_ii\tArmor Repairer II\t\t2cr\t\t0\t101\nmodule\tarmor_repairer_iii\tArmor Repairer III\t\t2cr\t\t0\t101\nmodule\tatmospheric_processor\tAtmospheric Processor\t\t2cr\t\t0\t101\nmodule\tautocannon_i\tAutocannon I\t\t2cr\t\t0\t95\nmodule\tautocannon_ii\tAutocannon II\t4,574cr\t\t\t3\t0\nmodule\tbasic_tow_rig\tBasic Tow Rig\t\t2cr\t\t0\t99\nmodule\tblood_reaver\tBlood Reaver\t\t2cr\t\t0\t102\nmodule\tcpu_co_processor\tCPU Co-Processor\t\t1cr\t\t0\t1\nmodule\tcargo_expander_ii\tCargo Expander II\t1,323cr\t\t\t18\t0\nmodule\tcloaking_device_i\tCloaking Device I\t\t2cr\t\t0\t100\nmodule\tcloaking_device_ii\tCloaking Device II\t\t2cr\t\t0\t94\nmodule\tcombat_drone_bay\tCombat Drone Bay\t\t2cr\t\t0\t102\nmodule\tcrimson_berserker_plating\tCrimson Berserker Plating\t\t2cr\t\t0\t101\nmodule\tdamage_control_system\tDamage Control System\t6,857cr\t2cr\t6,855cr\t4\t101\nmodule\tdark_matter_projector\tDark Matter Projector\t\t2cr\t\t0\t101\nmodule\tdarksteel_armor\tDarksteel Armor\t\t2cr\t\t0\t101\nmodule\tem_disruptor_i\tEM Disruptor I\t\t2cr\t\t0\t101\nmodule\tem_hull_hardener\tEM Hull Hardener\t\t2cr\t\t0\t101\nmodule\tem_shield_hardener\tEM Shield Hardener\t10,302cr\t2cr\t10,300cr\t6\t99\nmodule\tem_smartbomb\tEM Smartbomb\t\t2cr\t\t0\t101\nmodule\temp_cannon_i\tEMP Cannon I\t\t2cr\t\t0\t101\nmodule\temp_missile_launcher\tEMP Missile Launcher\t\t2cr\t\t0\t102\nmodule\temp_pulse_i\tEMP Pulse I\t\t2cr\t\t0\t101\nmodule\temp_pulse_ii\tEMP Pulse II\t12,955cr\t2cr\t12,953cr\t2\t101\nmodule\temp_pulse_iii\tEMP Pulse III\t\t2cr\t\t0\t101\nmodule\telectromagnetic_refinery\tElectromagnetic Refinery\t\t2cr\t\t0\t51\nmodule\temergency_warp_stabilizer\tEmergency Warp Stabilizer\t\t2cr\t\t0\t101\nmodule\texpanded_fuel_tank\tExpanded Fuel Tank\t903cr\t\t\t25\t0\nmodule\texplosive_hull_hardener\tExplosive Hull Hardener\t\t2cr\t\t0\t100\nmodule\texplosive_shield_hardener\tExplosive Shield Hardener\t\t2cr\t\t0\t101\nmodule\texplosive_smartbomb\tExplosive Smartbomb\t\t2cr\t\t0\t101\nmodule\tflak_cannon_i\tFlak Cannon I\t\t2cr\t\t0\t101\nmodule\tflak_cannon_ii\tFlak Cannon II\t\t2cr\t\t0\t101\nmodule\tflak_cannon_iii\tFlak Cannon III\t\t2cr\t\t0\t101\nmodule\tflotation_cell\tFlotation Cell\t\t2cr\t\t0\t101\nmodule\tfocused_beam_i\tFocused Beam I\t\t2cr\t\t0\t101\nmodule\tfocused_beam_ii\tFocused Beam II\t\t2cr\t\t0\t101\nmodule\tfocused_beam_iii\tFocused Beam III\t\t2cr\t\t0\t101\nmodule\tfuel_optimizer\tFuel Optimizer\t1,882cr\t1cr\t1,881cr\t4\t1\nmodule\tfury_cannon\tFury Cannon\t\t2cr\t\t0\t97\nmodule\tgas_harvester_i\tGas Harvester I\t\t2cr\t\t0\t95\nmodule\tgas_harvester_ii\tGas Harvester II\t7,497cr\t6,500cr\t997cr\t1\t109\nmodule\tgas_harvester_iii\tGas Harvester III\t15,017cr\t1cr\t15,016cr\t1\t1\nmodule\tgas_harvester_iv\tGas Harvester IV\t\t2cr\t\t0\t101\nmodule\theavy_mass_driver\tHeavy Mass Driver\t\t2cr\t\t0\t101\nmodule\theavy_pulse_laser\tHeavy Pulse Laser\t\t2cr\t\t0\t101\nmodule\theavy_torpedo\tHeavy Torpedo\t\t2cr\t\t0\t101\nmodule\thull_integrity_field\tHull Integrity Field\t\t2cr\t\t0\t101\nmodule\thull_reinforcement_i\tHull Reinforcement I\t\t2cr\t\t0\t101\nmodule\thull_reinforcement_ii\tHull Reinforcement II\t\t2cr\t\t0\t101\nmodule\thull_reinforcement_iii\tHull Reinforcement III\t\t2cr\t\t0\t101\nmodule\thydrogen_combustor\tHydrogen Combustor\t\t2cr\t\t0\t101\nmodule\thyper_mining_laser_iii\tHyper Mining Laser III\t\t2cr\t\t0\t101\nmodule\tice_harvester_i\tIce Harvester I\t2,927cr\t1cr\t2,926cr\t13\t1\nmodule\tice_harvester_ii\tIce Harvester II\t3,755cr\t2cr\t3,753cr\t5\t78\nmodule\tice_harvester_iii\tIce Harvester III\t\t2cr\t\t0\t101\nmodule\tice_harvester_iv\tIce Harvester IV\t\t26,196cr\t\t0\t111\nmodule\tion_beam_array\tIon Beam Array\t\t2cr\t\t0\t102\nmodule\tion_blaster_i\tIon Blaster I\t3,473cr\t2cr\t3,471cr\t3\t102\nmodule\tion_blaster_ii\tIon Blaster II\t7,928cr\t2cr\t7,926cr\t6\t99\nmodule\tion_blaster_iii\tIon Blaster III\t\t2cr\t\t0\t53\nmodule\tion_cannon_i\tIon Cannon I\t\t2cr\t\t0\t101\nmodule\tion_cannon_ii\tIon Cannon II\t\t2cr\t\t0\t102\nmodule\tisotope_separator\tIsotope Separator\t\t2cr\t\t0\t101\nmodule\tjudgment_beam\tJudgment Beam\t\t2cr\t\t0\t101\nmodule\tjury_rigged_cannon\tJury-Rigged Cannon\t\t2cr\t\t0\t98\nmodule\tkinetic_hull_hardener\tKinetic Hull Hardener\t\t2cr\t\t0\t101\nmodule\tkinetic_shield_hardener\tKinetic Shield Hardener\t\t2cr\t\t0\t101\nmodule\tkinetic_smartbomb\tKinetic Smartbomb\t\t2cr\t\t0\t101\nmodule\tlead_lined_cargo_i\tLead Lined Cargo I\t3,178cr\t2cr\t3,176cr\t1\t178\nmodule\tlead_lined_cargo_ii\tLead Lined Cargo II\t\t2cr\t\t0\t101\nmodule\tmagnetic_ore_separator\tMagnetic Ore Separator\t\t2cr\t\t0\t101\nmodule\tmass_driver\tMass Driver\t\t2cr\t\t0\t101\nmodule\tmine_launcher_i\tMine Launcher I\t\t2cr\t\t0\t101\nmodule\tmine_launcher_ii\tMine Launcher II\t\t2cr\t\t0\t102\nmodule\tmining_laser_ii\tMining Laser II\t2,419cr\t\t\t1\t0\nmodule\tmining_laser_iii\tMining Laser III\t4,533cr\t\t\t2\t0\nmodule\tmining_laser_iv\tMining Laser IV\t30,754cr\t2cr\t30,752cr\t3\t101\nmodule\tmining_laser_v\tMining Laser V\t\t2cr\t\t0\t101\nmodule\tmissile_launcher_i\tMissile Launcher I\t\t2cr\t\t0\t101\nmodule\tmissile_launcher_ii\tMissile Launcher II\t\t2cr\t\t0\t102\nmodule\tnanite_hull_coating\tNanite Hull Coating\t\t2cr\t\t0\t100\nmodule\tneon_vent\tNeon Vent\t\t2cr\t\t0\t101\nmodule\tneural_disruptor\tNeural Disruptor\t\t2cr\t\t0\t101\nmodule\tnitrogen_vent\tNitrogen Vent\t\t2cr\t\t0\t101\nmodule\tnuclear_reactor_i\tNuclear Reactor I\t\t2cr\t\t0\t102\nmodule\tnuclear_reactor_ii\tNuclear Reactor II\t\t2cr\t\t0\t101\nmodule\tnull_cannon\tNull Cannon\t\t2cr\t\t0\t98\nmodule\touter_rim_scrap_armor\tOuter Rim Scrap Armor\t\t2cr\t\t0\t101\nmodule\tphase_cloaking_device\tPhase Cloaking Device\t\t2cr\t\t0\t100\nmodule\tphase_disruptor\tPhase Disruptor\t\t2cr\t\t0\t97\nmodule\tpiercing_railgun_i\tPiercing Railgun I\t\t2cr\t\t0\t101\nmodule\tpiercing_railgun_ii\tPiercing Railgun II\t\t2cr\t\t0\t101\nmodule\tpirate_radio_scanner\tPirate Radio Scanner\t\t2cr\t\t0\t101\nmodule\tplasma_afterburner\tPlasma Afterburner\t\t2cr\t\t0\t101\nmodule\tplasma_cannon_i\tPlasma Cannon I\t\t2cr\t\t0\t101\nmodule\tplasma_cannon_ii\tPlasma Cannon II\t\t2cr\t\t0\t101\nmodule\tplasma_cannon_iii\tPlasma Cannon III\t\t2cr\t\t0\t101\nmodule\tplasma_cannon_iv\tPlasma Cannon IV\t\t2cr\t\t0\t101\nmodule\tplasma_repeater_i\tPlasma Repeater I\t\t2cr\t\t0\t101\nmodule\tplasma_repeater_ii\tPlasma Repeater II\t\t2cr\t\t0\t101\nmodule\tplasma_torpedo_launcher\tPlasma Torpedo Launcher\t\t2cr\t\t0\t101\nmodule\tproximity_mine_launcher\tProximity Mine Launcher\t\t2cr\t\t0\t101\nmodule\tpulse_laser_i\tPulse Laser I\t1,518cr\t\t\t10\t0\nmodule\tpulse_laser_ii\tPulse Laser II\t\t17,940cr\t\t0\t180\nmodule\tpulse_laser_iii\tPulse Laser III\t\t33,800cr\t\t0\t40\nmodule\tquantum_entanglement_shield\tQuantum Entanglement Shield\t\t2cr\t\t0\t101\nmodule\tquantum_shield_iv\tQuantum Shield IV\t\t2cr\t\t0\t101\nmodule\trad_harvester_i\tRad Harvester I\t\t2cr\t\t0\t101\nmodule\trad_harvester_ii\tRad Harvester II\t\t2cr\t\t0\t101\nmodule\trad_harvester_iii\tRad Harvester III\t\t2cr\t\t0\t101\nmodule\trad_harvester_iv\tRad Harvester IV\t\t2cr\t\t0\t101\nmodule\trailgun_i\tRailgun I\t\t2cr\t\t0\t101\nmodule\trailgun_ii\tRailgun II\t\t2cr\t\t0\t100\nmodule\treactive_armor_hardener\tReactive Armor Hardener\t\t2cr\t\t0\t99\nmodule\trefueling_pump\tRefueling Pump\t2,310cr\t2cr\t2,308cr\t10\t100\nmodule\tregenerative_armor_i\tRegenerative Armor I\t\t2cr\t\t0\t101\nmodule\tregenerative_armor_ii\tRegenerative Armor II\t\t2cr\t\t0\t91\nmodule\trepair_arm\tRepair Arm\t\t2cr\t\t0\t101\nmodule\tscrapgun\tScrapgun\t\t2cr\t\t0\t101\nmodule\tshield_booster_i\tShield Booster I\t5,450cr\t\t\t3\t0\nmodule\tshield_booster_ii\tShield Booster II\t21,080cr\t18,720cr\t2,360cr\t5\t175\nmodule\tshield_booster_iii\tShield Booster III\t\t2cr\t\t0\t90\nmodule\tshield_recharger_i\tShield Recharger I\t\t2cr\t\t0\t101\nmodule\tshield_recharger_ii\tShield Recharger II\t\t2cr\t\t0\t101\nmodule\tship_scanner_i\tShip Scanner I\t\t2cr\t\t0\t76\nmodule\tship_scanner_ii\tShip Scanner II\t2,912cr\t1,650cr\t1,262cr\t9\t111\nmodule\tship_scanner_iii\tShip Scanner III\t5,541cr\t2cr\t5,539cr\t10\t67\nmodule\tsiege_railgun\tSiege Railgun\t\t2cr\t\t0\t101\nmodule\tsolar_lance\tSolar Lance\t\t2cr\t\t0\t101\nmodule\tsolarian_aegis\tSolarian Aegis\t\t2cr\t\t0\t101\nmodule\tstrip_miner_i\tStrip Miner I\t\t2cr\t\t0\t101\nmodule\tstrip_miner_ii\tStrip Miner II\t\t2cr\t\t0\t101\nmodule\tsurvey_scanner_i\tSurvey Scanner I\t940cr\t\t\t2\t0\nmodule\tsurvey_scanner_ii\tSurvey Scanner II\t\t2cr\t\t0\t100\nmodule\tsystem_disabler\tSystem Disabler\t\t2cr\t\t0\t102\nmodule\ttarget_painter_i\tTarget Painter I\t\t2cr\t\t0\t101\nmodule\ttarget_painter_ii\tTarget Painter II\t\t2cr\t\t0\t101\nmodule\tthermal_hull_hardener\tThermal Hull Hardener\t\t2cr\t\t0\t100\nmodule\tthermal_shield_hardener\tThermal Shield Hardener\t\t2cr\t\t0\t102\nmodule\tthermal_smartbomb\tThermal Smartbomb\t\t2cr\t\t0\t101\nmodule\tthermal_sublimator\tThermal Sublimator\t\t2cr\t\t0\t101\nmodule\ttracking_computer_i\tTracking Computer I\t\t2cr\t\t0\t101\nmodule\ttracking_computer_ii\tTracking Computer II\t\t2cr\t\t0\t102\nmodule\ttracking_computer_iii\tTracking Computer III\t\t2cr\t\t0\t101\nmodule\ttracking_mine_launcher\tTracking Mine Launcher\t\t2cr\t\t0\t101\nmodule\tvoid_cannon\tVoid Cannon\t\t2cr\t\t0\t102\nmodule\tvoid_hull_hardener\tVoid Hull Hardener\t\t2cr\t\t0\t101\nmodule\tvoid_lance_ii\tVoid Lance II\t\t2cr\t\t0\t101\nmodule\tvoid_laser\tVoid Laser\t\t2cr\t\t0\t101\nmodule\tvoid_mine_launcher\tVoid Mine Launcher\t\t2cr\t\t0\t101\nmodule\tvoid_shield_hardener\tVoid Shield Hardener\t\t2cr\t\t0\t101\nmodule\tvoid_torpedo_launcher\tVoid Torpedo Launcher\t\t2cr\t\t0\t101\nmodule\tvoidborn_phase_armor\tVoidborn Phase Armor\t\t2cr\t\t0\t101\nore\tadamantite_ore\tAdamantite Ore\t50,000cr\t2cr\t49,998cr\t10\t101\nore\taluminum_ore\tAluminum Ore\t5cr\t\t\t463\t0\nore\tantimatter_containment_cell\tAntimatter Containment Cell\t19cr\t2cr\t17cr\t53\t71\nore\tchlorine_gas\tChlorine Gas\t\t2cr\t\t0\t12\nore\tcobalt_ore\tCobalt Ore\t\t2cr\t\t0\t140\nore\tcopper_ore\tCopper Ore\t15cr\t\t\t191\t0\nore\tdark_matter_residue\tDark Matter Residue\t\t2cr\t\t0\t100\nore\tdarksteel_ore\tDarksteel Ore\t\t2cr\t\t0\t97\nore\tdeuterium_ice\tDeuterium Ice\t\t88cr\t\t0\t60\nore\tenergy_crystal\tEnergy Crystal\t\t1cr\t\t0\t44\nore\texotic_matter\tExotic Matter\t\t2cr\t\t0\t82\nore\tfluorine_gas\tFluorine Gas\t\t2cr\t\t0\t92\nore\tfury_crystal\tFury Crystal\t\t2cr\t\t0\t83\nore\thelium_ice\tHelium Ice\t\t1cr\t\t0\t1\nore\thydrogen_gas\tHydrogen Gas\t\t3cr\t\t0\t320\nore\tion_gas\tIon Gas\t\t2cr\t\t0\t90\nore\tiron_ore\tIron Ore\t1,000cr\t11cr\t989cr\t10\t200\nore\tkrypton_gas\tKrypton Gas\t\t2cr\t\t0\t75\nore\tlegacy_ore\tLegacy Ore\t\t2cr\t\t0\t99\nore\tnebula_gas\tNebula Gas\t\t1cr\t\t0\t1\nore\tnickel_ore\tNickel Ore\t\t22cr\t\t0\t812\nore\tnitrogen_ice\tNitrogen Ice\t\t1cr\t\t0\t101\nore\tphase_crystal\tPhase Crystal\t\t1cr\t\t0\t1\nore\tplasma_residue\tPlasma Residue\t\t2cr\t\t0\t80\nore\tplatinum_ore\tPlatinum Ore\t100cr\t\t\t122\t0\nore\tpolonium_ore\tPolonium Ore\t\t2cr\t\t0\t101\nore\tprismatic_nebulite\tPrismatic Nebulite\t495cr\t\t\t21\t0\nore\tquantum_fragments\tQuantum Fragments\t\t1cr\t\t0\t1\nore\tradium_ore\tRadium Ore\t\t2cr\t\t0\t101\nore\tsilicon_ore\tSilicon Ore\t\t59cr\t\t0\t80\nore\tsilver_ore\tSilver Ore\t\t2cr\t\t0\t52\nore\tthorium_ore\tThorium Ore\t2cr\t\t\t41\t0\nore\ttrade_crystal\tTrade Crystal\t10cr\t\t\t143\t0\nore\ttritium_ice\tTritium Ice\t\t2cr\t\t0\t102\nore\ttungsten_ore\tTungsten Ore\t18cr\t\t\t42\t0\nore\turanium_ore\tUranium Ore\t\t2cr\t\t0\t101\nore\tvanadium_ore\tVanadium Ore\t25cr\t\t\t8\t0\nore\tvoid_essence\tVoid Essence\t\t2cr\t\t0\t101\nore\txenon_gas\tXenon Gas\t\t1cr\t\t0\t1\nrefined\tadamantite_bar\tAdamantite Bar\t\t2cr\t\t0\t101\nrefined\tbioactive_compound\tBioactive Compound\t\t2cr\t\t0\t102\nrefined\tbiofiber_mesh\tBiofiber Mesh\t\t2cr\t\t0\t102\nrefined\tbioluminescent_culture\tBioluminescent Culture\t\t2cr\t\t0\t102\nrefined\tceramite_plating\tCeramite Plating\t\t2cr\t\t0\t34\nrefined\tchlorine_compound\tChlorine Compound\t\t2cr\t\t0\t25\nrefined\tcondensed_dark_matter\tCondensed Dark Matter\t\t2,407cr\t\t0\t41\nrefined\tcontained_antimatter\tContained Antimatter\t\t2cr\t\t0\t187\nrefined\tcontained_highly_enriched_uranium\tContained Highly Enriched Uranium\t\t2cr\t\t0\t102\nrefined\tcontained_liquid_tritium\tContained Liquid Tritium\t\t2cr\t\t0\t101\nrefined\tcontained_low_enriched_uranium\tContained Low Enriched Uranium\t\t2cr\t\t0\t81\nrefined\tcontained_processed_thorium\tContained Processed Thorium\t\t2cr\t\t0\t101\nrefined\tcontained_reactor_fuel_assembly\tContained Reactor Fuel Assembly\t\t2cr\t\t0\t101\nrefined\tcontained_reactor_grade_plutonium\tContained Reactor Grade Plutonium\t\t2cr\t\t0\t101\nrefined\tcontained_thorium_fuel_rod\tContained Thorium Fuel Rod\t\t2cr\t\t0\t101\nrefined\tcontained_uranium_hexafluoride\tContained Uranium Hexafluoride\t\t2cr\t\t0\t102\nrefined\tcontained_weapons_grade_plutonium\tContained Weapons Grade Plutonium\t\t2cr\t\t0\t102\nrefined\tcopper_piping\tCopper Piping\t\t33cr\t\t0\t2,100\nrefined\tcopper_wiring\tCopper Wiring\t16cr\t\t\t44\t0\nrefined\tcrystalline_lattice\tCrystalline Lattice\t\t2cr\t\t0\t101\nrefined\tdarksteel_plating\tDarksteel Plating\t\t2cr\t\t0\t96\nrefined\tdeuterium\tDeuterium\t3,183cr\t\t\t68\t0\nrefined\tdurasteel_plate\tDurasteel Plate\t150cr\t134cr\t16cr\t806\t1,077\nrefined\telectrum_ingot\tElectrum Ingot\t\t2cr\t\t0\t77\nrefined\tenriched_uranium_rod\tEnriched Uranium Rod\t\t2cr\t\t0\t39\nrefined\tfermentation_culture\tFermentation Culture\t\t2cr\t\t0\t15\nrefined\tflex_polymer\tFlex Polymer\t\t70cr\t\t0\t408\nrefined\tfluorine_etchant\tFluorine Etchant\t\t2cr\t\t0\t91\nrefined\tfocused_crystal\tFocused Crystal\t\t2cr\t\t0\t54\nrefined\tfury_alloy\tFury Alloy\t\t1cr\t\t0\t1\nrefined\tfusion_fuel_rod\tFusion Fuel Rod\t\t2cr\t\t0\t101\nrefined\tgold_wiring\tGold Wiring\t8cr\t1cr\t7cr\t1,134\t69\nrefined\tgraphene_sheet\tGraphene Sheet\t\t1cr\t\t0\t1\nrefined\thelium_3\tHelium-3\t\t1cr\t\t0\t1\nrefined\thighly_enriched_uranium\tHighly Enriched Uranium\t15,000cr\t2cr\t14,998cr\t10\t101\nrefined\tion_solution\tIon Solution\t\t2cr\t\t0\t79\nrefined\tionized_neon\tIonized Neon\t6cr\t5cr\t1cr\t1,511\t6\nrefined\tliquid_hydrogen\tLiquid Hydrogen\t\t52cr\t\t0\t60,240\nrefined\tliquid_nitrogen\tLiquid Nitrogen\t17cr\t\t\t121\t0\nrefined\tliquid_tritium\tLiquid Tritium\t\t2cr\t\t0\t101\nrefined\tlow_enriched_uranium\tLow-Enriched Uranium\t\t2cr\t\t0\t1\nrefined\tmetamaterial_panel\tMetamaterial Panel\t\t2cr\t\t0\t101\nrefined\tnanoplastic_composite\tNanoplastic Composite\t\t2cr\t\t0\t93\nrefined\tnebula_essence\tNebula Essence\t6cr\t2cr\t4cr\t2\t48\nrefined\tneural_extract\tNeural Extract\t\t2cr\t\t0\t201\nrefined\tneural_interface_gel\tNeural Interface Gel\t\t2cr\t\t0\t96\nrefined\tneutronium_ingot\tNeutronium Ingot\t\t2cr\t\t0\t102\nrefined\tnickel_billet\tNickel Billet\t60cr\t\t\t25\t0\nrefined\toptical_fiber_bundle\tOptical Fiber Bundle\t\t2cr\t\t0\t88\nrefined\toxygen_gas\tOxygen Gas\t172cr\t\t\t1,834\t0\nrefined\tpharmaceutical_culture\tPharmaceutical Culture\t\t2cr\t\t0\t92\nrefined\tphase_matrix\tPhase Matrix\t\t1cr\t\t0\t26\nrefined\tplatinum_bar\tPlatinum Bar\t11cr\t\t\t140\t0\nrefined\tpower_battery\tPower Battery\t\t2cr\t\t0\t96\nrefined\tprismatic_lens\tPrismatic Lens\t13,180cr\t11,440cr\t1,740cr\t73\t5,569\nrefined\tprocessed_null_matter\tProcessed Null Matter\t\t58cr\t\t0\t126\nrefined\tprocessed_thorium\tProcessed Thorium\t\t2cr\t\t0\t101\nrefined\tpurified_krypton\tPurified Krypton\t\t2cr\t\t0\t97\nrefined\tpurified_xenon\tPurified Xenon\t\t2cr\t\t0\t38\nrefined\tquantum_dot_matrix\tQuantum Dot Matrix\t\t2cr\t\t0\t80\nrefined\treactor_fuel_assembly\tReactor Fuel Assembly\t\t2cr\t\t0\t81\nrefined\treactor_grade_plutonium\tReactor-Grade Plutonium\t\t2cr\t\t0\t101\nrefined\trefined_plasma_core\tRefined Plasma Core\t\t2cr\t\t0\t80\nrefined\trefined_quantum_matrix\tRefined Quantum Matrix\t\t2cr\t\t0\t90\nrefined\tsilicate_composite\tSilicate Composite\t\t2cr\t\t0\t95\nrefined\tsilver_wiring\tSilver Wiring\t\t1cr\t\t0\t1\nrefined\tsolarian_legacy_alloy\tSolarian Legacy Alloy\t\t2cr\t\t0\t101\nrefined\tstabilized_exotic\tStabilized Exotic\t\t1cr\t\t0\t91\nrefined\tsteel_plate\tSteel Plate\t\t236cr\t\t0\t6,639\nrefined\tsynthetic_compound\tSynthetic Compound\t\t2cr\t\t0\t101\nrefined\tsynthetic_diamond\tSynthetic Diamond\t345cr\t1cr\t344cr\t6\t1\nrefined\tthorium_concentrate\tThorium Concentrate\t\t2cr\t\t0\t101\nrefined\tthorium_fuel_rod\tThorium Fuel Rod\t\t2cr\t\t0\t201\nrefined\ttitanium_alloy\tTitanium Alloy\t\t292cr\t\t0\t31,345\nrefined\ttitanium_ingot\tTitanium Ingot\t\t2cr\t\t0\t100\nrefined\ttrace_exotic_element\tTrace Exotic Element\t\t2cr\t\t0\t88\nrefined\turanium_concentrate\tUranium Concentrate\t\t2cr\t\t0\t102\nrefined\turanium_hexafluoride\tUranium Hexafluoride\t\t2cr\t\t0\t240\nrefined\tvoid_condensate\tVoid Condensate\t\t2cr\t\t0\t101\nrefined\tweapons_grade_plutonium\tWeapons-Grade Plutonium\t\t2cr\t\t0\t101\nCategories: ammo, component, consumable, drone, fuel, material, module, ore, refined\nUse item_id for full order book depth. Use category to filter.\ncurrent_tick=1333537 (pass as 'since' to view_market for the next diff)"
+            }
+          ]
+        }
+      },
+      "shape": "text-dashboard",
+      "wasEnveloped": false
+    }
+  },
+  "mutation": {
+    "action": "mine",
+    "raw": {
+      "jsonrpc": "2.0",
+      "id": 10,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error: no_resources: Nothing to mine here"
+          }
+        ],
+        "isError": true
+      }
+    },
+    "summary": {
+      "text": "Error: no_resources: Nothing to mine here",
+      "parsedJson": null,
+      "isTextDashboard": true,
+      "wasEnveloped": false,
+      "error": null
+    }
+  },
+  "concurrency_http_after_mcp": {
+    "status": 200,
+    "body": {
+      "result": "[REDACTED] [nebula] | 2,750cr | Market Prime\nShip: Prospect (prospect) | Hull: 95/95 | Shield: 50/50 (+1/tick) | Armor: 4 | Speed: 1\nFuel: 87/130 | Cargo: 30/100 | CPU: 4/13 | Power: 10/26\nSecurity: High Security (active police patrols)\nConnections: cargo_lanes, gold_run, haven\nNearby players (7):\nname\tship\tfaction\tcombat\tstatus\nJackSparrow\tcatalogue\tENDL\t\tonline\nPike Market Bot 9\tprospect\t\t\tonline\nPike Mining Bot 4\tprayer\tPLGT\t\tonline\nDjango\tcatalogue\tENDL\t\tonline\nCarson\tfutures\tNOIR\t\tonline\nAriaStarsmith\tprospect\t\t\tonline\nILC Adjuster\tprospect\tIRLC\t\tonline\n(+26 offline players not listed; POI is busy.)\nNearby empire NPCs (1):\nid\tname\trole\tempire\tfleet\tship\tcombat\n[REDACTED_ID]\t[POLICE] Federation Patrol IV - Market Prime Exchange\tpolice\tnebula\t\tNTF-1a3c9c0f (overhead)\t\nModules (2):\nid\ttype\tslot\tsize\twear\tstats\n[REDACTED_ID]\tmining_laser_i\tutility\t10\tPristine\tmining_power:5\n[REDACTED_ID]\tpulse_laser_i\tweapon\t10\tPristine\tcooldown:1 damage:10 damage_type:0 range:10 reach:3\nCargo (3 items):\nitem\tqty\tsize\nPalladium Ore\t22\t1\nVanadium Ore\t3\t1\nGold Ore\t5\t1\nSkills (6):\nskill\tlevel\txp\tnext_level\nexploration\t1\t5\t165\nleadership\t0\t4\t60\nmining\t3\t162\t585\nnavigation\t3\t535\t585\npiloting\t4\t677\t900\ntrading\t0\t29\t60\nActive missions (1/5):\n- Distress: Iona Reeve in Ross 128 (distress_response)\nEmpire standings:\nempire\trep\tbaseline\tbounty\nsolarian\t10\t10\t0\nvoidborn\t10\t10\t0\ncrimson\t10\t10\t0\nnebula\t20\t20\t0\nouterrim\t10\t10\t0\npirates\t-30\t-30\t0\n",
+      "structuredContent": {
+        "cargo": [
+          {
+            "item_id": "palladium_ore",
+            "item_name": "Palladium Ore",
+            "quantity": 22,
+            "size": 1
+          },
+          {
+            "item_id": "vanadium_ore",
+            "item_name": "Vanadium Ore",
+            "quantity": 3,
+            "size": 1
+          },
+          {
+            "item_id": "gold_ore",
+            "item_name": "Gold Ore",
+            "quantity": 5,
+            "size": 1
+          }
+        ],
+        "location": {
+          "connections": [
+            "cargo_lanes",
+            "gold_run",
+            "haven"
+          ],
+          "docked_at": null,
+          "empire": "nebula",
+          "nearby_empire_npc_count": 1,
+          "nearby_empire_npcs": [
+            {
+              "empire": "nebula",
+              "in_combat": false,
+              "name": "[POLICE] Federation Patrol IV - Market Prime Exchange",
+              "npc_id": "[REDACTED_ID]",
+              "role": "police",
+              "ship_class": "overhead",
+              "ship_name": "NTF-1a3c9c0f"
+            }
+          ],
+          "nearby_pirate_count": 0,
+          "nearby_pirates": [],
+          "nearby_player_count": 7,
+          "nearby_players": [
+            {
+              "faction_tag": "ENDL",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "catalogue",
+              "username": "[REDACTED]"
+            },
+            {
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prospect",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "PLGT",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prayer",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "ENDL",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "catalogue",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "NOIR",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "futures",
+              "username": "[REDACTED]"
+            },
+            {
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prospect",
+              "username": "[REDACTED]"
+            },
+            {
+              "faction_tag": "IRLC",
+              "in_combat": false,
+              "player_id": "[REDACTED]",
+              "ship_class": "prospect",
+              "username": "[REDACTED]"
+            }
+          ],
+          "offline_collapsed": 26,
+          "poi_id": "market_prime_exchange",
+          "poi_name": "Market Prime Exchange",
+          "poi_type": "station",
+          "resources": [],
+          "security_status": "High Security (active police patrols)",
+          "system_id": "market_prime",
+          "system_name": "Market Prime"
+        },
+        "message": "Current game state",
+        "missions": {
+          "active": [
+            {
+              "accepted_at": "2026-07-12T23:25:57Z",
+              "description": "MAYDAY: Iona Reeve is stranded at Ross 128 II in Ross 128 with 0/250 fuel! Any pilots nearby, please help!",
+              "difficulty": 5,
+              "expires_in_ticks": 241,
+              "giver": {
+                "name": "Iona Reeve",
+                "title": "Emergency Broadcast"
+              },
+              "issuing_base": "",
+              "issuing_system_id": "ross_128",
+              "issuing_system_name": "Ross 128",
+              "mission_id": "[REDACTED_ID]",
+              "objectives": [
+                {
+                  "completed": false,
+                  "current": 0,
+                  "description": "Investigate distress call in Ross 128",
+                  "required": 1,
+                  "system_id": "ross_128",
+                  "system_name": "Ross 128",
+                  "type": "visit_system"
+                }
+              ],
+              "percent_complete": 0,
+              "rewards": {
+                "credits": 0,
+                "skill_xp": {
+                  "salvaging": 40
+                }
+              },
+              "title": "Distress: Iona Reeve in Ross 128",
+              "type": "distress_response"
+            }
+          ],
+          "max_missions": 5
+        },
+        "modules": [
+          {
+            "cpu_usage": 2,
+            "module_id": "[REDACTED_ID]",
+            "name": "Mining Laser I",
+            "power_usage": 5,
+            "size": 10,
+            "slot": "utility",
+            "stats": {
+              "mining_power": 5
+            },
+            "type": "mining",
+            "type_id": "mining_laser_i",
+            "wear": 0,
+            "wear_status": "Pristine"
+          },
+          {
+            "cpu_usage": 2,
+            "module_id": "[REDACTED_ID]",
+            "name": "Pulse Laser I",
+            "power_usage": 5,
+            "size": 10,
+            "slot": "weapon",
+            "stats": {
+              "cooldown": 1,
+              "damage": 10,
+              "damage_type": "energy",
+              "range": 10,
+              "reach": 3
+            },
+            "type": "weapon",
+            "type_id": "pulse_laser_i",
+            "wear": 0,
+            "wear_status": "Pristine"
+          }
+        ],
+        "player": {
+          "citizenships": [
+            "nebula"
+          ],
+          "clan_tag": "",
+          "credits": 2750,
+          "empire": "nebula",
+          "home_base": "grand_exchange_station",
+          "home_poi": "grand_exchange",
+          "home_system": "haven",
+          "id": "[REDACTED_ID]",
+          "is_cloaked": false,
+          "primary_color": "#FFFFFF",
+          "secondary_color": "#000000",
+          "standings": {
+            "crimson": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            },
+            "nebula": {
+              "baseline": 20,
+              "outstanding_bounty": 0,
+              "reputation": 20
+            },
+            "outerrim": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            },
+            "pirates": {
+              "baseline": -30,
+              "outstanding_bounty": 0,
+              "reputation": -30
+            },
+            "solarian": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            },
+            "voidborn": {
+              "baseline": 10,
+              "outstanding_bounty": 0,
+              "reputation": 10
+            }
+          },
+          "stats": {
+            "bases_destroyed": 0,
+            "battles_fled": 0,
+            "battles_started": 0,
+            "captains_log_entries": 15,
+            "chat_messages_sent": 2,
+            "cloak_activations": 0,
+            "consumables_used": 0,
+            "contraband_sold": 0,
+            "credits_earned": 3916,
+            "credits_earned_taxable": 3916,
+            "credits_earned_taxable_by_category": {
+              "market": 3916
+            },
+            "credits_earned_taxable_by_category_snapshot": {
+              "market": 3348
+            },
+            "credits_earned_taxable_snapshot": 3348,
+            "credits_gifted": 0,
+            "credits_spent": 1416,
+            "customs_evaded": 0,
+            "damage_dealt": 0,
+            "damage_taken": 0,
+            "deaths_by_pirate": 0,
+            "deaths_by_player": 0,
+            "deaths_by_self_destruct": 1,
+            "deaths_by_wildlife": 0,
+            "deep_core_pois_discovered": 0,
+            "distance_traveled": 61848,
+            "exchange_credits_earned": 3916,
+            "exchange_items_bought": 0,
+            "exchange_items_sold": 494,
+            "facilities_built": 0,
+            "facility_items_produced": 0,
+            "forum_posts_created": 0,
+            "gifts_received": 0,
+            "gifts_sent": 0,
+            "insurance_claims_made": 0,
+            "insurance_payouts_received": 0,
+            "insurance_policies_bought": 0,
+            "items_crafted": 0,
+            "items_jettisoned": 179,
+            "jumps_completed": 168,
+            "last_income_tax_assessed_at": 1783877320,
+            "last_property_tax_assessed_at": 1783877320,
+            "market_purchases_deductible": 1416,
+            "market_purchases_deductible_snapshot": 878,
+            "missions_abandoned": 0,
+            "missions_accepted": 0,
+            "missions_completed": 0,
+            "modules_installed": 0,
+            "npcs_destroyed": 0,
+            "ore_mined": 727,
+            "pirates_destroyed": 0,
+            "prayer_distance_traveled": 0,
+            "refuels_given": 0,
+            "repairs_given": 0,
+            "scans_performed": 0,
+            "self_destructs": 1,
+            "ships_commissioned": 0,
+            "ships_destroyed": 0,
+            "ships_lost": 1,
+            "ships_purchased": 0,
+            "systems_explored": 14,
+            "time_played": 98700,
+            "times_docked": 247,
+            "trades_completed": 43,
+            "void_drifts": 0,
+            "wormholes_traversed": 0,
+            "wreck_items_looted": 0,
+            "wrecks_scrapped": 0,
+            "wrecks_sold": 0
+          },
+          "status_message": "",
+          "username": "[REDACTED]"
+        },
+        "queue": {
+          "has_pending": false
+        },
+        "ship": {
+          "armor": 4,
+          "cargo_capacity": 100,
+          "cargo_used": 30,
+          "class_id": "prospect",
+          "class_name": "Prospect",
+          "cpu_capacity": 13,
+          "cpu_used": 4,
+          "defense_slots": 1,
+          "fuel": 87,
+          "hull": 95,
+          "id": "[REDACTED_ID]",
+          "max_fuel": 130,
+          "max_hull": 95,
+          "max_shield": 50,
+          "name": "Prospect",
+          "power_capacity": 26,
+          "power_used": 10,
+          "shield": 50,
+          "shield_recharge": 1,
+          "speed": 1,
+          "utility_slots": 2,
+          "weapon_slots": 1
+        },
+        "skills": {
+          "exploration": {
+            "category": "Exploration",
+            "level": 1,
+            "max_level": 100,
+            "name": "Exploration",
+            "next_level_xp": 165,
+            "xp": 5
+          },
+          "leadership": {
+            "category": "Combat",
+            "level": 0,
+            "max_level": 100,
+            "name": "Leadership",
+            "next_level_xp": 60,
+            "xp": 4
+          },
+          "mining": {
+            "category": "Industry",
+            "level": 3,
+            "max_level": 100,
+            "name": "Mining",
+            "next_level_xp": 585,
+            "xp": 162
+          },
+          "navigation": {
+            "category": "Ships",
+            "level": 3,
+            "max_level": 100,
+            "name": "Navigation",
+            "next_level_xp": 585,
+            "xp": 535
+          },
+          "piloting": {
+            "category": "Ships",
+            "level": 4,
+            "max_level": 100,
+            "name": "Piloting",
+            "next_level_xp": 900,
+            "xp": 677
+          },
+          "trading": {
+            "category": "Commerce",
+            "level": 0,
+            "max_level": 100,
+            "name": "Trading",
+            "next_level_xp": 60,
+            "xp": 29
+          }
+        },
+        "version": "0.493.0"
+      },
+      "notifications": [
+        {
+          "id": "[REDACTED_ID]",
+          "type": "system",
+          "timestamp": "2026-07-13T01:45:37.257157775Z",
+          "msg_type": "ok",
+          "data": {
+            "message": "Automatically undocked (required for mine)",
+            "type": "auto_undock"
+          }
+        }
+      ],
+      "session": {
+        "id": "[REDACTED]",
+        "player_id": "[REDACTED]",
+        "created_at": "2026-07-13T01:45:27.56515332Z",
+        "expires_at": "2026-07-13T02:15:46.880065453Z"
+      }
+    }
+  },
+  "concurrency_finding": {
+    "http_session_invalidated_by_mcp_login": false,
+    "before_status": 200,
+    "after_status": 200,
+    "after_error": null,
+    "note": "HTTP session survived the MCP login — dual sessions may be possible; re-confirm before relying on it."
+  }
+}

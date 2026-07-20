@@ -1,0 +1,30 @@
+#!/bin/sh
+# D3 policy-path fence (#114) - pre-commit shim.
+# Wires every commit through scripts/policy-path-gate.ts: when the committer
+# is the headless service user (SCHEDULER_SERVICE_USER), staged paths outside
+# the doc-steward allowlist (src/scheduler/policy-paths.ts) reject the commit;
+# workstation commits pass untouched.
+# Same install as the pre-push guard: git config core.hooksPath .githooks
+# Residual: `git commit --no-verify` bypasses any client-side hook (see the
+# gate script header); the morning-read rule is the paired last barrier.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if command -v bun >/dev/null 2>&1; then
+  exec bun scripts/policy-path-gate.ts --staged
+fi
+# bun absent: fail open for a workstation user, fail CLOSED for the service
+# user - the fence must never be silently absent exactly where it matters.
+# SM_USER reads the same SCHEDULER_SERVICE_USER env var + generic default as
+# SERVICE_USER in policy-paths.ts (sh cannot import it); change both defaults
+# together - the bun-absent spanning test in test/policy-path-gate.test.ts
+# drives this branch with the TS const and fails on drift. The real service
+# username is deploy config, not a repo literal; if the env var is unset both
+# sides fall to the placeholder and the fence goes dormant off the deploy host.
+# POLICY_GATE_TEST_USERNAME is the same one-directional test override as the
+# gate script's: the real username is checked first, so the override can only
+# ADD headlessness, never hide the service user.
+SM_USER="${SCHEDULER_SERVICE_USER:-scheduler-svc}"
+if [ "$(id -un 2>/dev/null)" = "$SM_USER" ] || [ "$POLICY_GATE_TEST_USERNAME" = "$SM_USER" ]; then
+  echo "pre-commit: bun not found but user is $SM_USER - refusing headless commit (D3 fence, #114)." >&2
+  exit 1
+fi
+exit 0
