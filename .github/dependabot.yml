@@ -1,0 +1,19 @@
+# Dependabot version updates. github-actions ecosystem only, on purpose:
+# it keeps our SHA-pinned actions current (Dependabot proposes the new pinned
+# SHA for each). The npm/bun ecosystem is deliberately omitted — Dependabot
+# does not update bun.lock, and CI runs `bun install --frozen-lockfile`, so an
+# npm-ecosystem PR would bump package.json without the lockfile and fail CI.
+# Dependabot SECURITY updates (enabled in repo settings) still cover vulnerable
+# npm dependencies regardless of this file.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
