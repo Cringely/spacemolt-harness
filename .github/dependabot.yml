@@ -17,3 +17,13 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 5
+  # docker: the Dockerfile pins its base image by digest (oven/bun@sha256:...).
+  # This proposes digest bumps for base-image CVEs — no lockfile involved, so
+  # no frozen-lockfile conflict (unlike npm/bun, omitted above).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
