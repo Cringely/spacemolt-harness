@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { SpacemoltClient } from "../client/client";
@@ -331,14 +331,24 @@ export function loadConfig(path: string): HarnessConfig {
 export async function ensureCredentials(
   client: SpacemoltClient, entry: AgentEntry, secretsDir: string,
 ): Promise<string> {
+  // Read directly and treat "not found" as the register path, rather than
+  // existsSync-then-read (a check-then-use file race). Any other read error
+  // (e.g. permissions) still propagates.
   const pwFile = join(secretsDir, `${entry.id}_password`);
-  if (existsSync(pwFile)) return readFileSync(pwFile, "utf8").trim();
+  try {
+    return readFileSync(pwFile, "utf8").trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
 
   const codeFile = join(secretsDir, "registration_code");
-  if (!existsSync(codeFile)) {
+  let code: string;
+  try {
+    code = readFileSync(codeFile, "utf8").trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     throw new Error(`missing ${codeFile} — get a registration code from https://spacemolt.com/dashboard`);
   }
-  const code = readFileSync(codeFile, "utf8").trim();
   const { password } = await client.register(entry.username, entry.empire, code);
   writeFileSync(pwFile, password + "\n", { mode: 0o644 });
   return password;

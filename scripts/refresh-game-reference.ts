@@ -227,7 +227,12 @@ export function renderCommands(spec: Spec): string {
     const reg = registered.has(`${tool}/${action}`);
     const call = `\`${action || tool}(${params})\``;
     const kind = op["x-is-mutation"] ? "M" : "Q";
-    const summary = (op.summary ?? "").replace(/\|/g, "\\|");
+    // Escape backslashes before pipes (order matters), and collapse newlines,
+    // so a summary can't break out of its markdown table cell.
+    const summary = (op.summary ?? "")
+      .replace(/\\/g, "\\\\")
+      .replace(/\|/g, "\\|")
+      .replace(/\r?\n/g, " ");
     const mark = transport ? "🔌" : reg ? "✅" : "⬜";
     const list = byTool.get(tool) ?? [];
     list.push({

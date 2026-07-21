@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, ensureCredentials, AGENT_DEFAULTS } from "../src/config/config";
@@ -435,5 +435,69 @@ describe("ensureCredentials", () => {
     const pw2 = await ensureCredentials(client, entry, secretsDir);
     expect(pw2).toBe("secret-pw");
     expect(server.calls.filter((c) => c.action === "register").length).toBe(1); // no second register
+  });
+
+  test("missing registration_code throws friendly error, does not register", async () => {
+    server = startFakeServer();
+    server.setHandler("spacemolt_auth", "register", () => ({
+      structuredContent: { password: "secret-pw" },
+    }));
+    // Empty secretsDir: no password file AND no registration_code file. The
+    // codeFile read hits ENOENT and must throw the friendly guidance error.
+    const secretsDir = mkdtempSync(join(tmpdir(), "smsec-"));
+
+    const http = new SpacemoltHttp(server.url, { sleep: async () => {} });
+    const client = new SpacemoltClient(http);
+    const entry = {
+      id: "miner", username: "Test Miner", empire: "nebula" as const,
+      persona: "p", goals: [], planner: { provider: "mock" as const },
+      fuelPct: 20, hullPct: 30, heartbeatMinutes: 15, wakeNotificationTypes: ["combat"],
+      stallThreshold: 5, subscriptionCooldownMinutes: 60,
+      maxPlansPerWindow: 12, planBudgetWindowMinutes: 60,
+      fuelReservePct: 25, stuckWindowMinutes: 30, strandAutoSelfDestruct: false,
+      progressHeartbeatMinutes: 30, repeatBlockThreshold: 3, repeatBlockWindowMinutes: 30,
+      mode: "plan-then-execute" as const,
+    };
+
+    await expect(ensureCredentials(client, entry, secretsDir)).rejects.toThrow(/registration code/);
+    await expect(ensureCredentials(client, entry, secretsDir)).rejects.toThrow("https://spacemolt.com/dashboard");
+    expect(server.calls.filter((c) => c.action === "register").length).toBe(0);
+  });
+
+  test("non-ENOENT read error (EISDIR) propagates unmodified", async () => {
+    server = startFakeServer();
+    server.setHandler("spacemolt_auth", "register", () => ({
+      structuredContent: { password: "secret-pw" },
+    }));
+    const secretsDir = mkdtempSync(join(tmpdir(), "smsec-"));
+    // Make the password path a DIRECTORY so readFileSync(pwFile) throws EISDIR,
+    // not ENOENT. That error must propagate as-is, never be swallowed into the
+    // register path nor masked by the friendly "registration code" message.
+    mkdirSync(join(secretsDir, "miner_password"));
+
+    const http = new SpacemoltHttp(server.url, { sleep: async () => {} });
+    const client = new SpacemoltClient(http);
+    const entry = {
+      id: "miner", username: "Test Miner", empire: "nebula" as const,
+      persona: "p", goals: [], planner: { provider: "mock" as const },
+      fuelPct: 20, hullPct: 30, heartbeatMinutes: 15, wakeNotificationTypes: ["combat"],
+      stallThreshold: 5, subscriptionCooldownMinutes: 60,
+      maxPlansPerWindow: 12, planBudgetWindowMinutes: 60,
+      fuelReservePct: 25, stuckWindowMinutes: 30, strandAutoSelfDestruct: false,
+      progressHeartbeatMinutes: 30, repeatBlockThreshold: 3, repeatBlockWindowMinutes: 30,
+      mode: "plan-then-execute" as const,
+    };
+
+    let caught: NodeJS.ErrnoException | undefined;
+    try {
+      await ensureCredentials(client, entry, secretsDir);
+    } catch (e) {
+      caught = e as NodeJS.ErrnoException;
+    }
+    expect(caught).toBeDefined();
+    expect(caught?.code).toBe("EISDIR");
+    // The EISDIR error must NOT be replaced by the friendly missing-code text.
+    expect(caught?.message ?? "").not.toContain("registration code");
+    expect(server.calls.filter((c) => c.action === "register").length).toBe(0);
   });
 });
