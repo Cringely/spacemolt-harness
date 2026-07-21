@@ -741,3 +741,14 @@ Source: issue #219 (P1 epic, unblocks #107/#216 and the first rung of five other
 - *(B) Repoint `COMPOSE_PATH` at the private compose in host CI.* Keeps the automated guard, but it's cross-repo plumbing during a flip we want simple, and the check belongs in the repo that holds the file anyway.
 
 **Decision.** (A). Retiring dead-path code before going public beats shipping a guard that's red with no subject to check. The hardening invariants stay live on the host (the control is enforced; only the automated in-repo drift-check moved). #478 re-homes an equivalent check to the private GitOps CI; until then the invariant rides on manual review of the private compose. The security-controls register's 2026-07-20 delta records the same resolution.
+
+## 2026-07-21 — Repoint the scheduler LXC's checkout to the public repo to end the 32h tick outage
+
+**Context.** After the public flip, the durable scheduler's `~/checkout` on the LXC still tracked the now-archived private `spacemolt` repo. Every 10-minute tick starts with `git pull --ff-only`; the checkout carried one unpushed local steward commit (`d951648`, docs-only), so the fast-forward failed and the tick aborted before running any job. Result: a 32h Jul-20/21 outage the memory notes misattributed to a "stranded checkout self-heal" bug. The box, cron, and disk were healthy the whole time. The failure was one line of git state.
+
+**Options.**
+- *(A) Repoint origin to the public repo + `git reset --hard origin/main` [CHOSEN].* Scheduler tracks the primary repo, runs current code, can push job outputs. Discards the local commit (backed up to `~/state/stranded-d951648.patch`; docs-only, reproducible).
+- *(B) Fix only the ff-only break on the private origin.* Restores ticking fastest, but the archived repo is frozen and read-only, so the scheduler would run stale code forever and its steward/commit jobs couldn't push. A zombie.
+- *(C) Re-clone fresh from public.* Clean, but loses the box's local config/state layout for no gain a reset doesn't give.
+
+**Decision.** (A). The public repo is primary; the scheduler must follow it or it is worthless. Public history is null/unrelated to the private repo, so this is a hard reset, not a merge. Verified live: `git pull --ff-only` now returns "Already up to date," and a real standup tick ran ($0.137, ok) minutes after. The dispatch gate stays OFF by design (human-gated `verifiedLiveAt`); the fix restores the tick loop, not autonomous dispatch.
