@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  FILING_REPO,
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
   fileFinding,
@@ -50,6 +51,28 @@ const finding = (n = 1) => ({
 });
 
 describe("finding filer (C2)", () => {
+  // Catches: the 2026-07-22 silent-break — the filer's dedup/create/comment
+  // calls resolved against the checkout's default remote (public repo after
+  // the flip) instead of the private issues SSOT, so dedup never matched and
+  // every create failed silently. Every issue call the filer makes must be
+  // pinned to FILING_REPO, not whatever repo the local checkout points at.
+  test("every gh issue call (list, create, comment, capped-summary) is scoped to FILING_REPO", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([{ number: 42, state: "OPEN", closedAt: null }]);
+    fileFinding(gh, dir, finding()); // dedup match ⇒ list + comment
+    const { gh: gh2, calls: calls2 } = fakeGh([]);
+    fileFinding(gh2, dir, finding(2)); // no match ⇒ list + create
+    for (let n = 3; n <= FINDINGS_PER_CYCLE_CAP + 2; n++) fileFinding(gh2, dir, finding(n)); // drive into cap ⇒ summary create + comment
+    const allCalls = [...calls, ...calls2];
+    expect(allCalls.length).toBeGreaterThan(0);
+    for (const c of allCalls) {
+      const idx = c.args.indexOf("--repo");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(c.args[idx + 1]).toBe(FILING_REPO);
+    }
+    expect(FILING_REPO).toBe("Cringely/spacemolt");
+  });
+
   // Catches: duplicate-issue flood — an open match must bump, never re-create.
   test("open match ⇒ bump, no create", () => {
     const dir = tmp();
