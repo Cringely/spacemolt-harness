@@ -33,12 +33,13 @@ function makeDirs() {
     writeFileSync(p, CHARTER_TEXT);
   }
   writeFileSync(join(checkoutDir, "docs", "STATE.md"), "# State\n\n## NOW\n\nfine\n");
-  // store_bearer: #114 A1 pivot -- the strategy job's HTTP store-API bearer
-  // (extraSecrets), read via buildEnv() before the spawner is ever called; an
-  // absent file here makes runJob fail closed before spawning, which is
-  // exactly what a missing-secret job SHOULD do, but it means every scenario
-  // walk below needs the file present to spawn strategy at all.
-  for (const name of ["claude_oauth_token", "gh_pat_readcomment", "gh_pat_steward", "instruct_bearer", "store_bearer"]) {
+  // store_bearer + sm_store_url: the strategy job's HTTP store-API bearer
+  // (#114 A1) and store base URL (#476), both extraSecrets read via buildEnv()
+  // before the spawner is ever called; an absent file here makes runJob fail
+  // closed before spawning, which is exactly what a missing-secret job SHOULD
+  // do, but it means every scenario walk below needs both files present to
+  // spawn strategy at all.
+  for (const name of ["claude_oauth_token", "gh_pat_readcomment", "gh_pat_steward", "instruct_bearer", "store_bearer", "sm_store_url"]) {
     writeFileSync(join(secretsDir, name), "SENTINEL\n");
   }
   return { checkoutDir, secretsDir, stateDir };

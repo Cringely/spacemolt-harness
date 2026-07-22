@@ -53,6 +53,12 @@ export function validateStoreArgs(op: string | undefined, agentId: string | unde
  * default -- the scheduler and the harness live on different hosts and the correct
  * reachable address (proto/host/port) is a deploy-time fact, not something
  * safe to assume here. Throws StoreArgError when unset.
+ *
+ * SM_STORE_URL is populated by the scheduler's spawn.ts buildEnv() from the
+ * strategy job's `extraSecrets: [..., "sm_store_url"]` (#476) -- read from a
+ * file under $SCHEDULER_SECRETS and exported as an env var, the SAME seam as
+ * STORE_BEARER below. It is not set from a plain host env var, so the source is
+ * defined and version-controlled (jobs.ts) rather than silently unset.
  */
 export function resolveBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   if (env.SM_STORE_URL && env.SM_STORE_URL.trim() !== "") return env.SM_STORE_URL.trim().replace(/\/+$/, "");

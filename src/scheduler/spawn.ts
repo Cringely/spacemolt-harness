@@ -228,8 +228,11 @@ function buildEnv(job: JobDef, secretsDir: string): Record<string, string> {
     GH_TOKEN: readSecret(secretsDir, job.patSecret),
   };
   // extraSecrets: each file exported under its uppercased filename — the
-  // strategy job's instruct_bearer → INSTRUCT_BEARER, and nothing else gets it
-  // (spec §Security: no secret over-broadcast).
+  // strategy job's store_bearer → STORE_BEARER and sm_store_url → SM_STORE_URL
+  // (#476), and no other job gets either (spec §Security: no secret
+  // over-broadcast). readSecret THROWS on a missing file, so an unprovisioned
+  // entry aborts the spawn (naming the file) rather than running unauthenticated
+  // or against an unset URL.
   for (const name of job.extraSecrets ?? []) env[name.toUpperCase()] = readSecret(secretsDir, name);
   return env;
 }

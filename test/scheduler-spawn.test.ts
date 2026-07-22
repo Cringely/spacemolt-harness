@@ -13,13 +13,16 @@ import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
 // Sentinel secret VALUES (never real): if one of these strings ever shows up
-// on an argv, the security-baseline env-only rule is broken.
+// on an argv, the security-baseline env-only rule is broken. sm_store_url is a
+// base URL, not a credential, but it rides the same extraSecrets file→env seam
+// (#476) and must stay off argv too, so it lives here beside the bearer.
 const SENTINELS = {
   claude_oauth_token: "SENTINEL_OAUTH_TOKEN_VALUE",
   gh_pat_readcomment: "SENTINEL_PAT_READCOMMENT",
   gh_pat_steward: "SENTINEL_PAT_STEWARD",
   instruct_bearer: "SENTINEL_INSTRUCT_BEARER",
   store_bearer: "SENTINEL_STORE_BEARER", // #114 A1 pivot: strategy job's store-API bearer
+  sm_store_url: "http://sentinel-store.invalid:9999", // #476: strategy job's store base URL
 } as const;
 
 const CHARTER_TEXT = "# Charter: test\r\n\ttabs — em dash, `backticks`\nNEVER merge.\n";
@@ -154,15 +157,24 @@ describe("spawn composer + runner (C3)", () => {
   // HTTP bearer, not an SSH key. Only strategy gets it (extraSecrets); every
   // other job must NOT -- a secret with no use-path on another job is pure
   // exfil risk (same reasoning as the INSTRUCT_BEARER test above).
-  test("only the strategy job's env carries STORE_BEARER", async () => {
+  //
+  // #476: SM_STORE_URL rides the same extraSecrets seam and must land on the
+  // strategy job's env (defined source, not an unset host env var that ERRORs
+  // the step-0 gate) and NOWHERE else. Both assertions in one test because it
+  // is one seam: extraSecrets → buildEnv uppercase-file-to-env. A regression
+  // that drops sm_store_url from jobs.ts, or leaks either to another job,
+  // fails here.
+  test("only the strategy job's env carries STORE_BEARER and SM_STORE_URL", async () => {
     for (const j of JOBS) {
       const dirs = makeDirs();
       const { spawner, calls } = fakeSpawner(0);
       await runJob(j, { spawner, clock: () => 1_000_000, ...dirs });
       if (j.id === "strategy") {
         expect(calls[0]!.opts.env.STORE_BEARER).toBe(SENTINELS.store_bearer);
+        expect(calls[0]!.opts.env.SM_STORE_URL).toBe(SENTINELS.sm_store_url);
       } else {
         expect(calls[0]!.opts.env.STORE_BEARER).toBeUndefined();
+        expect(calls[0]!.opts.env.SM_STORE_URL).toBeUndefined();
       }
     }
   });

@@ -60,7 +60,18 @@ export const JOBS: JobDef[] = [
     // job needs a bearer, not an SSH key. store_bearer → STORE_BEARER (env,
     // never argv), read by strategy-store.ts, structurally separate from the
     // dashboard's #173 token and from gh_pat_readcomment above.
-    extraSecrets: ["store_bearer"],
+    //
+    // sm_store_url → SM_STORE_URL (#476): the store's base URL (proto/host/port
+    // reachable from the scheduler host) is a deploy-time fact the job needs
+    // right beside the bearer, so it rides the SAME extraSecrets seam — a
+    // defined, version-controlled source, not an unset host env var that
+    // silently ERRORs the step-0 gate (exit 2) and blocks every review. Wired
+    // like store_bearer on purpose: buildEnv reads secrets/sm_store_url and
+    // aborts the spawn (naming the file) if it is missing, so an unprovisioned
+    // URL fails LOUD before a spawn, not silently mid-review (L-21). It is
+    // provisioned out-of-band into $SCHEDULER_SECRETS by the operator/PM, the
+    // same as the bearer; neither lives in any committed env example.
+    extraSecrets: ["store_bearer", "sm_store_url"],
     timeoutMs: 30 * MIN,
     // Store access is the ONE thin caller (#114 A1): the scheduler runs on a
     // separate host, the store lives in a container on another host, so the
