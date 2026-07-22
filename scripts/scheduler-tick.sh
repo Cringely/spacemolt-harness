@@ -77,6 +77,22 @@ export CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN
 cd "$SCHEDULER_CHECKOUT"
 sh "$SCHEDULER_CHECKOUT/scripts/scheduler-refresh-checkout.sh" "$SCHEDULER_CHECKOUT"
 
+# 3b. Warn if the FROZEN host-side bootstrap (~/bin, what cron actually invokes,
+#     #459) has drifted from the repo copy the refresh just brought current. The
+#     bootstrap does not self-update on purpose -- that would recreate its own
+#     trap one level up -- so re-installing it is a manual step a human can
+#     forget. This is only the smoke detector: it never auto-copies and never
+#     aborts the tick (`|| true`; the script itself always exits 0), it just
+#     surfaces the drift in the cron log. Runs here, after the refresh, so the
+#     repo copy it compares against is the latest merged one. The installed path
+#     is passed as $2 explicitly -- SCHEDULER_BOOTSTRAP is sourced from the env
+#     file into THIS shell but never exported, so a child `sh` cannot inherit it;
+#     resolving it here with the same ~/bin default the runbook installs to is
+#     what makes a non-default install honored instead of silently ignored.
+sh "$SCHEDULER_CHECKOUT/scripts/scheduler-bootstrap-staleness.sh" \
+  "$SCHEDULER_CHECKOUT/scripts/scheduler-tick-bootstrap.sh" \
+  "${SCHEDULER_BOOTSTRAP:-$HOME/bin/scheduler-tick-bootstrap.sh}" || true
+
 # 4. Hand off. scripts/scheduler.ts refuses to run (exit 2) unless all three
 #    SCHEDULER_* vars are set -- already guaranteed above.
 exec bun "$SCHEDULER_CHECKOUT/scripts/scheduler.ts" tick
