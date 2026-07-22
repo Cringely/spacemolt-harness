@@ -14,12 +14,13 @@
 // lacking `sh`/`git` skips rather than fails.
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const BOOTSTRAP = join(import.meta.dir, "..", "scripts", "scheduler-tick-bootstrap.sh");
 const STALENESS = join(import.meta.dir, "..", "scripts", "scheduler-bootstrap-staleness.sh");
+const TICK = join(import.meta.dir, "..", "scripts", "scheduler-tick.sh");
 const HAVE_SH = spawnSync("sh", ["-c", "exit 0"]).status === 0;
 const HAVE_GIT = spawnSync("git", ["--version"]).status === 0;
 
@@ -206,5 +207,54 @@ describe.skipIf(!HAVE_SH)("scheduler bootstrap-staleness check (#459)", () => {
     });
     expect(r.status ?? -1).toBe(0);
     expect(r.stderr ?? "").toContain("BOOTSTRAP-STALE"); // env-resolved path was compared
+  });
+});
+
+// Catches the actual #459 regression the previous test above missed: the CALL
+// SITE in scheduler-tick.sh (not the staleness script's own fallback) failing to
+// forward a sourced-but-unexported SCHEDULER_BOOTSTRAP. scheduler-tick.sh sources
+// its env file with plain `. "$ENV_FILE"` (no `export SCHEDULER_BOOTSTRAP`), so a
+// child `sh` cannot see it in its environment -- the call site must resolve
+// "${SCHEDULER_BOOTSTRAP:-default}" itself and pass the result as $2. Drop that
+// $2 argument and the staleness check silently falls back to the ~/bin default,
+// missing a real drift against a non-default install.
+//
+// This extracts the REAL call-site lines out of scripts/scheduler-tick.sh at
+// test time (rather than a hand-copied re-implementation) so an edit to the call
+// site changes this test's outcome. The staleness script itself is swapped for a
+// stub that just echoes $2, so no git/checkout/bun fixture is needed.
+describe.skipIf(!HAVE_SH)("scheduler-tick.sh call site forwards SCHEDULER_BOOTSTRAP (#459)", () => {
+  function extractCallSite(): string {
+    const src = readFileSync(TICK, "utf8");
+    const lines = src.split("\n");
+    const start = lines.findIndex((l) => l.includes("scheduler-bootstrap-staleness.sh"));
+    if (start === -1) throw new Error("call site not found in scheduler-tick.sh");
+    const end = lines.findIndex((l, i) => i >= start && l.includes("|| true"));
+    if (end === -1) throw new Error("end of call site (|| true) not found in scheduler-tick.sh");
+    return lines.slice(start, end + 1).join("\n");
+  }
+
+  test("sourced-but-unexported SCHEDULER_BOOTSTRAP reaches the staleness script as $2", () => {
+    const root = mkdtempSync(join(tmpdir(), "sched-callsite-"));
+    const scriptsDir = join(root, "checkout", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+
+    // Stub staleness script: echoes $2 so the forwarded value is observable.
+    writeFileSync(join(scriptsDir, "scheduler-bootstrap-staleness.sh"), '#!/bin/sh\necho "GOT2=$2"\n');
+
+    const bootstrapPath = toPosix(join(root, "custom-bootstrap.sh"));
+    const envFile = join(root, "env");
+    // Matches scheduler-tick.sh:29 -- sourced with `.`, never `export`ed.
+    writeFileSync(envFile, `SCHEDULER_BOOTSTRAP=${bootstrapPath}\n`);
+
+    const driver = join(root, "driver.sh");
+    writeFileSync(
+      driver,
+      `set -eu\nSCHEDULER_CHECKOUT=${toPosix(join(root, "checkout"))}\n. ${toPosix(envFile)}\n${extractCallSite()}\n`,
+    );
+
+    const r = spawnSync("sh", [toPosix(driver)], { encoding: "utf8" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`GOT2=${bootstrapPath}`);
   });
 });
