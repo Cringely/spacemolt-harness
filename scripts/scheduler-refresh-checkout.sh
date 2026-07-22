@@ -25,6 +25,13 @@ CHECKOUT="${1:-${SCHEDULER_CHECKOUT:-}}"
 [ -n "$CHECKOUT" ] || { echo "scheduler-refresh-checkout: no checkout dir given (\$1) and SCHEDULER_CHECKOUT unset" >&2; exit 2; }
 cd "$CHECKOUT"
 
+# NOTE (#459): the restore-to-main sequence below is deliberately MIRRORED, not
+# shared, by scripts/scheduler-tick-bootstrap.sh -- the frozen host-side entry
+# cron invokes from OUTSIDE the checkout. That copy must not depend on this file
+# (it may be the stranded/stale copy being repaired), so do NOT extract the two
+# into a common helper: the duplication is what keeps the bootstrap independent
+# of the checkout it heals. See that script's header for the full reasoning.
+#
 # Pin to main. `-f` discards any stray working-tree edits a half-finished job
 # left behind -- the shared checkout is not a place to preserve work, and a
 # committed strand keeps its commit on its own local branch regardless.
