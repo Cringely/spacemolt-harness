@@ -51,6 +51,15 @@ export interface FindingOutcome {
 
 export const MACHINE_LABEL = "machine-filed";
 
+// The issues SSOT is the PRIVATE repo (AGENTS.md backlog-model), not whatever
+// remote the checkout's `origin` happens to point at. Before the 2026-07-21
+// public flip, "unscoped" and "private" were the same repo, so this bug was
+// latent; after the flip, an unscoped `gh issue` call resolves against the
+// now-public repo instead — dedup silently stops matching and every create
+// fails (no machine-filed label there). Every gh issue call in this file goes
+// through run() below, so pinning it here is the one seam that can't drift.
+export const FILING_REPO = "Cringely/spacemolt";
+
 /** Validation failure on untrusted caller input — the CLI maps this to exit 2. */
 export class FilingInputError extends Error {}
 
@@ -132,9 +141,14 @@ function writeScratchBody(dir: string, text: string): string {
   return p;
 }
 
+// Every `gh issue *` call the filer makes passes through here — scoping the
+// repo in this ONE place, rather than at each call site, is what makes it
+// impossible for a future call site to forget --repo (the exact way this bug
+// happened: the list/create calls silently inherited the checkout's remote).
 function run(gh: GhRunner, args: string[]): string {
-  const { stdout, exitCode } = gh(args);
-  if (exitCode !== 0) throw new Error(`gh ${args[0]} ${args[1]} failed (exit ${exitCode}): ${stdout.slice(0, 300)}`);
+  const scoped = [...args, "--repo", FILING_REPO];
+  const { stdout, exitCode } = gh(scoped);
+  if (exitCode !== 0) throw new Error(`gh ${scoped[0]} ${scoped[1]} failed (exit ${exitCode}): ${stdout.slice(0, 300)}`);
   return stdout;
 }
 
