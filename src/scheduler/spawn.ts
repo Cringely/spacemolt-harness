@@ -150,7 +150,7 @@ function workOrder(job: JobDef, cycleId: string): string {
   const perJob: Record<JobDef["id"], string[]> = {
     standup: [
       "Target: this 2h stand-up window — liveness, PRs, pipeline, blockers, hygiene, per your charter.",
-      "Reporting channel: gh comments on the PRs/issues you triage. Flag merge-ready with a PR comment; the PM merges.",
+      "Reporting channel: gh comments on the PRs you triage. Flag merge-ready with a PR comment; the PM merges. (#490: no issue-read/write grant — file an issue only via file-finding.ts.)",
     ],
     strategy: [
       "Target: this 6h strategy review window, per your charter (step-0 gate first).",

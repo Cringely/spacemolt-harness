@@ -5,9 +5,19 @@
 // allowedTools (finalized in Task C3): CLOSED per-job lists mirroring spec
 // §What-it-executes — LLM output is untrusted input, so anything absent from
 // a list is forbidden. No package managers, no unscoped shell, and never a
-// bare `Bash(git *)` wildcard; the pre-push hook and the D3 fence stay the
-// structural backstops BEHIND the lists (test/scheduler-spawn.test.ts pins
-// the closed-list posture).
+// bare `Bash(git *)` or `Bash(gh *)` wildcard; the pre-push hook and the D3
+// fence stay the structural backstops BEHIND the lists
+// (test/scheduler-spawn.test.ts pins the closed-list posture).
+//
+// #490: a bare `Bash(gh *)` on council/standup/strategy let the spawned agent
+// run `gh issue create`/`gh issue comment` directly, unscoped, bypassing the
+// mechanical filer (scripts/file-finding.ts → src/scheduler/filing.ts) that
+// scopes every gh issue call to Cringely/spacemolt — the same failure class
+// spacemolt-harness#14 fixed for the code path, one layer up. Every job's gh
+// grant is now an enumerated read (or, for standup, a PR comment it already
+// used) list, mirroring steward's style; filing stays exclusively through
+// file-finding.ts, which is unaffected (it runs as the harness process, not
+// through the agent's Bash allowedTools).
 export interface JobDef {
   id: "standup" | "strategy" | "council" | "steward";
   schedule: { kind: "grid"; periodMs: number; offsetMs: number } | { kind: "main-merge"; settleMs: number };
@@ -36,13 +46,20 @@ export const JOBS: JobDef[] = [
     model: "haiku",
     patSecret: "gh_pat_readcomment",
     timeoutMs: 15 * MIN,
-    // `Bash(gh *)` is broad but token-bounded: the read+comment PAT is
-    // structurally merge-incapable (spec §Security PAT split).
+    // #490: was `Bash(gh *)` — token-bounded by the merge-incapable
+    // read+comment PAT, but still let the agent run `gh issue create`/
+    // `gh issue comment` directly. Narrowed to the four PR-triage
+    // subcommands the charter's step 2 and this job's work order actually
+    // use (list/view/checks to triage, comment to flag merge-ready) — no
+    // issue read/write; issues route through file-finding.ts only.
     allowedTools: [
       "Read",
       "Grep",
       "Glob",
-      "Bash(gh *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr comment *)",
       "Bash(bun run scripts/repo-hygiene.ts)",
       "Bash(bun scripts/file-finding.ts *)",
     ],
@@ -86,11 +103,15 @@ export const JOBS: JobDef[] = [
     // the jailed write-report script (bare Write is banned — Claude Code does
     // not honor Write(path) scoping, and an unscoped Write could tamper
     // docs/charters/* on disk where the commit-time D3 fence never looks).
+    // #490: dropped the `Bash(gh *)` wildcard — neither the charter nor this
+    // job's work order (spawn.ts) ever calls gh directly. The issue-bump
+    // lever routes through file-finding.ts's own dedup (bump-not-refile), and
+    // the steer lever is a store-side note, not a gh call. No gh grant at all
+    // is the correct-and-smallest fix here, not a narrowed read list.
     allowedTools: [
       "Read",
       "Grep",
       "Glob",
-      "Bash(gh *)",
       "Bash(bun scripts/strategy-store.ts *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
@@ -107,12 +128,21 @@ export const JOBS: JobDef[] = [
     // the brief's review METHOD, not capability-(b) dispatch (plan §C3);
     // the dated report writes through the jailed write-report script (bare
     // Write banned — see the strategy job's note).
+    //
+    // #490: narrowed the `Bash(gh *)` wildcard to the one read the brief's
+    // §Triage step documents (`gh issue list --search`, docs/briefs/
+    // council-review.md). `gh issue view` is kept alongside it out of
+    // caution — the brief doesn't name it, but ranking a listed issue
+    // plausibly needs its full body, so it stays enumerated rather than cut
+    // on a guess. No issue-write, no PR access: neither the charter nor the
+    // brief documents council reading or touching PRs.
     allowedTools: [
       "Read",
       "Grep",
       "Glob",
       "Task",
-      "Bash(gh *)",
+      "Bash(gh issue list *)",
+      "Bash(gh issue view *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
     ],
