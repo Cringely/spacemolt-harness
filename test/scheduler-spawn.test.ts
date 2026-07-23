@@ -240,6 +240,25 @@ describe("spawn composer + runner (C3)", () => {
     expect(job("steward").allowedTools.includes("Bash(gh *)")).toBe(false); // contents:write PAT: gh stays per-subcommand
   });
 
+  // Catches: the #490 bypass — a bare `Bash(gh *)` (or a direct issue-write/
+  // pr-merge grant) on ANY job lets the spawned agent run `gh issue create` /
+  // `gh issue comment` / `gh pr merge` / `gh pr close` itself, unscoped, past
+  // the mechanical filer (scripts/file-finding.ts → src/scheduler/filing.ts)
+  // that scopes every gh issue call to Cringely/spacemolt (the exact failure
+  // spacemolt-harness#14 fixed for the code path). Every job's gh grant must
+  // be an enumerated, non-write subcommand list — mirroring steward's style —
+  // so a future edit can't silently reopen the bypass by re-adding the
+  // wildcard or a write verb.
+  test("no job's allowedTools carries a bare Bash(gh *) wildcard or a direct issue-write/pr-merge grant (#490)", () => {
+    const forbiddenGh = /^Bash\(gh (issue create|issue comment|pr merge|pr close)\b/;
+    for (const j of JOBS) {
+      expect(j.allowedTools.includes("Bash(gh *)")).toBe(false);
+      for (const entry of j.allowedTools) {
+        expect(forbiddenGh.test(entry)).toBe(false);
+      }
+    }
+  });
+
   // Catches: bare `Write` regressing into ANY job's list. Claude Code does
   // not honor Write(path) scoping (only Edit(path) rules match), so an
   // unscoped Write lets a prompt-injected run overwrite docs/charters/* ON
