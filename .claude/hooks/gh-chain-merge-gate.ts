@@ -122,11 +122,34 @@ const ALLOW: GateDecision = { action: "allow" };
  * tell "inert trailing comment" from "the human meant this to run" from text alone,
  * and a false deny (own-call, its own message says how to split it) costs far less
  * than a false allow (a merge lands on red).
+ *
+ * Round-4 fix (independent re-review of round-3, live-confirmed bypass): an
+ * unquoted `#` only starts a real bash comment at a word boundary — start of
+ * string, or right after whitespace/`;`/`&`/`|`/`(`/`)`. A `#` glued to a
+ * preceding token (`foo#GH-CHAIN-OVERRIDE:`) is literal text, not a comment, in
+ * real bash. Round-3 missed this at TWO levels: `echo foo#GH-CHAIN-OVERRIDE:
+ * hack && gh pr merge 5` set `inComment=true` on that mid-word `#`, AND —
+ * because comment text passes through the mask unchanged — the literal `#`
+ * character and the token after it survived into the masked string regardless
+ * of that flag, so `OVERRIDE_RE` (a plain substring search over the masked
+ * text) matched it and let a genuinely chained merge through as ALLOW. Gating
+ * `inComment` on the boundary alone does not fix this: `OVERRIDE_RE` does not
+ * consult `inComment`, it just looks for a literal `#...GH-CHAIN-OVERRIDE:`
+ * substring in whatever `maskQuoted` hands back. So a non-boundary `#` is
+ * dropped from the output entirely (not merely left un-flagged as a comment) —
+ * the character never enters `out`, and scanning continues normally on what
+ * follows it (still eligible to open a real quote or comment later). Dropping
+ * one inert character cannot affect chain detection, since `#` is not a
+ * chain operator. The boundary check reads the RAW input char immediately
+ * before `i`, not `out` — `out` can lag `i` by dropped/escaped chars, so
+ * indexing it would check the wrong character.
  */
 function maskQuoted(command: string): string {
   let out = "";
   let quote: '"' | "'" | null = null;
   let inComment = false;
+  const isCommentStart = (i: number): boolean =>
+    i === 0 || /[\s;&|()]/.test(command.charAt(i - 1));
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (inComment) {
@@ -136,8 +159,13 @@ function maskQuoted(command: string): string {
     }
     if (quote === null) {
       if (c === "#") {
-        inComment = true;
-        out += c;
+        // A boundary `#` opens a real comment; a mid-word `#` is literal text
+        // that must not resurface later as a fake comment marker to the
+        // override regex, so it is dropped rather than echoed (round-4).
+        if (isCommentStart(i)) {
+          inComment = true;
+          out += c;
+        }
       } else if (c === "'" || c === '"') {
         quote = c;
       } else if (c === "\\") {

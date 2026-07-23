@@ -152,6 +152,44 @@ describe("comment-aware masking — round-3 (independent re-review of round-2)",
   });
 });
 
+describe("comment word-boundary — round-4 (independent re-review of round-3, live-confirmed)", () => {
+  // Round-3's inComment tracking had no word-boundary check: real bash only opens
+  // a comment at a `#` preceded by whitespace/an operator/start-of-string, not a
+  // `#` glued to a preceding token. Round-3 let such a `#` both start "comment"
+  // mode AND survive verbatim into the masked string, so OVERRIDE_RE (a plain
+  // substring search) matched an override token that was never inside a real
+  // comment. Live-confirmed on round-3: `bash -c 'echo foo#GH-CHAIN-OVERRIDE: hack
+  // && gh pr merge 5'` actually ran the merge. These three FAIL on round-3 (ALLOW)
+  // and must DENY after the fix.
+  test("override token glued to a preceding word is not a real comment — still DENY", () => {
+    const cmd = "echo foo#GH-CHAIN-OVERRIDE: hack && gh pr merge 5";
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+
+  test("no-space variant is still not a real comment — still DENY", () => {
+    const cmd = "echo foo#GH-CHAIN-OVERRIDE:hack && gh pr merge 5";
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+
+  test("override token glued to the gh verb's own argument is not a real comment — still DENY", () => {
+    const cmd = "gh pr checks 5#GH-CHAIN-OVERRIDE: x && gh pr merge 5";
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+
+  test("a mid-word # with no override text still denies the real chain (unaffected by boundary fix)", () => {
+    expect(decide(bash("echo foo#bar && gh pr merge 5")).action).toBe("deny");
+  });
+
+  test("a URL fragment's # is not a comment boundary — still denies the real chain", () => {
+    expect(decide(bash("gh pr view https://x/y#frag && gh pr merge 5")).action).toBe("deny");
+  });
+
+  test("a real boundary comment (space before #) still allows a written override", () => {
+    const cmd = "gh pr checks 5 && gh pr merge 5 # GH-CHAIN-OVERRIDE: checks are green";
+    expect(decide(bash(cmd)).action).toBe("allow");
+  });
+});
+
 describe("override token", () => {
   test("token with a written reason allows the chained one-liner", () => {
     const cmd = "gh pr checks 5 && gh pr merge 5 # GH-CHAIN-OVERRIDE: checks are green, batching";
