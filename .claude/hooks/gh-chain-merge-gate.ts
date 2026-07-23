@@ -78,7 +78,11 @@ const CHAIN_SPLIT = /&&|\|\||[;\n|]/;
  * colon (a bare token is not a reasoned override, per the #192 gate's finding).
  * Receipt for existing: without an in-band override the only bypass is muting the
  * hook in settings.json, and a muted hook protects nothing. The token forces the
- * override to be written, reasoned, and visible in the transcript.
+ * override to be written, reasoned, and visible in the transcript. Round-3: the
+ * override check runs on the QUOTED-MASKED command (see `decide()`), so a token
+ * sitting inside a `--body "…"` string — a real string the reviewer will read, not
+ * a real shell comment — can never grant a bypass; only a `#` that survives masking
+ * (i.e. is a real, unquoted comment) counts.
  */
 export const OVERRIDE_TOKEN = "GH-CHAIN-OVERRIDE:";
 const OVERRIDE_RE = /#[^\n]*GH-CHAIN-OVERRIDE:[ \t]*\S/;
@@ -105,14 +109,36 @@ const ALLOW: GateDecision = { action: "allow" };
  * inside the outer double quotes, so its body (newlines and all) is blanked. A bare
  * unquoted heredoc is the accepted residual edge (reviewer: "separate tool calls
  * always"); its body lines are not quoted, so it is not masked.
+ *
+ * Round-3 fix (independent re-review of round-2): the scan also tracks an
+ * `inComment` state, entered on an UNQUOTED `#` and cleared on a newline. While in a
+ * comment, quote characters are passed through literally instead of toggling `quote`
+ * — without this, prose like `don't`/`it's` inside a real comment opens a fake
+ * single-quote span that swallows everything after it, including a genuine chained
+ * `&& gh pr merge` on the next line (round-2 false-negative: an apostrophe in a
+ * comment masked a real chain). Comment text itself is NOT dropped — it is passed
+ * through unchanged, deliberately conservative: any operator or gh verb spelled out
+ * after an unquoted `#` still trips the chain check downstream, because we cannot
+ * tell "inert trailing comment" from "the human meant this to run" from text alone,
+ * and a false deny (own-call, its own message says how to split it) costs far less
+ * than a false allow (a merge lands on red).
  */
 function maskQuoted(command: string): string {
   let out = "";
   let quote: '"' | "'" | null = null;
+  let inComment = false;
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
+    if (inComment) {
+      out += c; // comment text passes through unchanged — see round-3 note above
+      if (c === "\n") inComment = false;
+      continue;
+    }
     if (quote === null) {
-      if (c === "'" || c === '"') {
+      if (c === "#") {
+        inComment = true;
+        out += c;
+      } else if (c === "'" || c === '"') {
         quote = c;
       } else if (c === "\\") {
         i++; // escaped char outside quotes is literal, never an operator — drop both
@@ -157,8 +183,9 @@ export function decide(payload: unknown): GateDecision {
   const command = (input as Record<string, unknown>).command;
   if (typeof command !== "string" || command === "") return ALLOW;
 
-  // Conscious override wins before any verb check.
-  if (OVERRIDE_RE.test(command)) return ALLOW;
+  // Conscious override wins before any verb check — tested on the quoted-masked
+  // form so a token sitting inside a string (not a real `#` comment) never counts.
+  if (OVERRIDE_RE.test(maskQuoted(command))) return ALLOW;
 
   if (!isChainedStateChange(command)) return ALLOW;
 

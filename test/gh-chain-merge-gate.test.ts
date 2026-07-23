@@ -125,6 +125,33 @@ describe("quote-aware tokenizer — inert text in strings must NOT be denied (#4
   });
 });
 
+describe("comment-aware masking — round-3 (independent re-review of round-2)", () => {
+  // Round-2's maskQuoted had no notion of a `#` comment: an apostrophe in comment
+  // prose (`don't`, `it's`) opened a fake single-quote span that swallowed
+  // everything after it, including a real chained `gh pr merge`. These four FAIL
+  // on round-2 (ALLOW) and must DENY after the fix.
+  test("override token quoted inside --body prose is not a real comment — still DENY", () => {
+    const cmd =
+      'gh pr comment 480 --body "Reminder: put # GH-CHAIN-OVERRIDE: reason in a comment" && gh pr merge 465';
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+
+  test("override token inside a -b string on the merge itself is not a real comment — still DENY", () => {
+    const cmd = 'gh pr checks 465 --watch | tail -3 && gh pr merge 465 -b "use # GH-CHAIN-OVERRIDE: x"';
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+
+  test("apostrophe in a real comment must not swallow a real chained merge on the next line", () => {
+    const cmd = "git status # don't forget\ngh pr checks 5 && gh pr merge 5";
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+
+  test("apostrophe in a same-line comment must not swallow a real chained merge", () => {
+    const cmd = "echo hi # don't wait 'ok' && gh pr merge 5";
+    expect(decide(bash(cmd)).action).toBe("deny");
+  });
+});
+
 describe("override token", () => {
   test("token with a written reason allows the chained one-liner", () => {
     const cmd = "gh pr checks 5 && gh pr merge 5 # GH-CHAIN-OVERRIDE: checks are green, batching";

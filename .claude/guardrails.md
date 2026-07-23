@@ -207,8 +207,11 @@ rule that warn-prose already failed to hold (#192 for hook 3; three seams for ho
   GATE. This is the #192 pattern: a deterministic string check on the very call it judges, no
   state, no counting.
 - **Override:** to run the chained one-liner consciously, put `GH-CHAIN-OVERRIDE: <reason>` in a
-  comment on the command — the reason is required (a bare token does not pass), and it keeps a
-  bypass possible without muting the hook (a muted hook protects nothing).
+  real, unquoted `#` comment on the command — the reason is required (a bare token does not pass),
+  and it keeps a bypass possible without muting the hook (a muted hook protects nothing). The token
+  is checked on the command AFTER quoted strings are masked out, so one sitting inside a `--body
+  "…"` or `-b "…"` string (text a reviewer will read, not a real shell comment) never grants a
+  bypass.
 - **Scope (deliberate):** only gh state-changers are gated. The #283 seam's destructive step was a
   chained *git* branch deletion, which this gh-verb gate does not target; a denylist for every
   destructive follow-up after any command would produce false positives, get muted, and protect
