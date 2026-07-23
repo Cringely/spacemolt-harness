@@ -9,6 +9,15 @@
             "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-worktree-gate.ts\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/gh-chain-merge-gate.ts\""
+          }
+        ]
       }
     ],
     "SessionStart": [

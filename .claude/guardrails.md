@@ -23,11 +23,18 @@ meta-lesson this project paid for:
 Everything project-specific lives in the **repo**, not at the account level, so it is versioned,
 portable, and reviewable.
 
-**Never chain a `gh` state-changing command with a dependent follow-up in one Bash call.** Twice
-paid: #236 merged over a red verify (`gh pr checks && gh pr merge` — the check's failure didn't
-stop the merge), and 2026-07-16 a `gh pr merge` failed on conflicts while the chained branch
-deletion ran anyway, closing PR #283 unmerged. Check the result of each state-changing step
-BEFORE issuing the next: separate tool calls, always.
+**Never chain a `gh` state-changing command with a dependent follow-up in one Bash call.** Three
+times paid: #236 merged over a red verify (`gh pr checks && gh pr merge` — the check's failure
+didn't stop the merge); 2026-07-16 a `gh pr merge` failed on conflicts while the chained branch
+deletion ran anyway, closing PR #283 unmerged; and 2026-07-20 `gh pr checks 465 --watch | tail -3
+&& gh pr merge 465` merged on red because the pipe through `tail` replaced gh's nonzero exit with
+`0`. Check the result of each state-changing step BEFORE issuing the next: separate tool calls,
+always. Prose failed three times at three seams, so this is now a GATE — a `PreToolUse` Bash hook
+(`.claude/hooks/gh-chain-merge-gate.ts`, hook 5 below) DENIES a `gh pr merge`/`gh pr close`/`gh
+repo delete` that sits downstream of a `&&`, `||`, `;`, `|`, or a bare `&`. Conscious override: put
+`GH-CHAIN-OVERRIDE: <reason>` in a comment on the command. Ceiling: this is a string match over
+shell operators, not a bash parser — it catches the accidental-slip class above, not command
+substitution (`$(gh pr merge …)`) or deliberate obfuscation, which is a tracked follow-up.
 
 **Every `gh pr merge` carries `--delete-branch`.** 72 merged-PR corpse branches had accumulated
 by 2026-07-18 and had to be bulk-deleted; the flag makes the cleanup free at the moment it is
@@ -57,6 +64,7 @@ enforcement view: rule → the forcing function that fits it → status.
 | **Worktree isolation for repo-writing dispatches** — a repo-writing agent dispatched into the shared checkout collides with the dispatcher's branch (#192, 2nd occurrence) | `PreToolUse` hook on the Agent tool denies the dispatch with a fix-it message unless `isolation` is set or a written override is in the prompt | gate | done (#192) |
 | **Isolated agents still mutate the MAIN checkout** — a worktree-isolated agent cds into the shared checkout and runs state-changing git there (lead-413 2026-07-18; a reviewer left `pr-452-new` checked out on main 2026-07-19 — both despite explicit brief prose forbidding it) | Runtime gate designed in #456: deny state-changing git targeting the repo root from subagent Bash calls; the subagent-detection mechanism is the load-bearing unknown to prove first | gate | filed (#456) |
 | **Dead worktrees + merged branches pile up** — `gh pr merge` leaves the remote branch, the harness leaves the agent worktree after its agent commits, nothing prunes on a cadence (the repo hit 41 worktrees / ~50 branches before a manual cleanup) | Always `gh pr merge --delete-branch` — deletes the REMOTE branch at merge; `scripts/repo-hygiene.ts` reaps dead LOCAL agent worktrees + merged/orphan-scaffold branches every stand-up (SOC-monitor charter step 5) and reports unmerged/open-PR branches for a human. Pure planner + thin executor; never removes a locked (live-agent) worktree or an open-PR branch | automate | this-PR |
+| **`gh` state-changer chained after another command** — a `gh pr merge`/`close` runs when an upstream step's exit code masked a failure (#236 merged over red; 2026-07-16 chained delete closed PR #283 unmerged; 2026-07-20 #465 merged on red because a pipe through `tail` replaced gh's nonzero exit with 0). Prose failed three times at three seams | `PreToolUse` Bash hook `gh-chain-merge-gate.ts` (hook 5) DENIES a `gh pr merge`/`gh pr close`/`gh repo delete` sitting downstream of `&&`/`||`/`;`/`|`; message says split it into its own Bash call. Override: `GH-CHAIN-OVERRIDE: <reason>` in a command comment | gate | done (#466) |
 
 **Status legend:** `done` = the forcing function exists and runs. `this-PR` = added by the guardrails
 harness (#125). `ongoing` = a standing practice enforced by convention/review, not a one-time build.
@@ -65,8 +73,8 @@ harness (#125). `ongoing` = a standing practice enforced by convention/review, n
 
 These are repo-level, side-effect-free except printing, and fast. The operator reviews every hook
 script personally, since they run on the operator's machine. Hooks 1, 2, and 4 are WARN-only (never
-block a tool); hook 3 is the one deliberate exception — it DENIES, because #192 proved that for
-this rule warn-prose re-breaks (the rule already existed in writing and was violated anyway).
+block a tool); hooks 3 and 5 are the deliberate exceptions — they DENY, because each codifies a
+rule that warn-prose already failed to hold (#192 for hook 3; three seams for hook 5).
 
 ### 1. `SessionStart` → `.claude/hooks/session-start-guardrails.sh`
 
@@ -183,7 +191,51 @@ this rule warn-prose re-breaks (the rule already existed in writing and was viol
   generated + vendored paths do not) maps directly onto `shouldLint`, plus `planLint` degradation and
   `resolveValeConfig` resolution order. Runs as part of the normal `bun test` suite.
 
-## Why only these four hooks
+### 5. `PreToolUse` (matcher `Bash`) → `.claude/hooks/gh-chain-merge-gate.ts`
+
+- **Fires on:** every `Bash` tool call (it reads the command off stdin; a call with no gh
+  state-changer is a silent no-op).
+- **Does:** DENIES the call when a state-changing gh verb (`gh pr merge`, `gh pr close`, or
+  `gh repo delete`) appears downstream of a chaining operator (`&&`, `||`, `;`, `|`, a bare
+  `&`, or a newline) in the same command string. A state-changer that is the sole or the FIRST
+  command is allowed — its own exit is visible, so nothing upstream could have masked it. The
+  deny message says: run the state-changing gh command as its own Bash call.
+- **Why deny, not warn (3rd occurrence):** the rule was in this file AND re-injected at session
+  start, and it was still slid past three times at three different seams — #236 (`gh pr checks &&
+  gh pr merge`, merged over red), 2026-07-16 (chained delete closed PR #283 unmerged), and
+  2026-07-20 #465 (`gh pr checks 465 --watch | tail -3 && gh pr merge 465` — the pipe through
+  `tail` replaced gh's nonzero exit with `0`, so `&&` passed and the merge landed on red). Prose
+  that fails three times is a harness gap; per the forcing-function hierarchy it graduates to a
+  GATE. This is the #192 pattern: a deterministic string check on the very call it judges, no
+  state, no counting.
+- **Override:** to run the chained one-liner consciously, put `GH-CHAIN-OVERRIDE: <reason>` in a
+  real, unquoted `#` comment on the command — the reason is required (a bare token does not pass),
+  and it keeps a bypass possible without muting the hook (a muted hook protects nothing). The token
+  is checked on the command AFTER quoted strings are masked out, so one sitting inside a `--body
+  "…"` or `-b "…"` string (text a reviewer will read, not a real shell comment) never grants a
+  bypass.
+- **Scope (deliberate):** only gh state-changers are gated. The #283 seam's destructive step was a
+  chained *git* branch deletion, which this gh-verb gate does not target; a denylist for every
+  destructive follow-up after any command would produce false positives, get muted, and protect
+  nothing. This catches the two gh-merge-on-red seams verbatim and the general class of a gh
+  state-changer landing downstream of a masked exit.
+- **Ceiling (round-5, stated plainly, not fixed here):** this is a string match over shell
+  operators, not a bash parser. It catches the accidental-slip class — a state-changer typed
+  downstream of an operator without meaning to chain past a failure, the shape of all three
+  historical incidents. It does NOT catch command substitution (`$(gh pr merge …)`, backticks) or
+  deliberate obfuscation (`$(echo gh) pr merge`, case variation) — those need a real parser or
+  intent to evade, not a typo, and are tracked as a separate accepted-limitation follow-up.
+- **Why bun, not sh:** it must tokenize a command on shell operators without being fooled by `||`
+  vs `|` or by the override token, and the decision logic is a pure exported function unit-tested
+  offline. Bun is already the project's hard dependency.
+- **Fail-open:** any hook error (malformed stdin, our own bug) logs to stderr and exits 0 with no
+  stdout. This hook runs on EVERY Bash call, so a broken gate must never brick the tool.
+- **Tests:** `bun test test/gh-chain-merge-gate.test.ts` — the two verbatim historical strings are
+  load-bearing regression fixtures, plus operator coverage, the standalone/first-command allow
+  cases, the word-boundary guard, and the override paths. Spawn tests pin the stdin→stdout deny
+  contract and fail-open. Runs as part of the normal `bun test` suite.
+
+## Why only these five hooks
 
 The candidates that were considered and **dropped**, so the reasoning is on record:
 
