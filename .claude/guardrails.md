@@ -31,8 +31,10 @@ deletion ran anyway, closing PR #283 unmerged; and 2026-07-20 `gh pr checks 465 
 `0`. Check the result of each state-changing step BEFORE issuing the next: separate tool calls,
 always. Prose failed three times at three seams, so this is now a GATE — a `PreToolUse` Bash hook
 (`.claude/hooks/gh-chain-merge-gate.ts`, hook 5 below) DENIES a `gh pr merge`/`gh pr close`/`gh
-repo delete` that sits downstream of a `&&`, `||`, `;`, or `|`. Conscious override: put
-`GH-CHAIN-OVERRIDE: <reason>` in a comment on the command.
+repo delete` that sits downstream of a `&&`, `||`, `;`, `|`, or a bare `&`. Conscious override: put
+`GH-CHAIN-OVERRIDE: <reason>` in a comment on the command. Ceiling: this is a string match over
+shell operators, not a bash parser — it catches the accidental-slip class above, not command
+substitution (`$(gh pr merge …)`) or deliberate obfuscation, which is a tracked follow-up.
 
 **Every `gh pr merge` carries `--delete-branch`.** 72 merged-PR corpse branches had accumulated
 by 2026-07-18 and had to be bulk-deleted; the flag makes the cleanup free at the moment it is
@@ -194,10 +196,10 @@ rule that warn-prose already failed to hold (#192 for hook 3; three seams for ho
 - **Fires on:** every `Bash` tool call (it reads the command off stdin; a call with no gh
   state-changer is a silent no-op).
 - **Does:** DENIES the call when a state-changing gh verb (`gh pr merge`, `gh pr close`, or
-  `gh repo delete`) appears downstream of a chaining operator (`&&`, `||`, `;`, `|`, or a
-  newline) in the same command string. A state-changer that is the sole or the FIRST command is
-  allowed — its own exit is visible, so nothing upstream could have masked it. The deny message
-  says: run the state-changing gh command as its own Bash call.
+  `gh repo delete`) appears downstream of a chaining operator (`&&`, `||`, `;`, `|`, a bare
+  `&`, or a newline) in the same command string. A state-changer that is the sole or the FIRST
+  command is allowed — its own exit is visible, so nothing upstream could have masked it. The
+  deny message says: run the state-changing gh command as its own Bash call.
 - **Why deny, not warn (3rd occurrence):** the rule was in this file AND re-injected at session
   start, and it was still slid past three times at three different seams — #236 (`gh pr checks &&
   gh pr merge`, merged over red), 2026-07-16 (chained delete closed PR #283 unmerged), and
@@ -217,6 +219,12 @@ rule that warn-prose already failed to hold (#192 for hook 3; three seams for ho
   destructive follow-up after any command would produce false positives, get muted, and protect
   nothing. This catches the two gh-merge-on-red seams verbatim and the general class of a gh
   state-changer landing downstream of a masked exit.
+- **Ceiling (round-5, stated plainly, not fixed here):** this is a string match over shell
+  operators, not a bash parser. It catches the accidental-slip class — a state-changer typed
+  downstream of an operator without meaning to chain past a failure, the shape of all three
+  historical incidents. It does NOT catch command substitution (`$(gh pr merge …)`, backticks) or
+  deliberate obfuscation (`$(echo gh) pr merge`, case variation) — those need a real parser or
+  intent to evade, not a typo, and are tracked as a separate accepted-limitation follow-up.
 - **Why bun, not sh:** it must tokenize a command on shell operators without being fooled by `||`
   vs `|` or by the override token, and the decision logic is a pure exported function unit-tested
   offline. Bun is already the project's hard dependency.

@@ -21,14 +21,25 @@
 //
 // The gate as shipped, matching the issue's fix shape exactly: DENY a Bash
 // command in which a state-changing gh verb (`gh pr merge`, `gh pr close`, or
-// `gh repo delete`) appears AFTER a chaining operator (`&&`, `||`, `;`, `|`, or
-// a newline) in the same command string. A state-changer that is the sole or the
-// FIRST command in the string is allowed — its own exit is visible to the caller,
-// so nothing upstream could have masked it. The only thing denied is a deliberate
-// one-liner that puts the state-change downstream of another command, where an
-// upstream failure (or an exit-code masked by a pipe) can let it land silently.
-// The fix is always the same and the message says so: run the state-changing gh
-// command as its own Bash call.
+// `gh repo delete`) appears AFTER a chaining operator (`&&`, `||`, `;`, `|`,
+// `&`, or a newline) in the same command string. A state-changer that is the
+// sole or the FIRST command in the string is allowed — its own exit is visible
+// to the caller, so nothing upstream could have masked it. The only thing
+// denied is a deliberate one-liner that puts the state-change downstream of
+// another command, where an upstream failure (or an exit-code masked by a pipe
+// or a backgrounded sibling) can let it land silently. The fix is always the
+// same and the message says so: run the state-changing gh command as its own
+// Bash call.
+//
+// Ceiling (round-5, honesty not a fix): this is a string matcher over shell
+// operators, not a bash parser. It catches the accidental-slip class — the
+// three historical incidents above, all a state-changer sitting downstream of
+// an operator in a one-liner someone typed without meaning to chain past a
+// failure. It does NOT catch command substitution (`$(gh pr merge …)`,
+// backticks) or deliberate obfuscation (`$(echo gh) pr merge`, case variation,
+// `g''h pr merge`) — those need a real parser or intent to evade, not a typo,
+// and are out of scope for a gate built to catch a slip. Command substitution
+// is tracked as an accepted-limitation follow-up, not fixed here.
 //
 // Deviation receipt (guardrails.md hooks are otherwise POSIX sh): this hook must
 // tokenize a command string on shell operators without being fooled by `||` vs
@@ -65,9 +76,11 @@ const STATE_CHANGE_VERB = /\bgh\s+(?:pr\s+(?:merge|close)|repo\s+delete)\b/;
  * Shell chaining operators that separate one command from the next. Order in the
  * alternation matters: `&&` and `\|\|` are tried before the single-char class so
  * a `||` is consumed as one token (not two `|`) and `&&` is never split. A single
- * `|`, a `;`, and a newline each separate commands too.
+ * `|`, a `;`, a newline, and a single `&` (round-5: bare `&` backgrounds the left
+ * side and runs the right side unconditionally — `gh pr checks 5 & gh pr merge 5`
+ * was an unguarded chain the same shape as `;`) each separate commands too.
  */
-const CHAIN_SPLIT = /&&|\|\||[;\n|]/;
+const CHAIN_SPLIT = /&&|\|\||[;\n|&]/;
 
 /**
  * Conscious-override token: a caller who deliberately wants the chained one-liner
@@ -187,7 +200,7 @@ function maskQuoted(command: string): string {
 
 /**
  * True iff a state-changing gh verb appears in a segment that is NOT the first —
- * i.e. it sits downstream of a `&&`, `||`, `;`, `|`, or newline. A state-changer
+ * i.e. it sits downstream of a `&&`, `||`, `;`, `|`, `&`, or newline. A state-changer
  * that is the sole or first command is allowed (nothing upstream could mask it).
  * Quoted content is masked out first so operators/verbs inside strings do not count.
  */
@@ -222,7 +235,7 @@ export function decide(payload: unknown): GateDecision {
     reason:
       `Chained-state-change gate (#466): a state-changing gh command ` +
       `(gh pr merge / gh pr close / gh repo delete) appears downstream of a ` +
-      `chaining operator (&&, ||, ;, or |) in this one Bash call. An upstream ` +
+      `chaining operator (&&, ||, ;, |, or &) in this one Bash call. An upstream ` +
       `step's exit code can mask a failure and let the state change land anyway ` +
       `— exactly how PR #236 merged over a red verify and PR #465 merged on red ` +
       `checks (a pipe through tail replaced gh's nonzero exit with 0). Run the ` +

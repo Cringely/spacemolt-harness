@@ -66,6 +66,25 @@ describe("isChainedStateChange — operator coverage", () => {
     // whole so downstream detection still works — verified by the operator set.
     expect(isChainedStateChange("false || gh pr merge 5")).toBe(true);
   });
+
+  test("&& is one operator, not two & (does not mis-split) — round-5", () => {
+    // `&&` is tried first in the CHAIN_SPLIT alternation, so adding bare `&` to
+    // the single-char class must not cause a genuine `&&` to split as two `&`s.
+    expect(isChainedStateChange("gh pr checks 5 && gh pr merge 5")).toBe(true);
+  });
+});
+
+describe("bare & (background) — round-5 (reviewer-prescribed, live-confirmed)", () => {
+  // CHAIN_SPLIT omitted bare `&`: `gh pr checks 5 & gh pr merge 5` backgrounds the
+  // check and runs the merge unconditionally, an upstream-failure-masking shape as
+  // real as `;`. Live-confirmed ALLOW before the fix; must DENY after.
+  test("a bare & before a state-changer is a chained state change", () => {
+    expect(isChainedStateChange("gh pr checks 5 & gh pr merge 5")).toBe(true);
+  });
+
+  test("gh pr checks 5 & gh pr merge 5 denies", () => {
+    expect(decide(bash("gh pr checks 5 & gh pr merge 5")).action).toBe("deny");
+  });
 });
 
 describe("legitimate standalone forms — must NOT be denied", () => {
