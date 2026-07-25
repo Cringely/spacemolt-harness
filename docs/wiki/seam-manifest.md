@@ -113,6 +113,15 @@ Both sides must agree on one thing no schema forces: the body reaches the script
 
 **Spanning test.** `test/scheduler-spawn.test.ts` ("strategy work order describes the real HTTP transport, never the dead SSH/forced-command one") pins side A's spawn prose against the real mechanism. No automated check exists on `guardrails.md`'s prose (it is operator-facing documentation, not agent input), so a PR touching the store transport should grep both files by hand.
 
+## 12. Operator-steer gate ↔ plannable step vocabulary (#527, PR #24)
+
+**Side A**: `src/server/instruct-gate.ts:52-54`. `GATED_QUERY_ACTIONS` is every registry action with `kind === "query"` and a `_` in its name. A steer naming one gets a 400 at the HTTP boundary.
+**Side B**: `src/registry/plan.ts:9`. `PlanStepSchema`'s members are built from `REGISTRY.filter((a) => a.kind === "mutation")`, plus one hand-added branch (`TravelToStepSchema`, `plan.ts:24-27`) that is not a registry entry at all.
+
+**How they drift.** The gate's whole justification is that a gated action CANNOT become a plan step, so rejecting the steer costs the operator nothing they could have had. Nothing in the type system ties the two predicates together, and side B already carries one hand-added exception. A second exception, or a query action given a mutation-shaped step so the planner could call it, would leave the gate rejecting a steer the planner had just become able to plan. That failure is silent in both directions: the operator sees a 400 for something legal, and no test notices.
+
+**Spanning test.** `test/instruct-gate.test.ts`, "the gate never blocks something plan.ts can plan". It reads the action names out of `PlanStepSchema.options` (plan.ts's own output, not the predicate that built it) and asserts none is in `GATED_QUERY_ACTIONS`. Ablation: adding `|| a.name === "find_route"` to plan.ts:9 turns it red. The sibling test "no mutation is ever gated" does NOT cover this: it re-derives from `REGISTRY` and never reads `plan.ts`.
+
 ## Keeping the manifest current
 
 Adding a new hand-paired instruction seam (two files that must agree with no shared schema forcing it)? Add a section here with real file:line anchors, and either point at an existing spanning test or write one. A seam entry with no spanning test and no noted reason is not finished.

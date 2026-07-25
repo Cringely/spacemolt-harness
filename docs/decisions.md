@@ -833,16 +833,16 @@ Source: issue #219 (P1 epic, unblocks #107/#216 and the first rung of five other
 
 ## 2026-07-25 — Query-action steers rejected at /instruct (private backlog #527)
 
-**Context.** An operator steers the live pilot by POSTing free text to `/api/agents/<id>/instruct`. The planner's vocabulary is mutations only: `digest.ts` builds `ACTION_VOCAB` from `REGISTRY.filter(kind === "mutation")`, as does the plan schema. A steer naming a query action cannot be planned, and nothing marks it done, so it re-raises into every later plan until a human supersedes it or five newer steers evict it (`agent.ts`, `MAX_GOALS = 5`): in practice, all session. Five occurrences, the last from the PM's own seat.
+**Context.** An operator steers the live pilot by POSTing free text to `/api/agents/<id>/instruct`. The planner's vocabulary is mutations only: `digest.ts` and the plan schema both build from `REGISTRY.filter(kind === "mutation")`. A steer naming a query action cannot be planned and nothing marks it done, so it re-raises into every later plan until a human supersedes it or five newer steers evict it (`agent.ts`, `MAX_GOALS = 5`): in practice, all session. Five occurrences, the last from the PM's own seat.
 
 **Options.**
-- *(A) Restate the rule in the charter [rejected].* The mechanism that already failed five times.
-- *(B) Let the planner reject it downstream [rejected].* Guards the consumer; the operator learns hours later from the pilot's behaviour, if at all.
-- *(C) Reject at the HTTP boundary with a teaching 400 [CHOSEN].* The operator is still typing; the fix costs a sentence.
-- *(D) Strip the offending clause and forward the rest [rejected].* Silently changing what a human asked is worse than refusing.
+- *(A) Restate the rule in the charter [rejected].* Already failed five times.
+- *(B) Let the planner reject it downstream [rejected].* Guards the consumer; the operator learns hours later, if at all.
+- *(C) Reject at the HTTP boundary with a teaching 400 [CHOSEN].* The operator is still typing.
+- *(D) Strip the clause and forward the rest [rejected].* Silently changing what a human asked is worse than refusing.
 
-**Decision.** (C). False positives are the expensive failure: the gate stands between a human and a pilot in trouble. The first rule scanned backwards from the name for a verb anywhere in the sentence, plus a pronoun list for narration. Review ran it over 22 realistic steers: 14 false positives, worst of them the operator's own remedy for this bug ("run find_route; that was my mistake, drop it").
+**Decision.** (C). False positives are the expensive failure here, so three matchers were measured before this one was kept. Rule 1 (backward verb scan plus a pronoun list) took 14 false positives over 22 steers, worst of them the operator's own remedy for this bug ("run find_route; that was my mistake, drop it"). Rule 2 rejected only a clause BEGINNING with a base-form verb carrying a gated name within three words, no negation between; an imperative opens its clause, so position replaced the pronoun list. Rule 2 also promoted seven joiners (`and`, `then`) to clause BOUNDARIES, to catch "dock and run get_status".
 
-The replacement is smaller. Reject only a clause BEGINNING with a base-form verb (`use`, `run`, `call`) carrying a gated name within three words, no negation between; clauses break on punctuation and on joiners (`and`, `then`). An imperative opens its clause, so position replaces the pronoun list one adverb ("I ALREADY use find_route") defeated. Over 44 steers: 0 missed rejects, 3 false positives, down from 14.
+That half was reversed on evidence. A boundary strands what preceded it: "Do not dock and run get_status" loses its negation, "I handle the routing and run find_route" its subject. Over 63 steers it bought 2 true rejects for 18 false positives. Rule 3 makes the joiners a skipped LEAD-IN: 4 false positives, those 2 compound imperatives accepted knowingly and recorded in KNOWN LIMITS.
 
-Also rejected, each now an accept case: substring search (fires inside `find_routes_v2`), inflected verbs, sentence-wide negation (launders "use find_route, don't burn the last cell"). The gated set excludes by derivation, not by list: the catalog action's name is empty, and single-word names are ordinary English (`view`). Left open by choice, named in code: pasted log text quoting an imperative, and dashboard talk ("check the get_map panel"); closing either needs a word list that would rot. Every guard was ablated alone, red alone, with a typecheck. No live steer has hit it yet.
+Also rejected, each now an accept case: substring search (fires inside `find_routes_v2`), inflected verbs, sentence-wide negation. The gated set excludes by derivation: the empty catalog name, the ordinary-English `view`. Three false positives stay open, named in code. Every guard ablated alone, red alone, with a typecheck. No live steer has hit it.

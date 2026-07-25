@@ -7,12 +7,13 @@ import { REGISTRY } from "../src/registry/actions";
 // itself reports the fake. Spreading now captures the genuine exports.
 const REAL_ACTIONS = { ...realActions };
 import {
-  CLAUSE_JOINERS,
   DIRECTIVE_VERBS,
   GATED_QUERY_ACTIONS,
+  LEAD_IN_JOINERS,
   findDirectedQueryAction,
   queryActionRejectionDetail,
 } from "../src/server/instruct-gate";
+import { PlanStepSchema } from "../src/registry/plan";
 
 // #527. The gate exists because five operator steers ordered a query action,
 // which the mutations-only planner cannot plan, so the instruction never
@@ -167,13 +168,46 @@ describe("steers that MUST be accepted", () => {
     // not open with a directive.
     "Did you run get_status before you jumped?",
 
+    // --- Round 3 regression suite: A JOINER COMBINED WITH A NEGATION, AND A
+    // JOINER COMBINED WITH A SUBJECT. The revision this replaced made the
+    // seven joiners CLAUSE BOUNDARIES, which stranded whatever preceded them
+    // and rejected every steer below. The blind spot was structural: the
+    // accept table had no vector pairing a joiner with either shape, so the
+    // five first-person vectors above passed only because none of them
+    // contains a joiner. Compare "We normally run find_route ourselves" (which
+    // shipped, green) against "I handle the routing and run find_route" (same
+    // class, one `and` apart, rejected).
+
+    // NEGATION STRANDED BEHIND A JOINER. The module's documented contract says
+    // a negation between the verb and the mention must be accepted; a boundary
+    // at the joiner put the negation in the PREVIOUS clause, so the matcher
+    // never saw it. Each of these steers the pilot AWAY from the query.
+    "Do not dock and run get_status.",
+    "Do not undock and run find_route.",
+    "Don't jump and run get_nearby.",
+    "Never dock and call view_market.",
+    "Avoid the station and check get_status there.",
+    "Do not refuel and run get_status until I say so.",
+    "Never undock and run find_route on your own.",
+    "Do not mine and then run get_cargo.",
+
+    // SUBJECT STRANDED BEHIND A JOINER. First-person narration where the
+    // pronoun sits before the joiner and the verb after it. All five are the
+    // operator saying they handle the lookup themselves.
+    "I handle the routing and run find_route before every steer.",
+    "I use the map myself and also run get_status on my side.",
+    "We watch the market and check view_market every hour on our end.",
+    "I keep my own charts and then run find_route when I need to.",
+    "We track the hold ourselves and also check get_cargo each tick.",
+
     // KNOWN LIMITS, listed here because they belong to this suite even though
-    // the gate still gets them wrong. Pasted log text and dashboard talk still
-    // reject; see the KNOWN LIMITS block in instruct-gate.ts for why closing
-    // them costs more mechanism than the failure is worth. They are NOT
-    // asserted either way, so fixing them later needs no edit here.
+    // the gate still gets them wrong. All three still reject; see the KNOWN
+    // LIMITS block in instruct-gate.ts for why closing them costs more
+    // mechanism than the failure is worth. They are NOT asserted either way,
+    // so fixing them later needs no edit here.
     //   "Fix this: call find_route failed with no_route. Just jump to duskmere."
     //   "Check the get_map panel on my dashboard, then jump."
+    //   "Then use find_route was the old steer, ignore it."
   ])("%s", (text) => {
     expect(findDirectedQueryAction(text)).toBe(null);
   });
@@ -195,17 +229,61 @@ describe("the two word lists the rule stands on", () => {
 
   test("the two lists are exactly these words", () => {
     expect([...DIRECTIVE_VERBS]).toEqual(VERBS);
-    expect([...CLAUSE_JOINERS]).toEqual(JOINERS);
+    expect([...LEAD_IN_JOINERS]).toEqual(JOINERS);
   });
 
   test.each(VERBS)("%s find_route is a directive", (verb) => {
     expect(findDirectedQueryAction(`${verb} find_route on gold_run`)).toBe("find_route");
   });
 
-  // Each joiner starts a new clause, so an imperative behind one is still an
-  // imperative: "dock and run get_status" is an order however short the run-up.
-  test.each(JOINERS)("dock %s run get_status is a directive", (joiner) => {
-    expect(findDirectedQueryAction(`dock ${joiner} run get_status`)).toBe("get_status");
+  // A joiner in FRONT of an imperative is skipped, so the order behind it is
+  // still an order. The full stop is what starts the new clause here -- which
+  // is exactly the difference from the boundary rule this replaced, where the
+  // joiner itself started one and stranded everything before it.
+  test.each(JOINERS)("dock and refuel. %s run get_status is a directive", (joiner) => {
+    expect(findDirectedQueryAction(`dock and refuel. ${joiner} run get_status`)).toBe("get_status");
+  });
+
+  // The other half of the same mechanism, and the one that fails if `start`
+  // stops advancing past joiners: two stacked joiners before the verb.
+  test("stacked lead-in joiners are all skipped", () => {
+    expect(findDirectedQueryAction("dock and refuel. and then please run get_status")).toBe("get_status");
+  });
+
+  // THE TRADE, pinned so it cannot be reverted by accident. A second
+  // imperative hanging off a joiner MID-clause is deliberately NOT seen: the
+  // boundary rule that caught these two stranded every negation and every
+  // subject sitting in front of a joiner (16 false positives on a 63-steer
+  // corpus, against 4 for this rule). See KNOWN LIMITS in instruct-gate.ts.
+  // If someone reinstates the boundary rule, these go red and point at the
+  // reason rather than at a bare expectation flip.
+  test.each([
+    "dock and run get_status",
+    "jump to gold_run then call view_market",
+  ])("mid-clause compound imperative is knowingly accepted: %s", (text) => {
+    expect(findDirectedQueryAction(text)).toBe(null);
+  });
+});
+
+// The #527 seam (docs/wiki/seam-manifest.md). The gate's whole premise is that
+// a gated action CANNOT become a plan step. That premise lives in plan.ts, not
+// here, and nothing in the type system ties the two together -- so this test
+// re-derives the plannable vocabulary from plan.ts's OWN schema (its union
+// members, not the predicate that built them) and asserts the gate never
+// blocks anything on it.
+//
+// Catches: plan.ts growing an exception -- a query action hand-added to the
+// union the way travel_to already is -- which would leave the gate rejecting a
+// steer the planner could now actually plan. The sibling "no mutation is ever
+// gated" test above cannot catch that: it re-derives from REGISTRY and never
+// reads plan.ts at all.
+describe("the gate never blocks something plan.ts can plan", () => {
+  test("no plannable step action is in the gated set", () => {
+    const plannable = PlanStepSchema.options.map(
+      (o) => (o as unknown as { shape: { action: { value: string } } }).shape.action.value,
+    );
+    expect(plannable.length).toBeGreaterThan(10); // the union really was read
+    expect(plannable.filter((name) => GATED_QUERY_ACTIONS.includes(name))).toEqual([]);
   });
 });
 

@@ -88,34 +88,47 @@ const NEGATIONS = new Set([
 const DIRECTIVE_WINDOW = 3;
 
 /**
- * Where one clause ends and the next begins. Punctuation, plus the small set
- * of words whose only job is to join a following clause to the one before it.
+ * Small words that can sit in FRONT of an imperative without changing that it
+ * is one: "then run get_status" is the same order as "run get_status". The
+ * matcher skips them when it looks for the clause-initial verb.
  *
- * Those joiners are boundaries rather than skippable lead-ins because that is
- * one rule doing both jobs. As a lead-in it makes "dock and refuel. then run
- * get_nearby" a directive; as a boundary it ALSO makes "dock and run
- * get_status" one, which a punctuation-only split would miss and which the
- * previous revision of this gate caught. Same seven words, one mechanism.
+ * They are a skipped LEAD-IN, not a clause boundary. A previous revision made
+ * them boundaries, on the reasoning that one mechanism could do both jobs --
+ * catching "dock and refuel. then run get_nearby" AND "dock and run
+ * get_status". It does, and the second job costs far more than it pays,
+ * because a boundary STRANDS whatever preceded the joiner:
  *
- * The comma and colon matter as much as the full stop: "check your fuel,
- * get_status said 2 units left" is a report riding on the back of an unrelated
- * imperative, and splitting only on [.!?;] rejected it.
+ *   "Do not dock and run get_status."  -> the negation is in clause 1, the
+ *      matcher only ever sees "run get_status", and a steer telling the pilot
+ *      to STAY PUT is rejected as an order.
+ *   "I handle the routing and run find_route before every steer." -> the
+ *      subject is in clause 1, so first-person narration reads as an order.
+ *
+ * Measured on 63 steers (the suite below plus a reviewer attack set): as a
+ * boundary, 18 false positives; as a lead-in, 4. The boundary bought exactly
+ * two true rejects. See the trade recorded in KNOWN LIMITS.
+ *
+ * The punctuation split stays, and the comma and colon matter as much as the
+ * full stop: "check your fuel, get_status said 2 units left" is a report
+ * riding on the back of an unrelated imperative, and splitting only on [.!?;]
+ * rejected it.
  *
  * Exported so the test iterates this array rather than a copy of it: a joiner
  * added here is covered the moment it is added.
  */
-export const CLAUSE_JOINERS: readonly string[] = ["please", "then", "now", "also", "and", "first", "next"];
+export const LEAD_IN_JOINERS: readonly string[] = ["please", "then", "now", "also", "and", "first", "next"];
 
-const CLAUSE_BREAK = new RegExp(`[.!?;,:\\n]+|\\b(?:${CLAUSE_JOINERS.join("|")})\\b`);
+const JOINERS = new Set(LEAD_IN_JOINERS);
+const CLAUSE_BREAK = /[.!?;,:\n]+/;
 // Underscore and apostrophe are word characters here: `find_route` must stay
 // one token (so a substring of a longer identifier can never match), and
 // `don't` must stay one token (so the negation survives tokenisation).
 const TOKEN = /[a-z0-9_'’]+/g;
 
 /**
- * THE RULE, in one sentence: reject only when a clause BEGINS with a base-form
- * directive verb and a gated action name falls within the next three words,
- * with no negation in between.
+ * THE RULE, in one sentence: reject only when a clause BEGINS -- after any
+ * lead-in joiner -- with a base-form directive verb, and a gated action name
+ * falls within the next three words with no negation in between.
  *
  * Clause-initial is the whole idea, and it is what makes the rule small. An
  * imperative in English starts its clause -- that is what distinguishes an
@@ -134,9 +147,12 @@ const TOKEN = /[a-z0-9_'’]+/g;
  *     whole sentence, which is what let "run find_route; that was my mistake,
  *     drop it" -- the operator's own remedy for this very bug -- be rejected.
  *
- * KNOWN LIMITS, accepted rather than closed. Two shapes still reject wrongly,
- * and both would cost a list of report-verbs or dashboard-nouns to fix, which
- * is more mechanism than the failure is worth:
+ * KNOWN LIMITS, accepted rather than closed. This list is meant to be
+ * EXHAUSTIVE -- it is the whole value of the block, so a shape that starts
+ * rejecting wrongly gets added here rather than left for the next reader to
+ * rediscover at 3am. Three shapes reject wrongly today, and all three would
+ * cost a list of report-verbs or dashboard-nouns to fix, which is more
+ * mechanism than the failure is worth:
  *
  *   1. Pasted log or error text where the quoted line is itself an imperative:
  *      "Fix this: call find_route failed with no_route." The operator is
@@ -145,8 +161,13 @@ const TOKEN = /[a-z0-9_'’]+/g;
  *   2. Dashboard talk that names a panel after an imperative: "check the
  *      get_map panel on my dashboard". Genuinely ambiguous -- the same words
  *      are a real directive if there is no dashboard.
+ *   3. A clause that opens with a lead-in joiner and then uses a base-form
+ *      verb as a NOUN: "Then use find_route was the old steer, ignore it."
+ *      Skipping the joiner lands the matcher on `use`, which is doing subject
+ *      duty, not ordering anything. Present under the old boundary rule too,
+ *      so this is a pre-existing limit made visible, not a regression.
  *
- * In both cases the operator gets a 400 that names the offending word and
+ * In all three the operator gets a 400 that names the offending word and
  * shows the rewrite, so the cost is one rephrase, not a silent failure.
  *
  * Deliberately accepted false negatives, each the price of a false positive
@@ -155,14 +176,36 @@ const TOKEN = /[a-z0-9_'’]+/g;
  * report; inflected verbs ("using find_route"); hyphenated or pluralised
  * spellings; and the single-word `view` action.
  *
+ * TWO MORE FALSE NEGATIVES, BOUGHT ON PURPOSE in the revision that made the
+ * joiners a lead-in rather than a clause boundary. Both of these are real
+ * orders and both are now accepted:
+ *
+ *     "dock and run get_status"
+ *     "jump to gold_run then call view_market"
+ *
+ * A second imperative hanging off a joiner MID-CLAUSE is no longer seen. That
+ * is the deal, stated as a decision rather than left as a gap: the boundary
+ * rule that caught these two also rejected 16 legitimate steers out of a
+ * 63-steer corpus -- every "do not X and run <query>" (the negation strands in
+ * the clause before the joiner) and every "I do X myself and run <query>" (the
+ * subject strands the same way). Four false positives remain under the lead-in
+ * rule. Against a gate whose stated premise is that FALSE POSITIVES ARE THE
+ * EXPENSIVE FAILURE, and which already accepts worse false negatives than
+ * these two, 14 recovered steers for 2 missed orders is the right side of the
+ * trade. Full measurement in docs/decisions.md.
+ *
  * @returns the offending action name, or null to accept.
  */
 export function findDirectedQueryAction(text: string): string | null {
   for (const clause of text.toLowerCase().split(CLAUSE_BREAK)) {
     const tokens = clause.match(TOKEN);
+    if (!tokens) continue;
+    // Skip any lead-in joiners to find the word the clause really starts on.
+    let start = 0;
+    while (start < tokens.length && JOINERS.has(tokens[start]!)) start++;
     // Not an imperative: the clause opens with something other than an order.
-    if (!tokens || !DIRECTIVE_VERBS.has(tokens[0]!)) continue;
-    for (let i = 1; i <= DIRECTIVE_WINDOW && i < tokens.length; i++) {
+    if (start >= tokens.length || !DIRECTIVE_VERBS.has(tokens[start]!)) continue;
+    for (let i = start + 1; i <= start + DIRECTIVE_WINDOW && i < tokens.length; i++) {
       const token = tokens[i]!;
       // "do not run find_route" -> steering the pilot AWAY from the query.
       if (NEGATIONS.has(token)) break;
