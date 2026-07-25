@@ -324,8 +324,8 @@ export function startDashboardServer(opts: DashboardServerOptions): DashboardSer
           return Response.json({ error: "invalid_body", detail: parsed.error.message }, { status: 400 });
         }
         // #527: a steer that ORDERS a query action is structurally unplannable
-        // (the planner's vocabulary is mutations-only), so it never retires and
-        // re-raises into every later plan. Reject it here, at the same boundary
+        // (the planner's vocabulary is mutations-only), so nothing marks it done
+        // and it re-raises into every later plan. Reject it here, at the same boundary
         // and in the same 400 shape as the length bound above, while the
         // operator is still typing. See src/server/instruct-gate.ts for the
         // matching rule and the false negatives it accepts on purpose.

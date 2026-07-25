@@ -9,8 +9,10 @@ import { REGISTRY } from "../registry/actions";
  * from `REGISTRY.filter(a => a.kind === "mutation")`, and PlanStepSchema is
  * generated from the same filter. So a steer that tells the pilot to run a
  * QUERY action is structurally unplannable: the model either drops it or emits
- * a step the plan schema rejects, the instruction never retires, and it
- * re-raises into every later plan until a human notices and supersedes it.
+ * a step the plan schema rejects. Nothing marks the instruction done, so it
+ * re-raises into every later plan until a human notices and supersedes it, or
+ * until five newer steers evict it from the goal window (agent.ts MAX_GOALS).
+ * In practice that is the rest of the session.
  * Five occurrences, the last one from the PM's own seat ("Use find_route with
  * id gold_run"). Prose guidance failed five times, so it becomes a gate:
  * reject at the boundary and hand the operator a 400 while they are still
@@ -59,17 +61,17 @@ const GATED = new Set(GATED_QUERY_ACTIONS);
  * something the operator already did, and English marks the difference with
  * tense. No inflected forms here, ever.
  */
-const DIRECTIVE_VERBS = new Set([
+export const DIRECTIVE_VERBS = new Set([
   "use", "run", "call", "execute", "perform", "issue", "invoke",
   "do", "try", "check", "query", "fetch", "request", "send", "start",
 ]);
 
 /**
- * Negation cues. Any of these BEFORE the action mention, in the same sentence,
- * flips the reading from "do this" to "do not do this" -- which is a perfectly
- * good steer and must be accepted. Scoped to before-the-mention rather than
- * anywhere-in-the-sentence so that "Use find_route on gold_run, don't waste
- * fuel" is still caught.
+ * Negation cues. Any of these between the verb and the action mention flips
+ * the reading from "do this" to "do not do this" -- a perfectly good steer
+ * that must be accepted. "do not run find_route" is the shape: the clause does
+ * open with a directive verb, and only the negation tells it apart from a real
+ * order.
  */
 const NEGATIONS = new Set([
   "not", "no", "never", "none", "nor", "without", "avoid", "skip",
@@ -78,57 +80,93 @@ const NEGATIONS = new Set([
 ]);
 
 /**
- * A first-person subject in front of the verb makes it narration, not an
- * order: "I use find_route to sanity-check the map" is the operator telling
- * the pilot how THEY work, and rejecting it would be a false positive.
- */
-const DESCRIPTIVE_SUBJECTS = new Set(["i", "i've", "i’ve", "ive", "we", "we've", "we’ve", "weve"]);
-
-/**
- * How far in front of the action name a directive verb still binds to it.
- * Three covers "use find_route", "run the find_route action", and "call the
- * game's find_route"; beyond that the verb is plausibly governing a different
- * clause and the safe reading is to accept.
+ * How far after the directive verb the action name still binds to it. Three
+ * covers "use find_route", "run the find_route action", and "call the game's
+ * find_route"; beyond that the name is plausibly the object of something else
+ * and the safe reading is to accept.
  */
 const DIRECTIVE_WINDOW = 3;
 
-const SENTENCE_SPLIT = /[.!?;\n]+/;
+/**
+ * Where one clause ends and the next begins. Punctuation, plus the small set
+ * of words whose only job is to join a following clause to the one before it.
+ *
+ * Those joiners are boundaries rather than skippable lead-ins because that is
+ * one rule doing both jobs. As a lead-in it makes "dock and refuel. then run
+ * get_nearby" a directive; as a boundary it ALSO makes "dock and run
+ * get_status" one, which a punctuation-only split would miss and which the
+ * previous revision of this gate caught. Same seven words, one mechanism.
+ *
+ * The comma and colon matter as much as the full stop: "check your fuel,
+ * get_status said 2 units left" is a report riding on the back of an unrelated
+ * imperative, and splitting only on [.!?;] rejected it.
+ *
+ * Exported so the test iterates this array rather than a copy of it: a joiner
+ * added here is covered the moment it is added.
+ */
+export const CLAUSE_JOINERS: readonly string[] = ["please", "then", "now", "also", "and", "first", "next"];
+
+const CLAUSE_BREAK = new RegExp(`[.!?;,:\\n]+|\\b(?:${CLAUSE_JOINERS.join("|")})\\b`);
 // Underscore and apostrophe are word characters here: `find_route` must stay
 // one token (so a substring of a longer identifier can never match), and
 // `don't` must stay one token (so the negation survives tokenisation).
 const TOKEN = /[a-z0-9_'’]+/g;
 
 /**
- * THE RULE, in one sentence: reject only when a registry query action's exact
- * snake_case name appears as a whole word within three words after a
- * base-form directive verb ("use", "run", "call", ...), in a sentence with no
- * negation before that mention and no first-person subject in front of the
- * verb.
+ * THE RULE, in one sentence: reject only when a clause BEGINS with a base-form
+ * directive verb and a gated action name falls within the next three words,
+ * with no negation in between.
  *
- * Deliberately accepted (false negatives, each the price of a false positive
- * avoided): a bare imperative with no verb ("find_route to Duskmere then
- * jump") -- because "find_route returned nothing" has the identical shape and
- * is a report; inflected verbs ("using find_route"); hyphenated or pluralised
- * spellings ("find-route", "find_routes"); the single-word `view` action; and
- * any directive that a negation elsewhere in the sentence makes ambiguous.
+ * Clause-initial is the whole idea, and it is what makes the rule small. An
+ * imperative in English starts its clause -- that is what distinguishes an
+ * order from every other thing a sentence can do with the same verb. So the
+ * position of the verb carries the work that an earlier revision tried to do
+ * with lookaside lists, and those lists are gone:
+ *
+ *   - No first-person guard. A clause that begins "I ...", "we ...", "your
+ *     last instruction ..." does not begin with a base verb, so narration is
+ *     excluded by construction rather than by a set of pronouns that one
+ *     adverb ("I ALREADY use find_route") walked straight past.
+ *   - No backward scan for the verb. Looking three words back from the name
+ *     found verbs sitting in someone else's clause; looking forward from a
+ *     clause-initial verb cannot.
+ *   - Negation is checked only between the verb and the name, not across the
+ *     whole sentence, which is what let "run find_route; that was my mistake,
+ *     drop it" -- the operator's own remedy for this very bug -- be rejected.
+ *
+ * KNOWN LIMITS, accepted rather than closed. Two shapes still reject wrongly,
+ * and both would cost a list of report-verbs or dashboard-nouns to fix, which
+ * is more mechanism than the failure is worth:
+ *
+ *   1. Pasted log or error text where the quoted line is itself an imperative:
+ *      "Fix this: call find_route failed with no_route." The operator is
+ *      quoting the game, not ordering the pilot, but the quoted fragment is
+ *      shaped exactly like an order.
+ *   2. Dashboard talk that names a panel after an imperative: "check the
+ *      get_map panel on my dashboard". Genuinely ambiguous -- the same words
+ *      are a real directive if there is no dashboard.
+ *
+ * In both cases the operator gets a 400 that names the offending word and
+ * shows the rewrite, so the cost is one rephrase, not a silent failure.
+ *
+ * Deliberately accepted false negatives, each the price of a false positive
+ * avoided: a bare imperative with no verb ("find_route to Duskmere then jump")
+ * -- because "find_route returned nothing" has the identical shape and is a
+ * report; inflected verbs ("using find_route"); hyphenated or pluralised
+ * spellings; and the single-word `view` action.
  *
  * @returns the offending action name, or null to accept.
  */
 export function findDirectedQueryAction(text: string): string | null {
-  for (const sentence of text.toLowerCase().split(SENTENCE_SPLIT)) {
-    const tokens = sentence.match(TOKEN);
-    if (!tokens) continue;
-    for (let i = 0; i < tokens.length; i++) {
+  for (const clause of text.toLowerCase().split(CLAUSE_BREAK)) {
+    const tokens = clause.match(TOKEN);
+    // Not an imperative: the clause opens with something other than an order.
+    if (!tokens || !DIRECTIVE_VERBS.has(tokens[0]!)) continue;
+    for (let i = 1; i <= DIRECTIVE_WINDOW && i < tokens.length; i++) {
       const token = tokens[i]!;
-      if (!GATED.has(token)) continue;
-      // Negated earlier in this sentence -> the operator is steering the pilot
-      // AWAY from the query. Accept.
-      if (tokens.slice(0, i).some((t) => NEGATIONS.has(t))) continue;
-      for (let j = Math.max(0, i - DIRECTIVE_WINDOW); j < i; j++) {
-        if (!DIRECTIVE_VERBS.has(tokens[j]!)) continue;
-        if (j > 0 && DESCRIPTIVE_SUBJECTS.has(tokens[j - 1]!)) continue;
-        return token;
-      }
+      // "do not run find_route" -> steering the pilot AWAY from the query.
+      if (NEGATIONS.has(token)) break;
+      if (GATED.has(token)) return token;
     }
   }
   return null;
@@ -156,7 +194,7 @@ export function queryActionRejectionDetail(action: string): string {
     `The planner can only be told to take MUTATIONS -- actions that change the world ` +
     `(${MUTATION_EXAMPLES}, ...). Query actions are read-only lookups the harness already ` +
     `runs on its own and folds into the pilot's briefing, so a plan step naming one is ` +
-    `rejected by the plan schema: the instruction never completes and re-raises into every ` +
+    `rejected by the plan schema. Nothing marks the instruction done, so it re-raises into every ` +
     `later plan until a human supersedes it. Rewrite it as the OUTCOME you want ` +
     `("get to a station and refuel") or as the MUTATION to take ("jump to gold_run, then ` +
     `dock and refuel"). If you are describing a lookup you already did yourself, drop the ` +
