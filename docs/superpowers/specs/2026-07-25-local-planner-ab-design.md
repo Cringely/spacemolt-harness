@@ -20,12 +20,12 @@ The pilot's planner and the dev fleet share one Claude subscription quota. The p
 
 ## Environment (measured 2026-07-25)
 
-- LM Studio installed. CLI at `C:\Users\jcgam\.lmstudio\bin\lms.exe`.
+- LM Studio installed on the operator workstation. CLI at `%USERPROFILE%\.lmstudio\bin\lms.exe`.
 - **One LLM downloaded:** `google/gemma-4-12b-qat` — GGUF, Q4_0 (quantization-aware trained), 12B params, `gemma4` arch, 7.15 GB, `maxContextLength` 262144, `vision: true`, `trainedForToolUse: false`. Served id is the model key: `google/gemma-4-12b-qat`.
 - Also present: `text-embedding-nomic-embed-text-v1.5`. Not relevant to planning.
 - LM Studio server NOT currently running (nothing answers `127.0.0.1:1234`).
-- Workstation LAN address `10.0.1.74` (Ethernet 3). Hardware per #240: RX 7900 XTX 24 GB, 96 GB RAM, Ryzen 7 7800X3D. 7.15 GB leaves roughly 16 GB VRAM headroom.
-- **Network path PROVEN.** TrueNAS (`10.0.0.150`) routes to the workstation on the same bridge (`10.0.1.74 dev br0 src 10.0.0.150`). TCP 3389 connects both from the TrueNAS host and from inside the `spacemolt-harness` container. ICMP fails, which is Windows blocking ping and not a routing fault.
+- Workstation has a LAN address on the same bridge as the pilot host. Hardware per #240: RX 7900 XTX 24 GB, 96 GB RAM, Ryzen 7 7800X3D. 7.15 GB leaves roughly 16 GB VRAM headroom. (Concrete addresses are homelab-private; see the operator's `lm-studio-local-planner` note.)
+- **Network path PROVEN.** The pilot host routes to the workstation directly over the shared bridge. TCP 3389 connects both from the pilot host and from inside the `spacemolt-harness` container. ICMP fails, which is Windows blocking ping and not a routing fault.
 - TCP 1234 from the container: TIMEOUT. Consistent with no listener plus a Windows Firewall default drop. A firewall rule is required; the route is not in question.
 
 `trainedForToolUse: false` is not disqualifying here. We need schema-conforming JSON, not tool calls, and LM Studio grammar-constrains generation against `PLAN_JSON_SCHEMA`.
@@ -88,7 +88,7 @@ Only on a Stage 1 pass. The existing `miner` agent switches planner; no second a
 A fresh second pilot was considered and rejected: a new account starts with a starter ship, no skills and no credits, against a pilot with 386,977 lifetime credits earned, level-6 trading and a fitted ship. The dominant variable would be account age, not model quality, and the two effects cannot be separated after the fact.
 
 ```yaml
-planner: { provider: openai-compat, model: google/gemma-4-12b-qat, base_url: "http://10.0.1.74:1234" }
+planner: { provider: openai-compat, model: google/gemma-4-12b-qat, base_url: "http://<workstation-lan-ip>:1234" }
 fallback_planner: { provider: claude-subscription, model: sonnet }
 experiment: { revert_if_no: any, within_hours: 12 }
 ```
@@ -159,4 +159,4 @@ Test 4 is the one that protects a real invariant rather than a mechanism; if onl
 1. `lms server start` with the server bound to `0.0.0.0:1234` rather than localhost.
 2. Load `google/gemma-4-12b-qat`.
 3. Allow inbound TCP 1234 in Windows Firewall for the local subnet only, not `Any`. The listener is an unauthenticated LLM endpoint; `api_key_file` support exists in `openai-compat.ts` if a key is wanted later, and a key never appears inline in `agents.yaml` per `security-baseline.md`.
-4. Confirm from inside the pilot container that `10.0.1.74:1234` answers, using the same TCP probe that already proved 3389 reachable.
+4. Confirm from inside the pilot container that the workstation's port 1234 answers, using the same TCP probe that already proved 3389 reachable.
