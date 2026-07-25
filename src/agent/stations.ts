@@ -190,8 +190,9 @@ export function knownStationSystems(
 ): StationSighting[] {
   // No cap here. The map is already bounded twice -- evictOldest on every
   // write, the SQL LIMIT on every reload -- so a third `.slice(0, MAX)` could
-  // never bind, which is exactly why raising the SQL limit to 100 left the
-  // whole suite green (PR #18 review addendum). An unreachable guard makes the
+  // never bind. Before the cap tests below existed, raising the SQL limit to
+  // 100 left the whole suite green -- that is what exposed the redundancy; the
+  // suite catches it now. An unreachable guard makes the
   // reachable one untestable; the same redundant-trim shape was deleted from
   // the constructor last round for the same reason.
   return [...sightings.values()]
