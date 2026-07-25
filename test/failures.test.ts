@@ -119,7 +119,7 @@ describe("failureTaxonomy: window class frequency table", () => {
     expect(nb.sample).toBe("Sold 0 Vanadium Ore for 0cr, 20 unsold (no buyers)"); // latest raw text, not the class
   });
 
-  test("blocked events before the window feed lifetime signals but not the window table", () => {
+  test("blocked events before the window stay out of the window table (and out of the findings, #518)", () => {
     const events = [
       blocked(NOW - 30 * HOUR, "buy", "invalid_item: Unknown item 'fuel_cells'."),
       blocked(NOW - 29 * HOUR, "buy", "invalid_item: Unknown item 'fuel_cells'."),
@@ -128,8 +128,10 @@ describe("failureTaxonomy: window class frequency table", () => {
       blocked(NOW - 26 * HOUR, "buy", "invalid_item: Unknown item 'fuel_cells'."),
     ];
     const t = failureTaxonomy("a1", events, NOW, 24);
-    expect(t.classes).toEqual([]); // nothing blocked inside 24h
-    expect(t.brokenCapabilities.map((b) => b.action)).toEqual(["buy"]); // lifetime signal still fires
+    expect(t.classes).toStrictEqual([]); // nothing blocked inside 24h
+    // #518: a history that stopped before the window is history, not a current
+    // capability defect. The window covers the finding as well as the table.
+    expect(t.brokenCapabilities).toStrictEqual([]);
   });
 });
 
@@ -153,8 +155,11 @@ describe("failureTaxonomy: broken capabilities (the 86/86 buy signal)", () => {
         "invalid_item: Unknown item 'fuel_cells'. Use exact item ID (e.g. 'iron_ore') or full name (e.g. 'Iron Ore')."));
     }
     const t = failureTaxonomy("a1", events, NOW, 24);
-    expect(t.brokenCapabilities).toEqual([
-      { action: "buy", attempts: 6, failures: 6, failureRate: 1, topClass: "invalid_item" },
+    expect(t.brokenCapabilities).toStrictEqual([
+      {
+        action: "buy", attempts: 6, failures: 6, failureRate: 1,
+        windowAttempts: 6, windowFailures: 6, topClass: "invalid_item",
+      },
     ]);
   });
 
@@ -184,6 +189,85 @@ describe("failureTaxonomy: broken capabilities (the 86/86 buy signal)", () => {
     const t = failureTaxonomy("a1", events, NOW, 24);
     // If waits counted as successes, 5/15 = 0.33 and the flag would vanish.
     expect(t.brokenCapabilities.map((b) => [b.action, b.attempts, b.failureRate])).toEqual([["buy", 5, 1]]);
+  });
+});
+
+// #518: the reviewer files "broken capability, ~100% failure over 72h" findings
+// off this list, so a finding whose numerator and denominator come from
+// different spans is a false claim published into the backlog (issue #491 filed
+// `scan 27/27` with ZERO scan attempts in the claimed window, and
+// `survey_system 11/11` while its two most recent attempts had SUCCEEDED).
+// Each fixture below is built so the lifetime answer and the window answer
+// genuinely DIFFER -- a fixture where they agree cannot fail.
+describe("failureTaxonomy: a broken-capability finding is bounded by its window (#518)", () => {
+  test("an action last attempted before the window is not a current broken capability", () => {
+    // The #491 `scan` shape: heavy failure history, last attempt 11 days back.
+    const events = Array.from({ length: 27 }, (_, i) =>
+      blocked(NOW - (200 + i) * HOUR, "scan", "invalid_target: No such target here."));
+    const t = failureTaxonomy("a1", events, NOW, 72);
+    // Lifetime says 27/27 = 100% broken. The window says: not attempted.
+    expect(t.brokenCapabilities).toStrictEqual([]);
+  });
+
+  test("recent successes veto a lifetime failure rate -- the window's evidence wins", () => {
+    // The #491 `survey_system` shape: a dead `no_scanner` history, then the
+    // scanner gets fitted and the action starts working. Lifetime is still
+    // 40/41 = 0.976 (above the rate floor); the window is 1/2 = 0.5.
+    const events = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        blocked(NOW - (100 + i) * HOUR, "survey_system", "no_scanner: You need a survey scanner.")),
+      blocked(NOW - 30 * HOUR, "survey_system", "no_scanner: You need a survey scanner."),
+      success(NOW - 2 * HOUR, "survey_system"),
+    ];
+    const t = failureTaxonomy("a1", events, NOW, 72);
+    expect(t.brokenCapabilities).toStrictEqual([]);
+  });
+
+  test("topClass names the failure the WINDOW saw, not the one lifetime history is dominated by", () => {
+    // A capability whose failure MODE changed: 40 pre-window `no_scanner`
+    // blocks (the scanner then gets fitted), and a fresh in-window `not_docked`
+    // breakage. Lifetime says no_scanner 40:3; the window says not_docked 3:0.
+    // The reviewer files `action N/N CLASS` verbatim, so a lifetime topClass on
+    // a window-gated entry files a no_scanner issue for a not_docked defect.
+    const events = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        blocked(NOW - (100 + i) * HOUR, "survey_system", "no_scanner: You need a survey scanner.")),
+      ...Array.from({ length: 3 }, (_, i) =>
+        blocked(NOW - (i + 1) * HOUR, "survey_system", "not_docked: You must be docked at a station to perform this action.")),
+    ];
+    const t = failureTaxonomy("a1", events, NOW, 72);
+    expect(t.brokenCapabilities).toStrictEqual([
+      {
+        action: "survey_system", attempts: 43, failures: 43, failureRate: 1,
+        windowAttempts: 3, windowFailures: 3, topClass: "not_docked",
+      },
+    ]);
+    // The window class table beside it agrees -- the finding and the table can
+    // never name different failures for the same window again.
+    expect(t.classes.map((r) => [r.class, r.count])).toStrictEqual([["not_docked", 3]]);
+  });
+
+  test("a capability still failing inside the window is reported, with window counts beside the lifetime ones", () => {
+    // The #158 signal this fix must NOT cost: an 86/86-style history that is
+    // STILL failing today. Only one attempt lands inside the window, so a
+    // purely-windowed rewrite (which would apply the 5-attempt floor to the
+    // window) drops it -- that is what this test forbids.
+    // The pre-window blocks carry a DIFFERENT class from the in-window one on
+    // purpose: with both the same, the topClass assertion below would hold
+    // whichever span produced it and could not fail. n=1 is also the tightest
+    // case for the in-window topClass -- one event has to carry it.
+    const events = [
+      ...Array.from({ length: 80 }, (_, i) =>
+        blocked(NOW - (100 + i) * HOUR, "buy", "no_credits: You cannot afford that.")),
+      blocked(NOW - 2 * HOUR, "buy", "invalid_item: Unknown item 'fuel_cells'."),
+    ];
+    const t = failureTaxonomy("a1", events, NOW, 72);
+    expect(t.brokenCapabilities).toStrictEqual([
+      {
+        action: "buy", attempts: 81, failures: 81, failureRate: 1,
+        windowAttempts: 1, windowFailures: 1, topClass: "invalid_item",
+      },
+    ]);
   });
 });
 
