@@ -13,6 +13,22 @@ export interface PlanCursor {
   iteration: number;
 }
 
+/**
+ * One row of the dock trail (see Store.dockTrail, issue #525) -- a position
+ * sample, a dock attempt, or a move, in the order they happened. Every field
+ * past `type`/`ts` comes straight out of json_extract, so it is `unknown` and
+ * the caller narrows: a payload written by an older build, or a game that
+ * reworded its prose, must not be able to type-lie its way into the pilot's map.
+ */
+export interface DockTrailRow {
+  type: string;
+  ts: number;
+  action: unknown;
+  systemId: unknown;
+  outcome: unknown;
+  result: unknown;
+}
+
 export class Store {
   private db: Database;
   /** Broadcast hook: dashboard server subscribes here (Plan 3). */
@@ -168,6 +184,100 @@ export class Store {
     return rows.reverse().map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
     }));
+  }
+
+  /**
+   * The agent's dock trail: every `status_snapshot`, every `dock` action and
+   * every MOVE (`jump`, `travel_to`) it has recorded, ascending, projected down
+   * to the six fields the station backfill reads (issue #525).
+   *
+   * WHY THE MOVES ARE IN HERE. A snapshot is emitted only on a WAKE tick, while
+   * plan steps also execute on non-wake ones, so a `[travel_to, dock]` plan puts
+   * a jump and its dock between two snapshots with nothing in between. The
+   * caller needs the moves to know the position it is carrying went stale (PR
+   * #22 review, F1); without them it attributes the dock to the system the ship
+   * LEFT.
+   *
+   * `travel` is deliberately NOT in that list, and it is the highest-consequence
+   * word in this query. The reference is explicit
+   * (docs/game-reference/upstream/docs/travel.md:3): "`travel` moves you between
+   * POIs inside a system, `jump` carries you along a lane to an adjacent
+   * system." An intra-system hop cannot invalidate a system id, and travel-then-
+   * dock is the NORMAL way to reach a station -- so treating it as a move would
+   * discard almost every dock we have. Measured on the production snapshot:
+   * 713 kept docks across 16 systems becomes 19 kept across 4, dropping 699 of
+   * 718. Both halves of that are pinned by tests in test/stations.test.ts; see
+   * "travel is a move WITHIN a system" there.
+   *
+   * WHY A RAW TRAIL AND NOT AN ANSWER. Where the ship WAS when a dock succeeded
+   * is not stored on the dock row -- all 482 historical docks in the live store
+   * carry `params: {}` -- so the system has to come from the nearest PRECEDING
+   * status_snapshot, and joining a row to its nearest predecessor is what SQL
+   * here is worst at. Two shapes were measured against the 98,920-event
+   * production snapshot:
+   *
+   *   correlated subquery (one statement, the obvious form):  9,713 ms
+   *   this projected trail + a linear walk in the caller:        45 ms
+   *
+   * 216x, and the reason is structural rather than tunable: idx_events_agent_ts
+   * is on (agent_id, ts), so the per-dock "latest snapshot before id N" lookup
+   * has no index to stand on and re-scans. Adding a covering index to make the
+   * elegant query fast would be new persisted state (and a migration) to save
+   * 45 ms once per process start -- and the caller now skips this read entirely
+   * once its map is full. Projecting in SQL rather than returning payloads is
+   * the other half of the win: the caller never parses the ~1 KB `progress`
+   * block that rides on every snapshot.
+   *
+   * The projection is deliberately untyped past `string | null`: json_extract
+   * returns whatever the payload held, and `result` in particular is game-
+   * authored text whose shape is not a contract. Callers narrow it themselves.
+   *
+   * SCHEMA TOLERANCE (AGENTS.md), and it is why the predicate is in this order.
+   * json_extract THROWS on text that is not JSON, so one hand-edited or
+   * half-written payload anywhere in the history would take down the boot path
+   * that reads this (PR #22 review, F2). `json_valid(payload)` in front of every
+   * json_extract discards that ONE row and lets the rest of the history load,
+   * which is what the convention asks for -- where catching the throw and
+   * returning nothing would silently delete the pilot's whole geography over a
+   * single bad byte.
+   *
+   * WHY `type IN (...)` LEADS, and the earlier justification for it was wrong.
+   * It was argued as correctness -- that a `reflex` row could carry
+   * `action: dock` and be misread as a plan dock. A reflex row cannot:
+   * `ReflexFire` types its action `"refuel" | "repair"` (src/agent/reflex.ts:9),
+   * so no typed reflex write can name a dock, and the row set is IDENTICAL with
+   * and without this clause (15,244 rows both ways against the production
+   * snapshot). The narrow correctness claim that survives is a seam contract
+   * rather than a live filter: `appendEvent` does not type its payload, so ANY
+   * event type can carry an `action` field, and the test below pins that by
+   * writing one directly. Real data has never contained one.
+   *
+   * It earns its place on PERFORMANCE instead, by more than was claimed. The
+   * cheap type test leads so json_valid and the json_extract behind it run on
+   * the ~15k rows that can qualify rather than all 99k: 45 ms with it against
+   * 72 ms without, median of 12 runs on the same snapshot. The json_valid
+   * tolerance sitting behind it is free at this point -- dropping it too moves
+   * nothing outside run-to-run noise, so the tolerance costs no measurable time
+   * once the type test has already narrowed the scan. A NULL payload is filtered
+   * by that same json_valid (json_valid(NULL) is NULL, not true) and a JSON
+   * scalar still passes it, yielding NULL columns the caller already narrows
+   * away -- both were inert here before and stay inert.
+   */
+  dockTrail(agentId: string): DockTrailRow[] {
+    return this.db
+      .query(`SELECT type, ts,
+                     json_extract(payload, '$.action')   AS action,
+                     json_extract(payload, '$.systemId') AS systemId,
+                     json_extract(payload, '$.outcome')  AS outcome,
+                     json_extract(payload, '$.result')   AS result
+              FROM events
+              WHERE agent_id = ?
+                AND type IN ('status_snapshot', 'action')
+                AND json_valid(payload)
+                AND (type = 'status_snapshot'
+                     OR json_extract(payload, '$.action') IN ('dock', 'jump', 'travel_to'))
+              ORDER BY id ASC`)
+      .all(agentId) as DockTrailRow[];
   }
 
   savePlan(agentId: string, plan: Plan, goals: string[]): void {

@@ -112,8 +112,10 @@ export interface BrokenCapability {
   action: string;
   attempts: number; // lifetime blocked + succeeded (waits excluded -- pacing, not attempts)
   failures: number; // lifetime blocked
-  failureRate: number; // failures / attempts
-  topClass: string; // dominant failure class for this action
+  failureRate: number; // failures / attempts, LIFETIME
+  windowAttempts: number; // blocked + succeeded INSIDE windowHours (always >= 1 here)
+  windowFailures: number; // blocked inside windowHours
+  topClass: string; // dominant failure class IN-WINDOW -- same span as windowFailures
 }
 
 export interface FailureTaxonomy {
@@ -142,6 +144,11 @@ interface ActionPayload {
  * `continue`/`plan_done` count as successes for the capability denominator;
  * `wait` (transient pacing, SM-10/SM-12) is neither -- the same semantics as
  * the #95 loop-breaker's counter in agent.ts.
+ *
+ * Broken capabilities carry BOTH pairs (lifetime and in-window) and are gated
+ * on both (#518): the lifetime pair is how deep the evidence goes, the window
+ * pair is whether it is still true. A reader that quotes one number against the
+ * other window is making a claim this data does not support.
  */
 export function failureTaxonomy(
   agentId: string,
@@ -153,7 +160,11 @@ export function failureTaxonomy(
 
   const firstSeen = new Map<string, number>(); // class -> earliest blocked ts (lifetime)
   const windowRows = new Map<string, { count: number; actions: Set<string>; lastSeenTs: number; sample: string }>();
-  const byAction = new Map<string, { failures: number; successes: number; classCounts: Map<string, number> }>();
+  const byAction = new Map<
+    string,
+    { failures: number; successes: number; winFailures: number; winSuccesses: number; classCounts: Map<string, number> }
+  >();
+  const newCap = () => ({ failures: 0, successes: 0, winFailures: 0, winSuccesses: 0, classCounts: new Map<string, number>() });
 
   for (const e of events) {
     const p = (e.payload && typeof e.payload === "object" ? e.payload : {}) as ActionPayload;
@@ -165,9 +176,21 @@ export function failureTaxonomy(
       const cls = failureClass(typeof p.result === "string" ? p.result : undefined);
       if (!firstSeen.has(cls)) firstSeen.set(cls, e.ts);
       if (action !== undefined) {
-        const cap = byAction.get(action) ?? { failures: 0, successes: 0, classCounts: new Map() };
+        const cap = byAction.get(action) ?? newCap();
         cap.failures++;
-        cap.classCounts.set(cls, (cap.classCounts.get(cls) ?? 0) + 1);
+        // Window-scoped, in lockstep with winFailures above -- topClass names
+        // the failure in a finding that is published as a window claim, so it
+        // has to come from the same span as the counts beside it (#518 review).
+        // Total, not just safer: the filter below drops any entry with
+        // winFailures === 0 (a rate over a non-zero denominator cannot reach
+        // 0.95 with a zero numerator), and this increment fires under exactly
+        // the same guard as winFailures, so every entry that SHIPS has at least
+        // one in-window class count and a real topClass. Entries left with the
+        // UNCLASSIFIED default are precisely the ones the filter discards.
+        if (e.ts >= cutoff) {
+          cap.winFailures++;
+          cap.classCounts.set(cls, (cap.classCounts.get(cls) ?? 0) + 1);
+        }
         byAction.set(action, cap);
       }
       if (e.ts >= cutoff) {
@@ -182,8 +205,9 @@ export function failureTaxonomy(
       }
     } else if (outcome === "continue" || outcome === "plan_done") {
       if (action !== undefined) {
-        const cap = byAction.get(action) ?? { failures: 0, successes: 0, classCounts: new Map() };
+        const cap = byAction.get(action) ?? newCap();
         cap.successes++;
+        if (e.ts >= cutoff) cap.winSuccesses++;
         byAction.set(action, cap);
       }
     }
@@ -209,9 +233,46 @@ export function failureTaxonomy(
       for (const [cls, n] of c.classCounts) {
         if (n > topCount || (n === topCount && cls < topClass)) { topClass = cls; topCount = n; }
       }
-      return { action, attempts, failures: c.failures, failureRate: attempts > 0 ? c.failures / attempts : 0, topClass };
+      return {
+        action, attempts, failures: c.failures,
+        failureRate: attempts > 0 ? c.failures / attempts : 0,
+        windowAttempts: c.winFailures + c.winSuccesses, windowFailures: c.winFailures,
+        topClass,
+      };
     })
-    .filter((c) => c.attempts >= BROKEN_CAPABILITY_MIN_ATTEMPTS && c.failureRate >= BROKEN_CAPABILITY_FAILURE_RATE)
+    // The lifetime pair is the DEPTH of the evidence (#158: the buy action's
+    // 86/86 accrued over days, invisible to any one window). The window pair is
+    // its CURRENCY, and #518 is what happens without it: the 6h strategy review
+    // reads this list and files "~100% failure over 72h" findings, so an entry
+    // whose numerator and denominator come from different spans is a false
+    // claim published into the backlog. Issue #491 filed `scan 27/27` with ZERO
+    // scan attempts inside the claimed window (last attempt eleven days back),
+    // and `survey_system 11/11` while its two most recent attempts had
+    // SUCCEEDED once the scanner was fitted. The window rate clause is the one
+    // that does the work, and it covers both halves:
+    //   - recent successes are the game telling us the capability works now,
+    //     and they must not be outvoted by a dead history;
+    //   - an action nobody tried recently is NOT ATTEMPTED, never 100% failed.
+    // The `windowAttempts > 0` clause is REDUNDANT today and kept deliberately:
+    // with a zero denominator the rate is 0/0 = NaN, and every NaN comparison
+    // is false, so the rate clause already excludes those entries -- by
+    // accident of IEEE-754, not by intent. Dropping the guard leaves the suite
+    // green (verified by deleting this line: 73 pass, 0 fail across
+    // failures/server/strategy-review-dump), which is exactly why it stays. An
+    // explicit "a rate with an empty denominator is not a rate" beats resting
+    // the not-attempted case on NaN semantics that a later reshape of the rate
+    // clause would silently take away. It is a guard, not a second filter.
+    // The window is deliberately NOT held to BROKEN_CAPABILITY_MIN_ATTEMPTS --
+    // that floor guards against "one bad afternoon" and the lifetime pair
+    // already carries it. Applying it here too was the simpler alternative
+    // (one filter clause, no new fields) and it is rejected: a capability
+    // failing slowly across days would fall under the floor in every 72h slice
+    // and vanish, which is exactly the 86/86 case #158 exists to catch.
+    .filter((c) =>
+      c.attempts >= BROKEN_CAPABILITY_MIN_ATTEMPTS
+      && c.failureRate >= BROKEN_CAPABILITY_FAILURE_RATE
+      && c.windowAttempts > 0
+      && c.windowFailures / c.windowAttempts >= BROKEN_CAPABILITY_FAILURE_RATE)
     .sort((a, b) => b.attempts - a.attempts || a.action.localeCompare(b.action));
 
   return { agentId, windowHours, classes, newClasses, brokenCapabilities };
