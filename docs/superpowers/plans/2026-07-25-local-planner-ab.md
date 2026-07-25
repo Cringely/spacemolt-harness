@@ -10,11 +10,14 @@
 
 **Source spec:** `docs/superpowers/specs/2026-07-25-local-planner-ab-design.md` (approved 2026-07-25). Issue: #240.
 
-**Revision 3 (2026-07-25).** Revision 2 was reviewed a second time by applying its code and running it. That review found a silent stall in exactly the condition Stage 2 creates (a local model that ANSWERS but returns plans that fail validation), a guard no ablation could redden, a complexity receipt written backwards, and Task 2/3 command lines that do not match the real eval CLI. Everything below has been applied verbatim in a throwaway worktree at `381b0c6` and measured: `bun test` 1451 pass / 1 skip / 0 fail, `tsc --noEmit` clean, all nine ablations observed RED with typecheck clean on every ablated tree. Three design changes came out of it, recorded here and not in the spec:
+**Revision 4 (2026-07-25).** Revision 3 went to a gate review that reproduced every number in it by running the code. The mechanism was confirmed correct. The review blocked on receipts that measurement falsifies, plus one real coverage hole. Every claim below has been re-measured from scratch on `5abff04` for this revision, not carried forward. What changed:
 
-1. `src/planner/openai-compat.ts` gains a request timeout. Its fetch carried no `AbortSignal`, so probing a sleeping endpoint blocked the whole tick. Fixing that producer let `ENDPOINT_RETRY_REPLANS` drop from 5 to 3.
-2. The retry window is counted in **replans**, not milliseconds. See "Why replans and not a wall clock".
-3. The spec's fourth test ("a reverted experiment outranks endpoint recovery") is deleted because it is unfalsifiable, NOT because the invariant it names is absent. See "The ordering test cannot fail, but the invariant is real".
+1. **The endpoint-down state is armed by a per-planner failure counter now, not by the shared transient counter.** Revision 3 armed only inside the `TransientPlannerError` branch, so a primary that answers HTTP 200 on every replan and returns plans that fail validation armed nothing at all. Measured over 30 heartbeat-spaced replans against revision 3's code: `primary.calls=25 fallback.calls=0`, zero `plan` events, 25 `planner_error` events, `plannerHealth.usingFallback=false` throughout. Revision 3's any-class re-arm could not rescue that shape, because the countdown never reached the 1 it keyed on. This is the likeliest Stage 2 failure (LM Studio up, `gemma-4-12b-qat` marginal), so it is fixed rather than documented. See "Why a per-primary failure counter".
+2. **`ENDPOINT_RETRY_REPLANS` stays 3, on a different receipt.** Revision 3's "a larger N buys nothing and costs money" is false. Every paid fallback call IS a plan, one for one, so N trades spend against plan-rate along a straight line with no knee in it. See "Why 3, and why it is a dial".
+3. **Three assertions in `test/experiment-revert.test.ts` are re-pointed.** That file's fixture planners throw a plain `Error`, which is precisely the shape change 1 now routes to the fallback, so `expect(fallback.calls).toBe(0)` stopped being a probe for "the experiment has not tripped". Each becomes TWO exact counts. The file is no longer untouched and the File Structure table says so.
+4. **Falsified receipts replaced by measurements, never by deletion.** The changes they justified all stay. `usingFallback` does not report the endpoint-down window. `USAGE_FETCH_TIMEOUT_MS` sits 40x below its stall unit, so 60s against a 10-second agent tick does not mirror its shape. Worst case per `plan()` is 2x the timeout. The ablation table's first row and the suite total were both wrong.
+
+Carried from revision 3 and re-verified here: `src/planner/openai-compat.ts` gains a request timeout (its fetch carried no `AbortSignal`, so probing a sleeping endpoint blocked the whole tick); the retry window is counted in **replans**, not milliseconds; and the spec's fourth test is deleted as unfalsifiable, NOT because the invariant it names is absent.
 
 ## Global Constraints
 
@@ -23,7 +26,7 @@
 - Commits carry the user's identity only. No AI co-author trailer, no "Generated with" footer, in commits or PR bodies.
 - The repo is PUBLIC. No LAN addresses, host names, or user-home paths in any committed file. Use role words and placeholders; concrete values go in `secrets/` or stay out of git. (Three prior leaks: `d0c09eb`, `3ed92e8`, `d2d5e05`. Issue #524 tracks the gate.)
 - A test counts only after you delete the guard it protects and watch it go red — and `bun test` does NOT typecheck, so an ablation naming a field that does not exist silently no-ops and reports GREEN. Typecheck every ablated tree before believing any red or green. `toEqual` ignores `undefined` array entries; prefer `toStrictEqual` on arrays whose failure mode is a dropped element.
-- `ENDPOINT_DOWN_THRESHOLD = 2` is the spec's pre-committed value. `ENDPOINT_RETRY_REPLANS = 3` replaces the spec's `ENDPOINT_RETRY_MS = 10 * 60_000`, for the reasons given in Task 1. Do not tune either to make a test pass.
+- `ENDPOINT_DOWN_THRESHOLD = 2` is the spec's pre-committed value. `ENDPOINT_RETRY_REPLANS = 3` replaces the spec's `ENDPOINT_RETRY_MS = 10 * 60_000`, for the reasons given in Task 1, and every tick count in Task 1's tests depends on it being 3. Do not tune either to make a test pass. Changing 3 later is a legitimate policy move (see "Why 3, and why it is a dial") and it re-derives the test counts; changing it mid-implementation to turn a red green is not.
 - Stage 1 margins are pre-committed and must not be revised after seeing a local-model number: no signal-carrying scorer regresses more than 15 points; `scoreGoalDiversity` does not regress at all; no scorer passes on abstentions alone; zero unparseable responses.
 
 ---
@@ -33,16 +36,17 @@
 | File | Responsibility | Change |
 |---|---|---|
 | `src/planner/openai-compat.ts` | The LM Studio seam | Modify: one exported constant, one option, an `AbortSignal` on the fetch, the body read moved inside the transient classification |
-| `src/agent/agent.ts` | Agent loop, planner selection, failure classification | Modify: one private field, two constants, `activePlanner()` branch, per-replan decrement, `handlePlannerFailure` signature + any-class re-arm + transient arm, primary-success recovery |
+| `src/agent/agent.ts` | Agent loop, planner selection, failure classification | Modify: two private fields, two constants, `activePlanner()` branch, per-replan decrement, `handlePlannerFailure` signature + per-primary failure count and arming, primary-success recovery and counter reset |
 | `test/planner-openai-compat.test.ts` | Planner wire behavior | Modify: one new test appended |
-| `test/agent-failure-classes.test.ts` | Planner failure classification behaviors | Modify: eight new tests appended |
+| `test/agent-failure-classes.test.ts` | Planner failure classification behaviors | Modify: ten new tests appended |
+| `test/experiment-revert.test.ts` | Deterministic A/B exit | Modify: three assertions re-pointed, each `expect(fallback.calls).toBe(0)` becoming two exact counts. Its fixture planners throw a plain `Error`, which this task now routes to the fallback, so "the fallback was never called" stopped meaning "the experiment has not tripped". See "Why an existing test file has to change" |
 | `src/server/dashboard.html` | Event-feed colour mapping | Modify: two new event types classified |
 | `docs/decisions.md` | Decision log | Append one entry in Task 1, one at the end of Stage 1 |
 | `docs/superpowers/specs/2026-07-12-improv-mode.md` | Improv-mode briefing | Append one line in Task 1 |
 | `docs/eval/2026-07-25-planner-baseline.md` | Stage 0 + Stage 1 result tables, committed as the reference point | Create |
 | `agents.yaml` (gitignored, on the pilot host) | Live pilot config | Read at Stage 0 (for the incumbent's model id); modify at Stage 2 only |
 
-Note what is NOT in this table. `PlannerHealth`, `snapshot()`, `test/agent-snapshot.test.ts` and `test/server.test.ts` were all on revision 2's list and are gone: see "Why the countdown stays off the snapshot".
+Note what is NOT in this table. `PlannerHealth`, `snapshot()`, `test/agent-snapshot.test.ts` and `test/server.test.ts` were all on revision 2's list and are gone, for the reason under "Why the countdown stays off the snapshot".
 
 ---
 
@@ -50,54 +54,97 @@ Note what is NOT in this table. `PlannerHealth`, `snapshot()`, `test/agent-snaps
 
 **Files:**
 - Modify: `src/planner/openai-compat.ts`. Anchors in the unmodified file: `OpenAiCompatOptions` at 14-23; the fetch call at 46-67; the body read at 80.
-- Modify: `src/agent/agent.ts`. Anchors in the unmodified file: constants near 135; field block near 375; `activePlanner()` at 1604-1612; `const planner = this.activePlanner()` at 1659; success-path reset block at 1915-1920 and its `catch` at 1922; `handlePlannerFailure` at 2536, whose `TransientPlannerError` branch runs 2554-2569 with the insertion point between the `planner_transient_error` emit (2561-2563) and the stall check (2564).
-- Modify: `test/agent-failure-classes.test.ts`, `test/planner-openai-compat.test.ts`, `src/server/dashboard.html`, `docs/decisions.md`, `docs/superpowers/specs/2026-07-12-improv-mode.md`.
+- Modify: `src/agent/agent.ts`. Anchors verified in the unmodified file at `5abff04`: `TRANSIENT_BACKOFF_MAX_MS` at 135; `private plannerBackoffUntil = 0;` at 375; `activePlanner()` at 1604; `const planner = this.activePlanner()` at 1659 with its `if (!planner)` guard ending 1663; the success-path reset block at 1915-1920 (`planner_recovered` emits at 1916, `consecutiveTransientFailures = 0` at 1918, `plannerBackoffUntil = 0` at 1919) and its `catch` calling `handlePlannerFailure(e)` at 1922; `handlePlannerFailure` at 2536, whose `TransientPlannerError` branch opens at 2554; the backoff gate at 976.
+- Modify: `test/agent-failure-classes.test.ts`, `test/planner-openai-compat.test.ts`, `test/experiment-revert.test.ts`, `src/server/dashboard.html`, `docs/decisions.md`, `docs/superpowers/specs/2026-07-12-improv-mode.md`.
 
 **Interfaces:**
 - Consumes: existing `TransientPlannerError` (`src/planner/errors`), existing private fields `consecutiveTransientFailures`, `plannerBackoffUntil`, `experimentReverted`, `claudeDisabled`, `usingFallback`, `fallbackPlanner`, `planner`.
-- Produces: exported `OPENAI_COMPAT_TIMEOUT_MS` and an optional `timeoutMs` on `OpenAiCompatOptions`. Private field `endpointDownReplans: number` on `Agent`, exposed nowhere. `handlePlannerFailure` gains a second parameter `served?: Planner`. Two new event types emitted through the existing `this.emit(type, payload)` seam: `planner_endpoint_down` with `{ consecutiveFailures: number, retryReplans: number }`, and `planner_endpoint_recovered` with `{}`. No exported signature on `Agent` changes.
+- Produces: exported `OPENAI_COMPAT_TIMEOUT_MS` and an optional `timeoutMs` on `OpenAiCompatOptions`. Two private fields on `Agent`, `endpointDownReplans: number` and `consecutivePrimaryFailures: number`, exposed nowhere. `handlePlannerFailure` gains a second parameter `served?: Planner`. Two new event types emitted through the existing `this.emit(type, payload)` seam: `planner_endpoint_down` with `{ consecutiveFailures: number, retryReplans: number }`, and `planner_endpoint_recovered` with `{}`. No exported signature on `Agent` changes.
 
 ### Design notes the implementer must not re-derive
 
 Read these before writing code. Each is a trap a straightforward implementation falls into, and each was confirmed by running the code rather than by reading it.
 
-**Fix the producer: the request had no timeout.** `openai-compat.ts` issued its fetch with no `AbortSignal`, so a probe of an endpoint that is not listening waits out the OS TCP connect timeout (Linux `tcp_syn_retries = 6`, roughly 127 seconds to a silent host) and `runOnce()` executes no plan step for that whole tick. Worse than that measured case: an endpoint that ACCEPTS the connection and never answers — a wedged model server — has no OS timeout at all, and the request hangs forever. The spec's own probe of the production condition ("TCP 1234 from the container: TIMEOUT", spec line 29) is the first shape; the second is what the ablation of this fix actually produced, which hung the test runner rather than failing it. Sizing `ENDPOINT_RETRY_REPLANS` up to avoid the stall would have been guarding the consumer: the constant would have been paying for a missing timeout on a call two files away. With the timeout in place the probe is cheap, so the constant is free to be small.
+**Fix the producer: the request had no timeout.** `openai-compat.ts` issued its fetch with no `AbortSignal`, so a probe of an endpoint that is not listening waits out the OS TCP connect timeout and `runOnce()` executes no plan step for that whole tick. On Linux that is `tcp_syn_retries = 6`, which sums to about 127 seconds against a silent host — arithmetic from the documented kernel default, not something measured here, and worth re-checking on the deploy host rather than trusted. Worse than that case, and this one WAS measured: an endpoint that ACCEPTS the connection and never answers, a wedged model server, has no OS timeout at all and the request hangs forever. The spec's own probe of the production condition ("TCP 1234 from the container: TIMEOUT", spec line 29) is the first shape; the second is what the ablation of this fix produced, hanging the test runner rather than failing it, and the test below carries a watchdog for exactly that. Sizing `ENDPOINT_RETRY_REPLANS` up to avoid the stall would have been guarding the consumer: the constant would have been paying for a missing timeout on a call two files away.
 
-**Why 60s, and how to check it.** Receipt, mirroring the shape of `USAGE_FETCH_TIMEOUT_MS` in `src/scheduler/usage-poll.ts` (the project's other reachability-sensitive fetch): far above the workload's normal latency, far below the thing it must not stall. The workload is one JSON plan completion; the thing not to stall is the tick. 60s is UNCONFIRMED against a real local generation — no plan has been timed on `gemma-4-12b-qat` yet — so Task 3 Step 6 records wall-clock seconds per plan and Step 7 checks it against this constant. If the measured slowest plan is within 2x of 60s, raise the constant and record the measurement as the new receipt. Do not raise it on a hunch.
+**Why 60s, and what its receipt is NOT.** Revision 3 justified 60s by mirroring `USAGE_FETCH_TIMEOUT_MS` in `src/scheduler/usage-poll.ts` — "far above normal latency, far below the thing it must not stall". That mirror does not survive the arithmetic. `USAGE_FETCH_TIMEOUT_MS` is 15s (`usage-poll.ts:38`) against a 10-minute cron tick, 40x below its stall unit. The agent loop is `start(intervalMs = 10_000)` (`agent.ts:2721`), so 60s sits 6x ABOVE the unit it is supposed to protect, not below it. The honest receipt is smaller and still worth having: the tick previously carried an UNBOUNDED planner wait, and `start()`'s `if (running) return` guard means a long tick is skipped rather than queued. So 60s converts an unbounded wait into a bounded one. That is a strict improvement on every input, and it is the whole claim. It is not a claim that a 60s planner call is harmless to the tick — it is not, and the operator will see skipped ticks while it runs.
+
+Sizing is still UNCONFIRMED against a real local generation: no plan has been timed on `gemma-4-12b-qat`. Task 3 Step 6 records wall-clock seconds per plan and Step 7 checks it against this constant, with the doubling below folded in.
+
+**The worst case is 120s per `plan()`, not 60s.** `AbortSignal.timeout()` is constructed inside `invoke()`, and `planWithSingleRetry` (`src/planner/parse.ts:53-72`) calls `invoke` a second time when the first response fails validation, so the retry gets a FRESH budget. Measured against a server whose first response burns 500ms then returns an unusable plan and whose second hangs, at `timeoutMs: 600`: the retry path took 1116ms for 2 invokes, against 608ms for 1 invoke on the single-attempt path. Not a defect to fix here — a shared per-attempt budget would need a signal threaded through `parse.ts`, which is a second change entangled with this one — but every sizing judgement downstream has to use 2x the constant. Task 3 Step 7 does.
 
 **Why the body read moved inside the classification.** `await res.json()` sat outside the `try` that converts infrastructure failures to `TransientPlannerError`. The timeout signal aborts a body read as well as a connect, so leaving it outside would have created a new failure path: an abort mid-body escapes as a plain `Error`, lands in `handlePlannerFailure`'s catch-all, and never arms the endpoint-down state — reintroducing the stall the timeout exists to remove. Model QUALITY still fails through `tryParsePlan` on the response CONTENT, which this does not touch.
 
 **Why a new field and not the existing counter.** The success path at `agent.ts:1918` resets `consecutiveTransientFailures = 0` after ANY successful plan, including one served by the fallback. If "endpoint is down" were derived from that counter, the first fallback success would clear it, the next replan would return to the dead primary, and the pilot would flap between planners every cycle. `endpointDownReplans` is therefore its own field, cleared only by a PRIMARY success. The reviewer built the smaller boolean design instead and measured it incorrect: under a dual outage it locked the primary out permanently. The counter stays.
 
-**Why replans and not a wall clock.** The reviewed draft used `endpointDownUntil = now + 10 * 60_000`. That window is SHORTER than the configured replan cadence (`heartbeat_minutes: 15` in production), so it had already expired by the time the next replan arrived: measured over 20 heartbeat-spaced ticks, the fallback was called 0 times and `planner_endpoint_down` fired 16 times. Production survives only because its 10-second tick loop collapses the effective cadence, which is an accident, not a design. Counting in replans makes the behaviour independent of tick rate and of `heartbeat_minutes`, and it bounds the waste in the unit that costs money. **Rejected alternative:** raise `ENDPOINT_RETRY_MS` above the maximum inter-replan gap. Rejected because it re-couples a constant to a config value that can change without anyone re-deriving it — the same bug, one size larger.
+**Why replans and not a wall clock.** The reviewed draft used `endpointDownUntil = now + 10 * 60_000`. That window is SHORTER than the configured replan cadence (`heartbeat_minutes: 15` in production), so it had already expired by the time the next replan arrived. Re-measured for this revision by rebuilding the millisecond design on a clean tree and running 20 heartbeat-spaced ticks against a dead primary: the fallback was called 0 times, `planner_endpoint_down` fired 16 times, and 0 plans were produced. Production survives only because its 10-second tick loop collapses the effective cadence, which is an accident, not a design. Counting in replans makes the behaviour independent of tick rate and of `heartbeat_minutes`, and it bounds the waste in the unit that costs money. **Rejected alternative:** raise `ENDPOINT_RETRY_MS` above the maximum inter-replan gap. Rejected because it re-couples a constant to a config value that can change without anyone re-deriving it — the same bug, one size larger.
 
-**Why 3 and not 5.** A larger N buys nothing and costs money. Measured against a permanently dead primary, N=3 spends 15 paid fallback calls per 24 replans and wastes 2 paid plans between the primary coming back and the probe noticing; N=5 wasted 4. The only argument for a large N was that each probe cost a blocking stall, and the timeout above dissolves it. 3 is the smallest value that still leaves a fallback-served window: 2 fallback replans, then a probe.
+**Why 3, and why it is a dial rather than an optimum.** Revision 3 said "a larger N buys nothing and costs money" and called 3 "the smallest value that still leaves a fallback-served window". Both are false. Measured over exactly 24 replans against a permanently dead primary, ticking until 24 planner invocations had committed so the numbers do not depend on tick rate:
+
+| N | paid fallback calls | plans | primary probes | plan rate | paid per replan | wasted paid replans after recovery |
+|---|---|---|---|---|---|---|
+| 2 | 11 | 11 | 13 | 45.8% | 0.458 | 1 |
+| 3 | 15 | 15 | 9 | 62.5% | 0.625 | 2 |
+| 4 | 17 | 17 | 7 | 70.8% | 0.708 | 3 |
+| 5 | 18 | 18 | 6 | 75.0% | 0.750 | 4 |
+
+Every paid fallback call IS a plan, one for one, in all four rows. So plan rate and cost are the same number, the trade is a straight line, and no N is optimal — the constant is a policy dial, and this plan is choosing where on the line to sit. N=2 also emits exactly one `planner_endpoint_recovered`, so it leaves a fallback-served window too.
+
+Two things are not linear, and they are what decides it. The probe count falls as N rises: 13 probes per 24 replans at N=2 against 9 at N=3, so N=2 spends 44% more attempts on an endpoint known to be unreachable, and each one can block the tick for up to 2 × `OPENAI_COMPAT_TIMEOUT_MS` = 120s (see the doubling above), which is 12x the 10-second tick interval. Post-recovery waste runs the other way, at exactly N-1 paid replans, and argues for a small N.
+
+Verdict: 3. It buys two-thirds plan coverage through an outage at 0.625 paid calls per replan, with 9 blocking probes per 24 replans instead of 13, at a cost of 2 wasted paid replans after recovery instead of 1. N=2 is cheaper on quota and recovers one replan sooner; it was rejected because it leaves the majority of an outage's replans planless while spending nearly half again as many blocking probes on a dead endpoint. If Stage 2 shows quota mattering more than plan rate, move it to 2 and record the new number — that is a config-shaped decision, not a redesign.
 
 **Why the fallback serves while the counter is `> 1`, not `> 0`.** The counter has to reach a state where the primary is attempted again AND the code still knows it was down, because that is the only moment a primary success can emit `planner_endpoint_recovered`. If the fallback served whenever the counter was above zero, the counter would hit 0 on its own and the following primary success would see a cleared field — the recovery event could never fire. So `endpointDownReplans === 1` is the probe replan: still officially down, primary attempted.
 
 **What 0 means, and what it does not.** 0 means the state is not armed. It does NOT mean "the primary is healthy" — revision 2's comment said that and it is falsifiable. A `TokenInvalidError` or `SubscriptionLimitError` latch flips `claudeDisabled` / `usingFallback`, `activePlanner()` returns the fallback from its own earlier branch, and the decrement drains the countdown to 0 with no probe and no recovery event. Nothing is broken by that (those latches are themselves the verdict on the primary), but a comment claiming the field is a health oracle would send the next reader looking for a bug that is not there. Write what is true.
 
-**Any primary failure on the probe replan re-arms — whatever its class.** This is the defect the second review found by running the code. Only the transient branch touches `consecutiveTransientFailures`, so a primary that ANSWERS but returns plans failing validation twice lands in the catch-all class, which used to leave the countdown parked at 1 forever: the primary is served every replan, fails every replan, the fallback is never reached again, and the pilot silently stops planning while still answering endpoint checks. That is precisely the marginal-local-model case Stage 2 creates. Measured with the re-arm removed: **0 plan events across the final 10 replans**. The guard is one condition at the TOP of `handlePlannerFailure`, above the class dispatch, so the early-returning branches are covered too. Re-arm rather than clear: a failed probe disproves "healthy", and clearing would assert the opposite. Reaching 1 at all required a `fallbackPlanner`, so no extra existence check is needed.
+**Why the post-recovery reset of `consecutivePrimaryFailures` is not free.** Without it the counter keeps its pre-recovery value, so the FIRST primary failure after a recovery re-arms the down state instead of the second, and the pilot pays for fallback replans on a single blip. The tenth test below pins that: a primary failing calls 1-2, succeeding on 3, failing once on 4 must produce exactly one `planner_endpoint_down` and no further fallback calls. Ablation 9 deletes the reset and reddens it.
 
-**Re-entry costs one failure, not two.** Revision 2 said two, because the fallback's successes reset `consecutiveTransientFailures` and the transient arming block needs 2. That block is no longer the re-arm path — the any-class guard above is, and it fires on the first probe failure. Consequence, measured: the steady-state cycle against a dead primary is 3 replans (two served by the fallback, one failed probe) rather than 4, so the pilot loses one planless replan per cycle instead of two and pays 2 subscription calls per 3 replans.
+**Why a per-primary failure counter.** This is the change revision 4 exists for, and the receipt is the shape revision 3 could not handle.
 
-**`ENDPOINT_DOWN_THRESHOLD = 2` does not mean "two primary failures".** `consecutiveTransientFailures` is shared across both planners; the fallback's failures raise it too. The reviewer observed a single primary probe failure arming the down state because the fallback's own failures had already driven the counter to 6. Do not add a per-planner counter to "fix" this — state it honestly instead. The consequence is that the down state can arm eagerly during a dual outage, which is harmless: the fallback is already the served planner in that window and the probe replan re-tests the primary either way. `served === this.planner` is the guard that matters, and it is what keeps a fallback-ONLY blip from arming the state at all.
+Revision 3 armed the down state only inside the `TransientPlannerError` branch, off `consecutiveTransientFailures`, and patched the gap with a re-arm keyed on the countdown already sitting at 1. That patch covers a primary whose failure CLASS changes mid-outage. It does nothing for a primary whose class was never transient in the first place. Measured against revision 3's code, 30 heartbeat-spaced replans, primary throwing only `Error("openai-compat: plan validation failed after retry")`:
 
-**Where the decrement goes, and why.** In `replan()`, immediately after the `if (!planner)` guard at 1659-1663, gated on `planner === this.fallbackPlanner`. That is the only site in the loop that commits a replan to a planner, so the countdown advances exactly once per replan the fallback actually served. Ticks that never reach a replan — backoff suppression, a running plan executing a step, no wake — must not consume the window, and this placement is what makes that true. It was verified by trace: across a 16-tick run the counter held steady through ticks that executed a plan step instead of replanning. Decrementing on the fallback's SUCCESS instead would strand the counter forever whenever the fallback is also failing.
+```
+primary.calls=25  fallback.calls=0
+planner_endpoint_down=0  plan=0  planner_error=25
+plannerHealth = {"stalled":false,"usingFallback":false,"claudeDisabled":false,"backoffUntil":27000029,"consecutiveTransientFailures":0,"stuck":true}
+```
 
-**Why `handlePlannerFailure` needs to know which planner failed.** Without the `served` parameter, a transient failure of the FALLBACK arms the down-state, emits an event naming the primary endpoint, and locks out a primary that may be perfectly healthy. Passing the already-captured `planner` local from `replan()` and gating on `served === this.planner` fixes the mis-attribution at the producer. It also subsumes a second defect: the draft's `if (!wasDown)` emit guard was unreachable in the primary-failure path, whereas `if (this.endpointDownReplans === 0)` is an exact "not currently down" test and is ablatable — though only by the dual-outage test, which is the sole scenario that re-enters the arming block with the countdown already armed. Revision 2 shipped that guard with no test that could redden it.
+Zero plans. The fallback is configured, healthy, and never reached, because the countdown never left 0 and so never hit the 1 the re-arm keyed on. The pilot answers every endpoint check and plans nothing, bounded only by the 12-hour `experiment` latch — the same 12 hours Task 1 exists to stop depending on. A local model that is up but marginal is the single likeliest Stage 2 outcome, so this is the shape the change most needs to survive.
 
-**Why the countdown stays off the snapshot.** Revision 2 added `endpointDownReplans` to the exported `PlannerHealth` interface and to `snapshot()`, which forced edits to `test/agent-snapshot.test.ts` and `test/server.test.ts`. One of those tests is named "exposes only fields with a dashboard consumer" and its whole job is to fail when a field is added without one — and the dashboard change in this task is an event-feed colour map, not a reader of the countdown. `usingFallback` already tells the operator which planner is serving, which is the question the A/B asks. The field is private; nothing outside `agent.ts` reads it; those two test files are untouched.
+So the arming input moves to the producer. `consecutivePrimaryFailures` is a counter incremented at the one place every planner failure arrives, gated on `served === this.planner`, covering every class the primary can recover from, and reset by a primary success. `endpointDownReplans` is then armed off THAT counter, and revision 3's `endpointDownReplans === 1` special case is deleted. A failed probe re-enters the same arming block with the counter still above threshold, so re-arming falls out of the ordinary path instead of needing its own condition.
 
-**Do not touch the backoff gate at line 976.** It returns early before any planner call, so the fallback engages one backoff interval (60s after failure #2) later than the threshold alone suggests. That is acceptable against a replan cadence measured in minutes, and the first fallback success sets `plannerBackoffUntil = 0` at line 1919, so it self-clears. The spec flagged this interaction for verification; this is the verification, and the answer is that no change is needed.
+**Receipt for the extra field.** The alternative on the table was to leave the code alone and shrink the commit message to what it does, adding a test that ASSERTS the pure catch-all shape produces nothing. Rejected on size, measured rather than assumed: revision 3's shape is 28 insertions and 2 deletions in `agent.ts`; this one is 31 and 2. Three lines buy the failure mode the gate review named as most likely, and they delete two things revision 3 had to carry — the `=== 1` special case, and the honest-but-awkward note that `ENDPOINT_DOWN_THRESHOLD` did not mean what its name says. A characterisation test that pins a known hole as correct behaviour is worth writing when the hole cannot be closed cheaply. This one can.
 
-**The ordering test cannot fail, but the invariant is real.** The spec calls its fourth test "the one that protects a real invariant", and the invariant IS real: a reverted experiment stays on the fallback even after the primary answers again. What is not real is the test. It asserted branch ORDER inside `activePlanner()`, and both branches return `this.fallbackPlanner`, so swapping them changes nothing observable — the reorder was applied and the suite stayed green. The invariant is structurally guaranteed (the new branch returns the fallback unconditionally, so it cannot reinstate the primary) and behaviourally covered by `test/experiment-revert.test.ts`. Deleting an unfalsifiable test does not delete the invariant it was pointed at. The branch is still placed after `experimentReverted` and `claudeDisabled`, for readability.
+**Where the counting block goes, and what that placement does not buy.** After the `TokenInvalidError` and `SubscriptionLimitError` branches, both of which return early. Those two are latches: the first sets `claudeDisabled`, the second sets `usingFallback`, and `activePlanner()` serves the fallback from an earlier branch forever after. Counting them as endpoint failures would report a subscription-exhausted primary as an unreachable endpoint. Placement is the whole fix and it costs nothing.
 
-**Out of scope, do not fix.** `agent.ts:1915` emits `planner_recovered` whenever a plan succeeds after any transient failure, including a plan served by the FALLBACK during an ongoing primary outage — visible in the trace as `planner_recovered` firing on the first fallback success. It is pre-existing, it is filed separately, and touching it here would entangle two fixes in one diff.
+Be clear about what cannot be claimed for it: no ablation can redden it. Both latches make the primary unreachable after their FIRST occurrence, so a second failure of either class can never be counted, and `ENDPOINT_DOWN_THRESHOLD = 2` is never approached down those paths. The placement is correct and untested, and this sentence is the only evidence for it.
+
+**`ENDPOINT_DOWN_THRESHOLD = 2` now means exactly two primary failures.** Under revision 3 it did not: `consecutiveTransientFailures` is shared across both planners, so a fallback outage could drive it up and let a single primary failure arm the state. `consecutivePrimaryFailures` is per-planner by construction, which removes that surprise rather than documenting it. Consequence for the dual-outage case: arming now needs two real primary failures, and the fallback's own failures neither arm the state nor re-announce it.
+
+**Re-entry costs one failure.** The steady-state cycle against a dead primary is 3 replans: two served by the fallback, one failed probe that re-arms. Measured on a 16-tick trace, the countdown walking `3 -> 2 -> 1 -> 3` and repeating, with 15 paid calls per 24 replans. The pilot loses one planless replan per cycle.
+
+**Where the decrement goes, and why.** In `replan()`, immediately after the `if (!planner)` guard at 1659-1663, gated on `planner === this.fallbackPlanner`. That is the only site in the loop that commits a replan to a planner, so the countdown advances exactly once per replan the fallback actually served. Ticks that never reach a replan — backoff suppression, a running plan executing a step, no wake — must not consume the window, and this placement is what makes that true. Verified by trace on the finished implementation: a 16-tick run against a dead primary and a three-step fallback plan produced 14 replans and 2 ticks that executed a step instead, and the countdown held across both of them (`3 -> 3` at tick 5, `1 -> 1` at tick 11) while walking `3 -> 2 -> 1 -> 3` on the replan ticks. Decrementing on the fallback's SUCCESS instead would strand the counter forever whenever the fallback is also failing.
+
+**Why `handlePlannerFailure` needs to know which planner failed.** Without the `served` parameter, a failure of the FALLBACK increments the primary's counter, arms the down state, emits an event naming the primary endpoint, and locks out a primary that may be perfectly healthy. Passing the already-captured `planner` local from `replan()` and gating on `served === this.planner` fixes the mis-attribution at the producer; ablation 4 reddens four tests across two files. The `if (this.endpointDownReplans === 0)` emit gate is an exact "not currently down" test, and under the per-primary counter it is reachable on the ordinary dead-primary path as well as the dual outage, because a failed probe re-enters the arming block with the countdown at 1. Revision 2 shipped that gate with no test that could redden it; ablation 2 now reddens three.
+
+**Why the countdown stays off the snapshot, and what the operator therefore cannot see.** Revision 2 added `endpointDownReplans` to the exported `PlannerHealth` interface and to `snapshot()`, which forced edits to `test/agent-snapshot.test.ts` and `test/server.test.ts`. One of those tests is named "exposes only fields with a dashboard consumer" and its whole job is to fail when a field is added without one (`test/agent-snapshot.test.ts:107-109` asserts the exact key set). The dashboard change in this task is an event-feed colour map, not a reader of the countdown, so the field stays private and those two test files stay untouched.
+
+Revision 3 justified that with "`usingFallback` already tells the operator which planner is serving". It does not. `usingFallback` is assigned in exactly one place, the `SubscriptionLimitError` branch of `handlePlannerFailure`, and nothing in this task assigns it. Measured over 20 heartbeat-spaced ticks against a dead primary, with 10 replans served by the fallback: `plannerHealth.usingFallback` read `false` for the entire window, and `dashboard.html:684` and `:708` both showed the planner pill as ok throughout. Keeping the field private still has its own reason: no dashboard consumer, and a test that exists to enforce that. But the operator must know what the gap costs. During an endpoint-down window the health pills say nothing, and the only visible signal is the `planner_endpoint_down` event in the feed. Task 1 Step 10 gives that event a colour and Task 4 Step 6 tells the operator to watch the feed rather than the pills.
+
+**Do not touch the backoff gate at line 976.** It returns early before any planner call, so the fallback engages one backoff interval later than the threshold alone suggests: `TRANSIENT_BACKOFF_BASE_MS` is 30s and the delay is `30s × 2^(n-1)`, so 60s after failure #2. That is acceptable against a replan cadence measured in minutes, and the first fallback success sets `plannerBackoffUntil = 0` at line 1919, so it self-clears. The spec flagged this interaction for verification; this is the verification, and the answer is that no change is needed.
+
+**The ordering test cannot fail, but the invariant is real.** The spec calls its fourth test "the one that protects a real invariant", and the invariant IS real: a reverted experiment stays on the fallback even after the primary answers again. What is not real is the test. It asserted branch ORDER inside `activePlanner()`, and both branches return `this.fallbackPlanner`, so swapping them changes nothing observable. Re-verified for this revision on the finished implementation: moving the new endpoint-down branch ABOVE the `experimentReverted` branch left the full suite green at 1453 pass / 1 skip / 0 fail. The invariant is structurally guaranteed (the new branch returns the fallback unconditionally, so it cannot reinstate the primary) and behaviourally covered by `test/experiment-revert.test.ts`. Deleting an unfalsifiable test does not delete the invariant it was pointed at. The branch is still placed after `experimentReverted` and `claudeDisabled`, for readability.
+
+**Out of scope, do not fix.** `agent.ts:1915-1917` emits `planner_recovered` whenever a plan succeeds after any transient failure, including a plan served by the FALLBACK during an ongoing primary outage — visible in the trace as `planner_recovered` firing on the first fallback success. It is pre-existing, it is filed separately, and touching it here would entangle two fixes in one diff.
+
+**Why an existing test file has to change.** `test/experiment-revert.test.ts` builds both its primary and its fallback from a `countingPlanner()` that throws a plain `Error("test planner declines")` on every call, and its header comment says why: a planner that never produces a plan makes every tick a `no_plan` wake and one `activePlanner()` call, so `fallback.calls` reads out WHICH planner is live. That is the pure catch-all shape. Once this task routes that shape to the fallback, three assertions of the form `expect(fallback.calls).toBe(0)` stop measuring "the experiment has not tripped" and start measuring "the endpoint-down state has not armed", which is a different and now-false claim.
+
+Each is replaced by two exact counts rather than deleted, so the assertion count goes up. The tests' real invariant, `expect(reverts(store).length).toBe(0)`, is already asserted on the line above each one and is untouched. Measured values, on the finished implementation: `progress inside the window re-seeds the clock` primary 2 / fallback 1; `fail-safe: no stats block` primary 3 / fallback 2; `"any": one allowlisted counter advancing` primary 3 / fallback 2. These are not cosmetic — ablation 8 reddens all three, which is how the pure catch-all fix is caught in a second, independent file.
 
 - [ ] **Step 1: Write the failing tests**
 
-Two files. Paste verbatim — every tick count and assertion below was run against the finished implementation, and the counts depend on `ENDPOINT_RETRY_REPLANS = 3`.
+Three files. Paste verbatim — every tick count and assertion below was run against the finished implementation, and the counts depend on `ENDPOINT_RETRY_REPLANS = 3`.
 
 Append to `test/planner-openai-compat.test.ts`, inside the existing `describe("OpenAiCompatPlanner")`:
 
@@ -117,7 +164,7 @@ Append to `test/planner-openai-compat.test.ts`, inside the existing `describe("O
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       const planner = new OpenAiCompatPlanner({
-        model: "m", baseUrl: `http://localhost:${hung.port}`, timeoutMs: 50,
+        model: "m", baseUrl: \`http://localhost:\${hung.port}\`, timeoutMs: 50,
       });
       const pending = planner.plan(ctx);
       pending.catch(() => {}); // no unhandled rejection if the watchdog wins
@@ -185,7 +232,7 @@ describe("Reversible endpoint fallback (#240)", () => {
     return p;
   }
 
-  test("two consecutive transient failures route the next replan to the fallback; one does not", async () => {
+  test("two consecutive primary failures route the next replan to the fallback; one does not", async () => {
     let now = 0;
     const store = new Store(":memory:");
     const fallback = countingPlanner(okPlan);
@@ -236,10 +283,10 @@ describe("Reversible endpoint fallback (#240)", () => {
       planner: primary, fallbackPlanner: fallback, config, now: () => now,
     });
 
-    // Both planners dead. The fallback's failures keep
-    // consecutiveTransientFailures above the threshold, so every probe failure
-    // re-enters the arming block with the countdown already armed -- the only
-    // path that can re-announce. One down event, not one per probe.
+    // Both planners dead. consecutivePrimaryFailures counts only the primary,
+    // so the fallback's failures neither arm nor re-announce; the probe replan
+    // is the only thing that re-enters the arming block, and it must not
+    // re-announce either.
     for (let i = 0; i < 16; i++) { await agent.runOnce(); now += HEARTBEAT; }
 
     const downs = store.recentEvents("a1", 300).filter((e) => e.type === "planner_endpoint_down");
@@ -336,7 +383,32 @@ describe("Reversible endpoint fallback (#240)", () => {
     expect(types).not.toContain("planner_endpoint_down");
   });
 
-  test("a reachable primary whose plans fail validation keeps reaching the fallback", async () => {
+  test("a primary that only ever answers with unusable plans still reaches the fallback", async () => {
+    let now = 0;
+    const store = new Store(":memory:");
+    const answersButFails = invalidPlanCounter();
+    const fallback = countingPlanner(okPlan);
+    const agent = new Agent({
+      id: "a1", persona: "p", api: stubApi(), store,
+      planner: answersButFails, fallbackPlanner: fallback, config, now: () => now,
+    });
+
+    // The pure catch-all shape, armed by nothing else: HTTP 200 on every
+    // replan, plans that never validate. consecutiveTransientFailures is never
+    // touched, so a counter derived from it never arms and the pilot produces
+    // ZERO plans while still answering endpoint checks. That is the likeliest
+    // Stage 2 failure (LM Studio up, the model marginal), so it is asserted
+    // here rather than admitted in prose.
+    for (let i = 0; i < 20; i++) { await agent.runOnce(); now += HEARTBEAT; }
+
+    const evs = store.recentEvents("a1", 400);
+    expect(evs.filter((e) => e.type === "planner_endpoint_down").length).toBe(1);
+    expect(fallback.calls).toBeGreaterThan(0);                     // the fallback is reached
+    expect(evs.filter((e) => e.type === "plan").length).toBeGreaterThan(0); // and plans land
+    expect(answersButFails.calls).toBeGreaterThan(2);              // the primary is still probed
+  });
+
+  test("a primary that goes from unreachable to unusable keeps reaching the fallback", async () => {
     let now = 0;
     const store = new Store(":memory:");
     const answersButFails = invalidPlanCounter();
@@ -347,12 +419,9 @@ describe("Reversible endpoint fallback (#240)", () => {
       fallbackPlanner: fallback, config, now: () => now,
     });
 
-    // Arm the down state on a dead endpoint, then swap the primary for one that
-    // ANSWERS but returns unusable plans -- the marginal-local-model case Stage
-    // 2 creates. That failure lands in the catch-all class, which never touches
-    // consecutiveTransientFailures, so without the any-class re-arm the counter
-    // parks at 1: the primary is served every replan, fails every replan, and
-    // the fallback is never reached again.
+    // Arm on a dead endpoint, then swap the primary for one that ANSWERS but
+    // returns unusable plans: the failure class changes mid-outage. A counter
+    // that only the transient branch maintains parks at 1 here.
     for (let i = 0; i < 3; i++) { await agent.runOnce(); now += HEARTBEAT; }
     (agent as unknown as { planner: Planner }).planner = answersButFails;
 
@@ -370,18 +439,79 @@ describe("Reversible endpoint fallback (#240)", () => {
     expect(late.filter((e) => e.type === "plan").length).toBeGreaterThan(0); // still planning
     expect(fallback.calls).toBeGreaterThan(fallbackAtSettle); // via the fallback
   });
+
+  test("one primary failure after a recovery does not re-arm the down state", async () => {
+    let now = 0;
+    const store = new Store(":memory:");
+    // Fails calls 1-2 (arms), succeeds on call 3 (the probe -> recovery), fails
+    // call 4 (a single post-recovery blip), succeeds after.
+    let calls = 0;
+    const primary: Planner & { calls: number } = {
+      calls: 0,
+      async plan() {
+        calls++;
+        primary.calls = calls;
+        if (calls <= 2 || calls === 4) throw new TransientPlannerError("blip");
+        return { plan: okPlan, promptChars: 0, responseChars: 0 };
+      },
+    };
+    const fallback = countingPlanner(okPlan);
+    const agent = new Agent({
+      id: "a1", persona: "p", api: stubApi(), store,
+      planner: primary, fallbackPlanner: fallback, config, now: () => now,
+    });
+
+    for (let i = 0; i < 5; i++) { await agent.runOnce(); now += HEARTBEAT; }
+    expect(store.recentEvents("a1", 400).filter((e) => e.type === "planner_endpoint_recovered").length).toBe(1);
+    const fallbackAtRecovery = fallback.calls;
+
+    // Call 4 is the single blip. Without the post-recovery counter reset the
+    // stale count is still at the threshold, so this one failure re-arms and
+    // hands the next replans back to the paid fallback.
+    for (let i = 0; i < 3; i++) { await agent.runOnce(); now += HEARTBEAT; }
+
+    expect(store.recentEvents("a1", 400).filter((e) => e.type === "planner_endpoint_down").length).toBe(1);
+    expect(fallback.calls).toBe(fallbackAtRecovery);
+  });
 });
 ```
 
-Note what is deliberately absent. No test uses an `experiment` config, so none of them needs `stubApi({ stats: { missions_completed: 1 } })`. If a later change adds one that does: `stubApi` builds a `StatusSnapshot` with no `stats`, so `progressCountersTotal(undefined)` returns null, the experiment fail-safe re-seeds every tick and the latch never fires. Such a test must pass `api: stubApi({ stats: { missions_completed: 1 } })` and use `withinHours: 1`, never `0`.
+Then re-point three assertions in `test/experiment-revert.test.ts`, for the reason under "Why an existing test file has to change". Each `expect(fallback.calls).toBe(0)` becomes two exact counts; the `expect(reverts(store).length).toBe(0)` above each one is untouched. In `progress inside the window re-seeds the clock; a later full dry window still trips`:
+
+```ts
+    expect(reverts(store).length).toBe(0);
+    // #240: the endpoint-down countdown also routes replans to the fallback
+    // now, so "the fallback was never called" no longer distinguishes an
+    // untripped experiment from a primary that keeps declining. Both exact
+    // counts are pinned instead: two primary failures arm the countdown, and
+    // the third replan is the first the fallback serves.
+    expect(primary.calls).toBe(2);
+    expect(fallback.calls).toBe(1);
+```
+
+In `fail-safe: no stats block -> never trips, however long the gap`:
+
+```ts
+    expect(reverts(store).length).toBe(0);
+    // #240: see the note above -- the fallback serving is no longer proof the
+    // experiment tripped. A tripped latch pins activePlanner() to the fallback
+    // forever, so the primary would stop being probed; it is still probed here.
+    expect(primary.calls).toBe(3);
+    expect(fallback.calls).toBe(2);
+```
+
+And in `"any": one allowlisted counter advancing holds the latch open (no revert)`, the same pair with `// #240: see the note above.` — primary 3, fallback 2.
+
+Note what is deliberately absent from the new agent tests. None uses an `experiment` config, so none needs `stubApi({ stats: { missions_completed: 1 } })`. If a later change adds one that does: `stubApi` builds a `StatusSnapshot` with no `stats`, so `progressCountersTotal(undefined)` returns null (`src/agent/no-progress-detector.ts:78-79`), the experiment fail-safe re-seeds every tick and the latch never fires. Such a test must pass `api: stubApi({ stats: { missions_completed: 1 } })` and use `withinHours: 1`, never `0`.
+
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-bun test test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts
+bun test test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts test/experiment-revert.test.ts
 ```
 
-Expected: the new tests fail. The first agent test fails on `expect(fallback.calls).toBe(1)` receiving `0`, because nothing yet routes a down endpoint to the fallback. The planner test fails on the watchdog, because nothing yet aborts the hung request.
+Expected: the new tests fail. The first agent test fails on `expect(fallback.calls).toBe(1)` receiving `0`, because nothing yet routes a down endpoint to the fallback. The planner test fails on the watchdog, because nothing yet aborts the hung request. The three re-pointed `experiment-revert` assertions fail on `expect(fallback.calls)` receiving `0` where 1 or 2 is now expected — that is the direction of travel, and they go green with the rest.
 
 - [ ] **Step 3: Give the openai-compat request a timeout**
 
@@ -391,13 +521,17 @@ In `src/planner/openai-compat.ts`, add to `OpenAiCompatOptions` after `fetchImpl
   timeoutMs?: number; // default OPENAI_COMPAT_TIMEOUT_MS; small values are for tests
 }
 
-// 60s per request. Receipt, same shape as USAGE_FETCH_TIMEOUT_MS in
-// scheduler/usage-poll.ts: far above the workload's normal latency (one JSON
-// plan completion) and far below the thing it must not stall -- fetch with no
-// signal waits out the OS TCP connect timeout (Linux tcp_syn_retries=6, ~127s
-// to a silent host), which is exactly the sleeping-workstation case #240
-// exists for. Without it a probe of a dead endpoint eats the whole tick and
-// the agent executes no plan step.
+// 60s per request. Receipt: the tick carried an UNBOUNDED planner wait, and a
+// fetch with no signal against a silent host waits out the OS TCP connect
+// timeout (~127s on Linux defaults) while an accepted-but-silent socket never
+// settles at all. 60s turns unbounded into bounded, which is the whole claim.
+// It is NOT "far below the tick": the agent loop ticks every 10s
+// (agent.ts start(intervalMs = 10_000)), so a request running its full budget
+// costs skipped ticks -- start()'s `if (running) return` drops them rather
+// than queueing. Worst case per plan() is 2x this, because parse.ts retries
+// once on a validation failure and each invoke() builds its own signal.
+// UNCONFIRMED against a real gemma-4-12b-qat generation; #240 Task 3 Step 7
+// re-derives it from measured seconds-per-plan.
 export const OPENAI_COMPAT_TIMEOUT_MS = 60_000;
 ```
 
@@ -431,51 +565,80 @@ Nothing in `planner-factory.ts` or `config.ts` changes: `timeoutMs` is not a con
 In `src/agent/agent.ts`, directly after `TRANSIENT_BACKOFF_MAX_MS` at line 135:
 
 ```ts
-// #240. Two consecutive transient failures against a LAN endpoint on a
-// multi-minute replan cadence means the listener is gone, not busy; one
-// failure is a blip the exponential backoff above already absorbs.
+// #240. Two consecutive PRIMARY failures against a LAN endpoint on a
+// multi-minute replan cadence means the listener is gone or the model is
+// unusable, not that either is busy; one failure is a blip the exponential
+// backoff above already absorbs. Counted per-planner (consecutivePrimaryFailures
+// below), so this really does mean two primary failures.
 const ENDPOINT_DOWN_THRESHOLD = 2;
 // How many REPLANS the fallback serves before the primary is probed again.
 // Counted in replans, not milliseconds: a wall-clock window has to be longer
 // than the largest inter-replan gap to survive one replan, and heartbeat_minutes
 // is config the constant cannot see. 3 = two fallback-served replans plus a
-// probe; the probe fails fast because openai-compat.ts carries a request
-// timeout, so nothing here is sized to hide a blocking call.
+// probe. This is a POLICY DIAL, not an optimum: measured over 24 replans
+// against a dead primary, every paid fallback call is exactly one plan, so
+// plan-rate and spend move together (N=2: 45.8%/0.458, N=3: 62.5%/0.625,
+// N=5: 75%/0.750). 3 is chosen for the probe count -- 9 blocking probes per
+// 24 replans against N=2's 13 -- at a cost of N-1 = 2 wasted paid replans
+// after the primary recovers. Move it if Stage 2 says quota matters more.
 const ENDPOINT_RETRY_REPLANS = 3;
 ```
 
-- [ ] **Step 5: Add the field**
+- [ ] **Step 5: Add the two fields**
 
-Next to `private plannerBackoffUntil = 0;` at line 375. Private, and it stays private:
+Next to `private plannerBackoffUntil = 0;` at line 375. Private, and they stay private:
 
 ```ts
   // #240. Countdown in REPLANS, not a timestamp and not a boolean. Cleared
-  // ONLY by a primary success; re-armed by any primary failure on the probe
-  // replan. 0 means the state is not armed -- NOT that the primary is known
-  // healthy (a TokenInvalid/SubscriptionLimit latch drives it to 0 with no
-  // probe), which is why activePlanner() also consults claudeDisabled and
-  // usingFallback.
+  // ONLY by a primary success. 0 means the state is not armed -- NOT that the
+  // primary is known healthy (a TokenInvalid/SubscriptionLimit latch drives it
+  // to 0 with no probe), which is why activePlanner() also consults
+  // claudeDisabled and usingFallback.
   private endpointDownReplans = 0;
+  // #240. Consecutive failures of the PRIMARY, every class it can recover
+  // from. Separate from consecutiveTransientFailures, which is shared across
+  // both planners AND reset by any success including a fallback's -- deriving
+  // "the endpoint is down" from that one would flap the pilot back to a dead
+  // endpoint every cycle, and would miss a primary that answers 200 with plans
+  // that never validate (measured: 25 replans, 0 plans, fallback never
+  // reached).
+  private consecutivePrimaryFailures = 0;
 ```
 
-- [ ] **Step 6: Re-arm on any primary failure, then arm on the transient branch**
+- [ ] **Step 6: Count primary failures and arm the countdown off that count**
 
-`handlePlannerFailure` at 2536 gains a second parameter, and the any-class re-arm goes at the top of the body, ABOVE the class dispatch, so the early-returning branches are covered:
+`handlePlannerFailure` at 2536 gains a second parameter. The counting block goes AFTER the `TokenInvalidError` and `SubscriptionLimitError` branches, both of which return early, and BEFORE the `TransientPlannerError` branch — so it sees the transient class and the catch-all class, and nothing else. The `TransientPlannerError` branch itself is left exactly as it was:
 
 ```ts
   private handlePlannerFailure(e: unknown, served?: Planner): void {
-    // #240. ANY failure of the PRIMARY on the probe replan re-arms the
-    // countdown, whatever the error class. Only the transient branch below
-    // increments consecutiveTransientFailures, so a plan that fails validation
-    // twice (the catch-all class) would otherwise park the counter at 1
-    // forever: the primary is served every replan, fails every replan, the
-    // fallback is never reached, and the pilot silently stops planning while
-    // answering endpoint checks. Re-arm rather than clear -- a failed probe
-    // disproves "healthy", and clearing would assert it. The down emit below is
-    // gated on `=== 0`, so a re-arm never re-announces. Reaching 1 at all
-    // required a fallbackPlanner, so no extra guard is needed here.
-    if (served === this.planner && this.endpointDownReplans === 1) {
-      this.endpointDownReplans = ENDPOINT_RETRY_REPLANS;
+```
+
+Then, immediately above `if (e instanceof TransientPlannerError) {`:
+
+```ts
+    // #240. Everything reaching here is a failure the PRIMARY can recover
+    // from: a transient infrastructure error, or the catch-all class a plan
+    // that fails validation twice lands in. Counting both is the point --
+    // arming off consecutiveTransientFailures alone left a primary that
+    // answers 200 with unusable plans serving every replan and producing
+    // nothing, with the fallback configured and never reached. The two latching
+    // classes above return before this block on purpose: TokenInvalid and
+    // SubscriptionLimit are verdicts on the subscription, not evidence an
+    // endpoint is unreachable, and each pins activePlanner() to the fallback
+    // anyway. `served === this.planner` keeps a fallback-ONLY blip from arming
+    // anything. The emit is gated on `=== 0`, so re-arming on a failed probe
+    // never re-announces.
+    if (served === this.planner) {
+      this.consecutivePrimaryFailures++;
+      if (this.fallbackPlanner && this.consecutivePrimaryFailures >= ENDPOINT_DOWN_THRESHOLD) {
+        if (this.endpointDownReplans === 0) {
+          this.emit("planner_endpoint_down", {
+            consecutiveFailures: this.consecutivePrimaryFailures,
+            retryReplans: ENDPOINT_RETRY_REPLANS,
+          });
+        }
+        this.endpointDownReplans = ENDPOINT_RETRY_REPLANS;
+      }
     }
 ```
 
@@ -483,28 +646,6 @@ Its one call site, in `replan()`'s `catch` at line 1922, passes the planner that
 
 ```ts
       this.handlePlannerFailure(e, planner);
-```
-
-Inside the `TransientPlannerError` branch, between the `planner_transient_error` emit (ending line 2563) and the stall check (line 2564):
-
-```ts
-      // #240. consecutiveTransientFailures is SHARED across both planners: the
-      // fallback's failures raise it too, so this threshold does not mean "two
-      // primary failures". During a dual outage a single primary failure can
-      // arm the down state on a counter the fallback drove up. Harmless -- the
-      // fallback is already the served planner in that window, and the probe
-      // replan re-tests the primary either way. `served === this.planner` is
-      // what keeps a fallback-ONLY blip from arming it at all.
-      if (this.fallbackPlanner && served === this.planner
-          && this.consecutiveTransientFailures >= ENDPOINT_DOWN_THRESHOLD) {
-        if (this.endpointDownReplans === 0) {
-          this.emit("planner_endpoint_down", {
-            consecutiveFailures: this.consecutiveTransientFailures,
-            retryReplans: ENDPOINT_RETRY_REPLANS,
-          });
-        }
-        this.endpointDownReplans = ENDPOINT_RETRY_REPLANS;
-      }
 ```
 
 - [ ] **Step 7: Serve the fallback from `activePlanner()`**
@@ -536,15 +677,20 @@ In the success path, immediately before the existing `this.consecutiveTransientF
 ```ts
       // #240. Only a PRIMARY success ends the endpoint-down state. `planner` is
       // the local captured above, so identity says which planner served this
-      // plan; a fallback success must not clear it or the pilot would flap back
-      // to a dead endpoint every cycle.
-      if (this.endpointDownReplans > 0 && planner === this.planner) {
-        this.endpointDownReplans = 0;
-        this.emit("planner_endpoint_recovered", {});
+      // plan; a fallback success must not clear either field or the pilot would
+      // flap back to a dead endpoint every cycle. The failure count is reset
+      // here too: leaving it stale would let ONE blip after a recovery re-arm
+      // the countdown instead of two.
+      if (planner === this.planner) {
+        this.consecutivePrimaryFailures = 0;
+        if (this.endpointDownReplans > 0) {
+          this.endpointDownReplans = 0;
+          this.emit("planner_endpoint_recovered", {});
+        }
       }
 ```
 
-The `this.endpointDownReplans > 0 &&` half is not redundant. Without it, every primary success emits `planner_endpoint_recovered`, including the routine ones when nothing was ever down — ablation 7 turns one event into four.
+The inner `this.endpointDownReplans > 0` guard is not redundant. Without it, every primary success emits `planner_endpoint_recovered`, including the routine ones when nothing was ever down; ablation 7 reddens the recovered-event count assertion.
 
 - [ ] **Step 10: Classify the two new events in the dashboard feed**
 
@@ -560,30 +706,33 @@ The `this.endpointDownReplans > 0 &&` half is not redundant. Without it, every p
 - [ ] **Step 11: Run the tests to verify they pass**
 
 ```bash
-bun test test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts && bun run typecheck
+bun test test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts test/experiment-revert.test.ts && bun run typecheck
 ```
 
-Expected: all pass, typecheck clean.
+Expected: all pass, typecheck clean. Observed on the finished implementation: 33 tests across the three files, 0 fail.
 
 - [ ] **Step 12: Ablate each guard**
 
-Not optional, and not satisfied by reading the code. For each: apply the ablation ALONE, run `bun run typecheck` FIRST, then `bun test test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts`, confirm the expected tests go RED, restore before starting the next one. Typecheck first because `bun test` does not typecheck, so an ablation that names a field which no longer exists silently no-ops and reports GREEN — the ablation, not the guard, is what passed. This is the third occasion in one day where a count-blind or undefined-blind matcher hid a real defect (`toEqual` skipping `undefined` array entries, a `toContain` that could not distinguish one event from four, and revision 2's emit gate, which no test in the file could redden), which is why every row below names the assertion that moves, not just the test.
+Not optional, and not satisfied by reading the code. For each row: delete or weaken that row's guard and nothing else, run `bun run typecheck` FIRST, then `bun test test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts test/experiment-revert.test.ts`, confirm the expected tests go RED, and restore before starting the next row. Typecheck first because `bun test` does not typecheck, so an edit that names a field which no longer exists silently no-ops and reports GREEN — the edit, not the guard, is what passed. This is the third occasion in one day where a count-blind or undefined-blind matcher hid a real defect (`toEqual` skipping `undefined` array entries, a `toContain` that could not distinguish one event from four, and revision 2's emit gate, which no test in the file could redden), so the table names tests rather than counts.
 
-Results observed on the finished implementation:
+Results observed on the finished implementation. Every row was run: ablation applied alone, typecheck clean on every ablated tree, restored between rows, and the restored tree re-measured green at the end.
 
 | # | Ablation | Observed RED |
 |---|---|---|
-| 1 | Delete the `activePlanner()` branch (Step 7) | tests 1, 4, 5, 8 (4 fail) |
-| 2 | Replace the `if (this.endpointDownReplans === 0)` emit gate with `if (true)` (Step 6) | test 3, the dual outage — and ONLY that test |
-| 3 | Drop `&& planner === this.planner` from the recovery clear (Step 9) | tests 2, 4, 5, 8 (4 fail) |
-| 4 | Drop `served === this.planner` from the arming condition (Step 6) | tests 3, 6 |
-| 5 | Drop `this.fallbackPlanner &&` from the arming condition (Step 6) | test 7 |
-| 6 | Delete the per-replan decrement (Step 8) | tests 3, 4, 6, 8 (4 fail) |
-| 7 | Drop `this.endpointDownReplans > 0 &&` from the recovery clear (Step 9) | test 4, on the recovered-event count: expected 1, received 4 |
-| 8 | Delete the any-class re-arm (Step 6) | test 8, on the late-window plan count: expected > 0, received 0 |
-| 9 | Delete the `signal:` line (Step 3) | the planner timeout test, on the watchdog at 1s |
+| 1 | Delete the `activePlanner()` branch (Step 7) | 9: agent tests 1, 3, 4, 5, 8, 9 and all three re-pointed `experiment-revert` tests |
+| 2 | Replace the `if (this.endpointDownReplans === 0)` emit gate with `if (true)` (Step 6) | 3: agent tests 2, 3, 8 |
+| 3 | Replace `if (planner === this.planner)` in the recovery clear with `if (true)` (Step 9) | 4: agent tests 2, 4, 5, 8 |
+| 4 | Replace `if (served === this.planner)` in the counting block with `if (true)` (Step 6) | 4: agent tests 3, 6 and two `experiment-revert` tests |
+| 5 | Drop `this.fallbackPlanner &&` from the arming condition (Step 6) | 1: agent test 7 |
+| 6 | Delete the per-replan decrement (Step 8) | 8: agent tests 3, 4, 6, 8, 9, 10 and two `experiment-revert` tests |
+| 7 | Replace the inner `if (this.endpointDownReplans > 0)` in the recovery clear with `if (true)` (Step 9) | 1: agent test 4, on the recovered-event count |
+| 8 | Add `&& e instanceof TransientPlannerError` to the counting block, reproducing revision 3 (Step 6) | 5: agent tests 8, 9 and all three `experiment-revert` tests |
+| 9 | Delete `this.consecutivePrimaryFailures = 0;` from the recovery clear (Step 9) | 1: agent test 10 |
+| 10 | Delete the `signal:` line (Step 3) | 1: the planner timeout test, on the watchdog at 1s |
 
-Ablation 7 is the one revision 2 had no test for, and ablation 2 is the one whose test had to be written specially: the dual outage is the only scenario that re-enters the arming block with the countdown already armed, so it is the only thing that can redden that gate. A guard no ablation can redden is not tested. If any ablation leaves the suite GREEN, either the test is decorative or the ablation silently no-opped — verify the edit landed and the tree typechecks, then rewrite the test so it bites and say so in the completion report.
+Agent tests are numbered in the order they appear in Step 1: 1 two-consecutive-failures, 2 down-emitted-once, 3 dual-outage, 4 probe-recovers, 5 fallback-success-does-not-clear, 6 fallback-failure-does-not-arm, 7 no-fallback-configured, 8 pure-catch-all, 9 unreachable-to-unusable, 10 one-failure-after-recovery.
+
+Row 8 is the one that matters most: it reproduces revision 3's design exactly, and five tests across two files catch it. Rows 5, 7, 9 and 10 each rest on a single test, which is the point — each was written for one guard and nothing else covers it. If any ablation leaves the suite GREEN, either the test is decorative or the ablation silently no-opped; verify the edit landed and the tree typechecks, then rewrite the test so it bites and say so in the completion report.
 
 - [ ] **Step 13: Run the full suite**
 
@@ -591,13 +740,19 @@ Ablation 7 is the one revision 2 had no test for, and ablation 2 is the one whos
 bun test && bun run typecheck
 ```
 
-Expected: 1451 pass, 1 skip, 0 fail (`381b0c6` plus this change), typecheck clean. No existing test file is modified: `test/agent-snapshot.test.ts` and `test/server.test.ts` are untouched because the countdown never reaches `snapshot()`, and `test/agent-observability.test.ts` and `test/experiment-revert.test.ts` are unaffected.
+Expected: 1454 tests total, 0 fail, typecheck clean. Report the TOTAL, not the pass/skip split: several suites are `skipIf`-gated on files and tooling that are present on a dev workstation and absent in the container (`test/doc-size.test.ts` skips its whole describe when `docs/` is missing), so the split moves between environments while the total does not. Observed here: 1454 total, 1453 pass / 1 skip / 0 fail. A gate reviewer on the same commit observed 25 skips and the same 1454 total. Both are correct; only a non-zero `fail` is a problem.
+
+Three existing test files stay untouched — `test/agent-snapshot.test.ts` and `test/server.test.ts`, because the countdown never reaches `snapshot()`, and `test/agent-observability.test.ts`. `test/experiment-revert.test.ts` IS modified, for the reason under "Why an existing test file has to change".
 
 - [ ] **Step 14: Append the decision-log entry**
 
 `docs/decisions.md`, following the enforced shape: one-paragraph context, `**Options.**` as terse one-line bullets each naming the option, its tradeoff and the verdict, then a one-paragraph `**Decision.**`. Hard cap 400 words, enforced by `test/doc-size.test.ts`; 200-300 is typical. Written for an infrastructure engineer, not a developer.
 
-The options genuinely on the table, all rejected for reasons that belong in the log: reusing `usingFallback` (a one-way latch, never reset — the first overnight sleep would move the pilot to the subscription permanently); a boolean instead of a counter (built and measured by a reviewer: under a dual outage it locked the primary out permanently); a health-probe endpoint (an extra call every cycle when the replan is itself the probe); a separate watchdog task (a new lifecycle to own); deriving the state from `consecutiveTransientFailures` alone (the success path resets it for a fallback success too, so the pilot would flap every cycle). Include the wall-clock-versus-replan-count choice and why the millisecond window failed (shorter than the configured replan cadence, so it expired before it could ever be read), and the timeout: the retry constant was originally sized to avoid a stall caused by a missing `AbortSignal` two files away, and fixing the fetch let the constant shrink from 5 to 3.
+The options genuinely on the table, all rejected for reasons that belong in the log: reusing `usingFallback` (a one-way latch, never reset — the first overnight sleep would move the pilot to the subscription permanently); a boolean instead of a counter (built and measured by a reviewer: under a dual outage it locked the primary out permanently); a health-probe endpoint (an extra call every cycle when the replan is itself the probe); a separate watchdog task (a new lifecycle to own); deriving the state from `consecutiveTransientFailures` alone (reset by a fallback success, so the pilot would flap every cycle, AND blind to a primary that answers with unusable plans — measured at 25 replans, 0 plans, fallback never reached); and documenting that last gap instead of fixing it (rejected on size, 28 insertions against 31).
+
+Include the wall-clock-versus-replan-count choice and why the millisecond window failed (shorter than the configured replan cadence, so it expired before it could ever be read: 20 heartbeat-spaced ticks, 0 fallback calls, 16 duplicate down events). Include the timeout, and state its limits. It converts an unbounded planner wait into a bounded one. It does not make a probe cheap relative to the 10-second tick, and the worst case is 2x the constant because the parse layer retries once.
+
+For the reader who is not a developer, the shape worth landing is this. The pilot has a preferred planner and a paid backup. When the backup takes over depends on how many times in a row the preferred one has to fail, which is two, and on how many planning cycles the backup covers before the preferred one is retried, which is three. That second number is a dial with no correct setting. Every cycle the backup covers is a cycle that produces a plan and costs money, one for one, so the number really answers a different question: how often are we willing to retry an endpoint that is probably still asleep?
 
 Then run the gate:
 
@@ -615,14 +770,16 @@ Every deterministic guard gets a paired entry in `docs/superpowers/specs/2026-07
 git checkout -b feat/240-endpoint-fallback
 git add src/agent/agent.ts src/planner/openai-compat.ts src/server/dashboard.html \
         test/agent-failure-classes.test.ts test/planner-openai-compat.test.ts \
+        test/experiment-revert.test.ts \
         docs/decisions.md docs/superpowers/specs/2026-07-12-improv-mode.md
-git commit -m "feat(240): reversible fallback when the planner endpoint is unreachable
+git commit -m "feat(240): reversible fallback when the primary planner stops producing plans
 
-An unreachable planner endpoint made the agent back off and eventually stall
-rather than plan with its configured fallback. Every existing fallback trigger
-is subscription-shaped (bad token, exhausted quota, no-progress latch), so a
-sleeping workstation left the pilot doing nothing until the box woke or the
-12-hour experiment latch fired.
+A primary planner that stops producing plans made the agent back off and
+eventually stall rather than plan with its configured fallback. Every existing
+fallback trigger is subscription-shaped (bad token, exhausted quota,
+no-progress latch), so a sleeping workstation, or a local model that answers
+but returns plans failing validation, left the pilot doing nothing until the
+box woke or the 12-hour experiment latch fired.
 
 Options considered. Reusing usingFallback: rejected, it is a one-way latch
 assigned in exactly one place and never reset, so the first overnight sleep
@@ -631,24 +788,36 @@ this change exists to capture. A boolean instead of a counter: built and
 measured, rejected, because a dual outage locked the primary out permanently.
 A health-probe endpoint: rejected, an extra call every cycle when the replan
 attempt is itself the probe. A separate watchdog task: rejected, a new
-lifecycle to own for a condition the existing consecutive-failure counter
-already expresses. Deriving the state from that counter alone: rejected, the
-success path resets it for a fallback success too, so the pilot would flap
-between planners every cycle. A millisecond retry window: rejected after
-measurement, because any constant shorter than heartbeat_minutes expires
-before the next replan reads it, and any constant longer is coupled to a
-config value nobody re-derives when it changes.
+lifecycle to own for a condition a failure counter already expresses. Arming
+off the existing consecutiveTransientFailures: rejected twice over, because a
+fallback success resets it (the pilot would flap between planners every cycle)
+and because only the transient branch touches it, so a primary answering 200
+with unusable plans armed nothing at all -- measured at 25 replans, 0 plans,
+with the fallback configured and never reached. Documenting that last gap
+rather than fixing it: rejected on size, 28 insertions against 31. A
+millisecond retry window: rejected after measurement, because any constant
+shorter than heartbeat_minutes expires before the next replan reads it, and
+any constant longer is coupled to a config value nobody re-derives.
 
-Adds a request timeout to openai-compat, one private field and two constants to
-the agent. The fetch had no AbortSignal, so probing a sleeping endpoint blocked
-the tick for the OS connect timeout; fixing that producer let the retry window
-shrink from 5 replans to 3. endpointDownReplans counts replans, not
+Adds a request timeout to openai-compat and two private fields plus two
+constants to the agent. The fetch had no AbortSignal, so probing a sleeping
+endpoint blocked the tick for the OS connect timeout; that is now bounded,
+though at 60s it is still long against a 10-second tick and the parse layer's
+single retry doubles the worst case. consecutivePrimaryFailures counts every
+recoverable failure class of the primary and nothing else, so the threshold
+means what its name says. endpointDownReplans counts replans, not
 milliseconds, so the behaviour is independent of tick rate and heartbeat
 config; the last replan of the countdown probes the primary, and the replan is
-the health check. Cleared only by a primary success, re-armed by a primary
-failure of any class, so a model that answers with unusable plans cannot park
-the pilot on a planner that never produces one. handlePlannerFailure now takes
-the planner that served, so a fallback blip is not blamed on the primary.
+the health check. Cleared only by a primary success, which also resets the
+failure count so one blip after a recovery cannot re-arm it.
+handlePlannerFailure now takes the planner that served, so a fallback blip is
+not blamed on the primary.
+
+Three assertions in experiment-revert.test.ts move. Its fixture planners throw
+a plain Error, which this change now routes to the fallback, so
+'fallback.calls === 0' stopped meaning 'the experiment has not tripped'. Each
+becomes two exact counts; the revert-count assertion above each one is
+untouched.
 
 Closes part of #240."
 git push -u origin feat/240-endpoint-fallback
@@ -672,7 +841,7 @@ gh pr create --title "feat(240): reversible fallback when the planner endpoint i
 - Consumes: the CLI surface of `src/eval/run.ts` (read at Step 2 before any invocation).
 - Produces: `docs/eval/2026-07-25-planner-baseline.md` containing a per-scorer table with columns `scorer | incumbent pass rate | n scored | n abstained`, plus the run-level COST line. Task 3 appends a second table to this same file.
 
-**Read this before running anything.** `src/eval/run.ts:221-222` exits non-zero whenever `overall < 1` or the thrash check fails. A real planner will not score 100%, so a NON-ZERO EXIT IS THE EXPECTED OUTCOME at Stage 0 and is not a broken run. Never chain these invocations with `&&`; capture the printed report.
+**Read this before running anything.** `src/eval/run.ts:221` is `if (report.overall !== null && report.overall < 1) process.exit(1);` and `:222` exits non-zero when the thrash check fails. A real planner will not score 100%, so a NON-ZERO EXIT IS THE EXPECTED OUTCOME at Stage 0 and is not a broken run. Note the `!== null` half: a run where every scorer abstains has `overall === null` and exits ZERO. So exit code 0 does NOT mean the run scored well — it means either a perfect score or nothing measurable at all, and only the printed report distinguishes them. Never chain these invocations with `&&`; capture the printed report and read it.
 
 - [ ] **Step 1: Snapshot the production event DB**
 
@@ -692,7 +861,7 @@ Expect roughly 34 MB. `./tmp/` must be gitignored; verify with `git check-ignore
 bun run src/eval/run.ts --help
 ```
 
-The invocations below were written against `src/eval/run.ts:166-223` at `381b0c6` and are correct as of that commit. Re-read the USAGE block anyway and reconcile: the flag is `--provider`, not `--planner`; there is no `--db` and no `--limit`; and harvesting is a SEPARATE invocation that writes a JSON file and exits.
+The invocations below were re-read against `src/eval/run.ts:166-223` at `5abff04` for revision 4 and are correct as of that commit. Re-read the USAGE block anyway and reconcile: the flag is `--provider`, not `--planner`; the accepted set is `mock | claude-subscription | codex-subscription | ollama | openai-compat`; there is no `--db` and no `--limit`; and harvesting is a SEPARATE invocation (`run.ts:189-200`) that writes a JSON file and returns before any planner is built.
 
 - [ ] **Step 3: Find the pilot's agent id**
 
@@ -748,7 +917,7 @@ The second is the run in which `knownSystemRef` actually scores instead of absta
 
 Read the `COST` line `formatReport` prints (`src/eval/run.ts:157-160`). It carries the USD estimate, prompt and response chars, and USD per passed check. If it reads `$0.0000` on a run of 25 real subscription calls, Step 5's check was skipped or the model id did not match a price key — stop and fix that before writing the document. A zero here is not a cheap incumbent; it is a broken measurement.
 
-There is nothing to wire: `src/eval/run.ts:3` already imports `estimateCostUsd` and `:109` already applies it per case. (Revision 2 named `src/cost/usage.ts`, which does not exist; the module is `src/server/usage.ts`.)
+There is nothing to wire: `src/eval/run.ts:3` already imports `estimateCostUsd` from `../server/usage`, and `:108-110` already reduces it across the per-case results. (Revision 2 named `src/cost/usage.ts`, which does not exist; the module is `src/server/usage.ts`.)
 
 - [ ] **Step 8: Write the baseline document**
 
@@ -837,7 +1006,11 @@ Wall-clock seconds per plan, over the Step 3 run. Two consumers: the comparison 
 
 - [ ] **Step 7: Check the timeout constant against that measurement**
 
-`OPENAI_COMPAT_TIMEOUT_MS` is 60s and its headroom was UNCONFIRMED when Task 1 shipped — no plan had been timed on this model. Compare the slowest plan from Step 6. Within 2x of 60s, raise the constant in a follow-up PR and record the measurement as its new receipt. Comfortably under, say so in the baseline document and the assumption is retired. A timeout that fires on a legitimately slow local generation would show up as transient planner failures and a fallback that never hands back.
+`OPENAI_COMPAT_TIMEOUT_MS` is 60s and its headroom was UNCONFIRMED when Task 1 shipped — no plan had been timed on this model. Compare the slowest plan from Step 6 against the constant, and mind two things the raw number hides.
+
+The budget is PER ATTEMPT, not per `plan()`. `planWithSingleRetry` (`src/planner/parse.ts:53-72`) calls `invoke` a second time when the first response fails validation, and `AbortSignal.timeout()` is built inside `invoke`, so the retry starts a fresh 60s. Measured at `timeoutMs: 600` against a server that burns 500ms then returns an unusable plan and hangs on the retry: 1116ms elapsed over 2 invokes, against 608ms over 1 on the single-attempt path. So a Stage 1 run's slowest observed plan may already be a two-attempt plan, and the worst case the pilot can hit is 120s.
+
+Judge it this way. If the slowest SINGLE attempt is within 2x of 60s, raise the constant in a follow-up PR and record the measurement as its new receipt. If the slowest attempt is comfortably under but the retry rate is non-zero, say so explicitly in the baseline document — the constant is fine and the pilot's worst-case tick cost is still 120s, which the operator should know before Stage 2. Comfortably under with a zero retry rate retires the assumption. A timeout that fires on a legitimately slow local generation shows up as transient planner failures and a fallback that never hands back.
 
 - [ ] **Step 8: Append the candidate table and verdict**
 
@@ -899,7 +1072,7 @@ Check the running container's image against the merge commit for `feat/240-endpo
 
 - [ ] **Step 4: Record the pre-swap baseline window**
 
-From the event store, for the 24 hours before the swap: plans/hour, `plan_budget_exceeded` count, credits earned, missions completed, ore mined, systems visited, and blocked-action classes by count. Known reference point: roughly 10-12 plans/hr with 6 `plan_budget_exceeded` in the hour before the #517 merge.
+From the event store, for the 24 hours before the swap: plans/hour, `plan_budget_exceeded` count, credits earned, missions completed, ore mined, systems visited, and blocked-action classes by count. A prior note put this at roughly 10-12 plans/hr with 6 `plan_budget_exceeded` in the hour before the #517 merge — treat that as a rough expectation, not a baseline. It is carried from an earlier session, no offline check can confirm it, and the pilot has merged work since. Derive the real numbers from the DB in this step and use those; if they are far off the note, say so in the window document rather than assuming the query is wrong.
 
 - [ ] **Step 5: Apply the config**
 
@@ -915,7 +1088,9 @@ Use the same priced model id Task 2 Step 5 read, so the fallback's spend lands i
 
 Let the window run. Compare against Step 4 on the same measures. `experiment:` is the deterministic exit; if it reverts, that IS the result and it is not overridden by judgment.
 
-Watch for `planner_endpoint_down` and `planner_endpoint_recovered` in the feed: they are the evidence that Task 1 works in production, which no offline test can provide. Both now carry an explicit feed colour (Task 1 Step 10) — red for down, green for recovered — so they are visible without reading payloads. A `planner_endpoint_down` with no matching `planner_endpoint_recovered` and a plan rate that keeps up is the fallback doing its job; a plan rate that drops to zero is not, and is worth an immediate revert.
+Watch the EVENT FEED, not the health pills. `planner_endpoint_down` and `planner_endpoint_recovered` are the evidence that Task 1 works in production, which no offline test can provide, and both carry an explicit feed colour (Task 1 Step 10) — red for down, green for recovered. The pills will not help: `usingFallback` is assigned only by the subscription-limit path, so it reads `false` for the whole endpoint-down window and `dashboard.html:684` and `:708` keep showing the planner as ok. Measured offline over 20 ticks with 10 replans served by the fallback. Treat it as a known gap and leave it alone during the window.
+
+A `planner_endpoint_down` with no matching `planner_endpoint_recovered` and a plan rate that keeps up is the fallback doing its job. A plan rate that drops to zero is not, and is worth an immediate revert. A `planner_endpoint_down` whose `consecutiveFailures` payload keeps climbing across repeated events would mean the emit gate is broken — one event per transition is the contract.
 
 - [ ] **Step 7: Write the window document and the lesson**
 
@@ -929,12 +1104,35 @@ Separate KNOWN from UNPROVEN. "Removes the pilot's quota draw" stays a hypothesi
 
 **Spec coverage.** Every spec section maps to a task: "the one real code change" to Task 1; Stage 0 to Task 2; Stage 1 including both case sources and all four pass conditions to Task 3; Stage 2 including the config block and the rejected-second-pilot rationale to Task 4; the prerequisites to Task 4 Step 1; the testing section's behaviors to Task 1 Step 1 with the ablations at Step 12. The spec's "interaction to verify, not assume" is resolved in Task 1's design notes with a stated answer (do not touch the backoff gate).
 
-**Three deliberate departures from the spec, all flagged for the operator.** The spec's `ENDPOINT_RETRY_MS = 10 * 60_000` is replaced by `ENDPOINT_RETRY_REPLANS = 3`, because the millisecond window was shorter than the configured replan cadence and expired before it could be read — measured, not argued. The spec does not mention a request timeout on `openai-compat.ts`; one is added, because without it the retry constant is sized to hide a blocking call in another file. And the spec's fourth test, which it describes as "the one that protects a real invariant", is deleted as UNFALSIFIABLE: both branches return the same object, so the ordering it asserts is not observable and the reorder left the suite green. The invariant itself is real, structurally guaranteed, and covered by `test/experiment-revert.test.ts` — deleting the test does not delete it. Neither the spec nor the code on `main` is edited by this plan.
+**Deliberate departures from the spec, all flagged for the operator.** The spec's `ENDPOINT_RETRY_MS = 10 * 60_000` is replaced by `ENDPOINT_RETRY_REPLANS = 3`, because the millisecond window was shorter than the configured replan cadence and expired before it could be read — measured, not argued. The spec does not mention a request timeout on `openai-compat.ts`; one is added, because without it the retry constant is sized to hide a blocking call in another file. The spec's fourth test, which it describes as "the one that protects a real invariant", is deleted as UNFALSIFIABLE: both branches return the same object, so the ordering it asserts is not observable and the reorder left the suite green. The invariant itself is real, structurally guaranteed, and covered by `test/experiment-revert.test.ts` — deleting the test does not delete it. And the spec assumes the endpoint-down state keys off transient failures; it keys off a per-primary failure count instead, so a reachable-but-unusable primary is handled by the same mechanism. Neither the spec nor the code on `main` is edited by this plan.
+
+**One existing test file is modified, which earlier revisions promised not to touch.** `test/experiment-revert.test.ts`, three assertions, each growing from one exact count to two. That promise was worth keeping, and this breaks it knowingly: the file's fixture planners ARE the pure catch-all shape, so routing that shape to the fallback necessarily moves its counters. A reviewer should check that the three replacements pin exact values rather than loosening to `toBeGreaterThan`, and that `expect(reverts(store).length).toBe(0)` still sits above each one.
 
 **Placeholder scan.** No TBDs. Two placeholders are intentional: `<workstation-lan-ip>`, because the real value must not enter the public repo, and `<agent-id>` / `<production-model-id>`, which Task 2 Steps 3 and 5 instruct the implementer to read from the snapshot DB and the pilot's config rather than guess.
 
-**Type consistency.** `endpointDownReplans` is spelled identically in Steps 5, 6, 7, 8, 9 and in the ablation table. It appears in no interface and no test file, because it is private. `ENDPOINT_DOWN_THRESHOLD` matches the spec's committed value; `ENDPOINT_RETRY_REPLANS` is the replacement named above. `planner_endpoint_down` and `planner_endpoint_recovered` match the spec's event names and are used consistently in the tests, the implementation steps, the dashboard mapping, and the ablation table. The `retryMs` payload key becomes `retryReplans`, matching the unit change; nothing reads the old key.
+**Type consistency.** `endpointDownReplans` and `consecutivePrimaryFailures` are spelled identically in Steps 5, 6, 8, 9 and in the ablation table. Neither appears in an interface or a test file, because both are private. `ENDPOINT_DOWN_THRESHOLD` matches the spec's committed value and now genuinely counts primary failures; `ENDPOINT_RETRY_REPLANS` is the replacement named above. `planner_endpoint_down` and `planner_endpoint_recovered` match the spec's event names and are used consistently in the tests, the implementation steps, the dashboard mapping, and the ablation table. The `retryMs` payload key becomes `retryReplans`, matching the unit change; nothing reads the old key.
 
-**Persisted-state schema tolerance does not apply.** The project's binding rule covers artifacts that outlive the schema that wrote them. `snapshot()` is computed live at `src/server/server.ts:298` and never persisted, and the new field is not in it anyway.
+**Persisted-state schema tolerance does not apply.** The project's binding rule covers artifacts that outlive the schema that wrote them. `snapshot()` is computed live at `src/server/server.ts:298` and never persisted, and neither new field is in it.
 
-**Verification status of this plan.** Task 1 was applied verbatim in a throwaway worktree at `381b0c6`: full suite 1451 pass / 1 skip / 0 fail, `tsc --noEmit` clean, and all nine ablations in Step 12 observed RED with exactly the tests listed and a clean typecheck on every ablated tree. Measured on that tree: 15 paid fallback calls per 24 replans against a permanently dead primary, 2 paid plans wasted between the primary recovering and the probe noticing, and 0 plan events across the final 10 replans when the any-class re-arm is removed and the primary answers with plans that fail validation. Tasks 2, 3 and 4 are unverified by construction — they need the production DB, real quota, and the operator's workstation, none of which an offline check can stand in for. Their command lines were reconciled against `src/eval/run.ts:166-223`, `src/eval/harvest.ts:20`, `src/store/store.ts:102-109` and `src/server/usage.ts:69-87` at `381b0c6`, which is a stronger claim than revision 2's ("the expected shape, not verified syntax") but is still not a claim that they have been run.
+**Verification status of this plan.** Task 1 was applied verbatim in a throwaway worktree cut from `5abff04` and measured for THIS revision; nothing below is carried from an earlier one.
+
+KNOWN, with the evidence:
+
+- Full suite 1454 tests, 1453 pass / 1 skip / 0 fail, `tsc --noEmit` clean. The unmodified tree at `5abff04` is 1443 tests, so this adds 11.
+- All ten ablations in Step 12 observed RED with exactly the tests listed, typecheck clean on every ablated tree, and the restored tree re-measured green.
+- The N table, over exactly 24 replans against a dead primary: N=2 11 paid / 13 probes, N=3 15 / 9, N=4 17 / 7, N=5 18 / 6, paid calls equal to plans in every row, post-recovery waste equal to N-1 in every row.
+- Revision 3's failure shape: 30 heartbeat-spaced replans against a primary answering only with unusable plans gave 25 primary calls, 0 fallback calls, 0 plans, 25 `planner_error`.
+- The millisecond design, rebuilt to check it: 20 heartbeat-spaced ticks, 0 fallback calls, 16 down events, 0 plans.
+- The retry doubling: 1116ms over 2 invokes against a 600ms budget, versus 608ms over 1.
+- `usingFallback` false across a 20-tick window with 10 fallback-served replans.
+- The decrement's placement: 16 ticks, 14 replans, 2 non-replan ticks, countdown unchanged across both.
+- Branch order in `activePlanner()` is unobservable: the reorder was applied and the full suite stayed green.
+- Source anchors re-read at `5abff04`: `agent.ts` 135, 375, 976, 1604, 1659, 1916, 1919, 1922, 2536, 2721; `openai-compat.ts` 14-23, 46-67, 80; `parse.ts` 53-72; `usage-poll.ts:38`; `run.ts` 3, 108-110, 171, 221-222; `harvest.ts:20`; `store.ts:102-109`; `usage.ts` 69-87; the nine `SCORERS` entries; `no-progress-detector.ts:78-79`.
+
+UNPROVEN, and what would settle each:
+
+- `OPENAI_COMPAT_TIMEOUT_MS = 60_000` has no measurement behind its VALUE. Settled by Task 3 Step 6's seconds-per-plan on the real model.
+- The counting block's placement after the two latching branches is correct by inspection and cannot be ablated, because both latches make the primary unreachable after their first occurrence. There is no test and there will not be one.
+- The ~127s Linux connect timeout is arithmetic from a documented kernel default, not a measurement on the deploy host.
+- Tasks 2, 3 and 4 are unverified by construction: they need the production DB, real quota, and the operator's workstation. Their command lines were reconciled against the sources listed above, which is not a claim that they have been run.
+- Nothing here is evidence that a local planner is cheaper or good enough. That is what Stages 0 through 2 exist to find out, and a FAIL at Stage 1 ends the exercise.
