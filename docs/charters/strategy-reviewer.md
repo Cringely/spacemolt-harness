@@ -65,8 +65,16 @@ must not swallow its window.
    - class frequency over the window (which blocks dominate);
    - NEW classes never seen before (each = the game teaching a rule we don't know → candidate
      briefing line or deterministic guard);
-   - BROKEN capabilities: any action at ~100% lifetime failure (the buy action failed 86/86 for
-     days before anyone looked). Read from #158's deterministic taxonomy (GET /api/agents/:id/failures or the failureTaxonomy Docker import) — deterministic aggregation, LLM interpretation only on the summary.
+   - BROKEN capabilities: an action failing at ~100% BOTH across its lifetime and inside the
+     window (the buy action failed 86/86 for days before anyone looked). Read from #158's
+     deterministic taxonomy (GET /api/agents/:id/failures or the failureTaxonomy Docker import) —
+     deterministic aggregation, LLM interpretation only on the summary. Each entry carries two
+     pairs: `attempts`/`failures` are LIFETIME, `windowAttempts`/`windowFailures` are the window
+     the report is written against. **Quote the window pair when you claim a rate over the
+     window, and label the lifetime pair as lifetime** — issue #491 published a lifetime 27/27
+     as a 72h rate for an action with zero attempts in that window, and six duplicate issues
+     followed (#518). An action absent from this list is not attempted or not broken; it is
+     never a finding.
 
 ## Adapt-lever ladder (smallest lever that fits the finding)
 
