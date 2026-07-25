@@ -115,7 +115,7 @@ export interface BrokenCapability {
   failureRate: number; // failures / attempts, LIFETIME
   windowAttempts: number; // blocked + succeeded INSIDE windowHours (always >= 1 here)
   windowFailures: number; // blocked inside windowHours
-  topClass: string; // dominant failure class for this action
+  topClass: string; // dominant failure class IN-WINDOW -- same span as windowFailures
 }
 
 export interface FailureTaxonomy {
@@ -178,8 +178,19 @@ export function failureTaxonomy(
       if (action !== undefined) {
         const cap = byAction.get(action) ?? newCap();
         cap.failures++;
-        if (e.ts >= cutoff) cap.winFailures++;
-        cap.classCounts.set(cls, (cap.classCounts.get(cls) ?? 0) + 1);
+        // Window-scoped, in lockstep with winFailures above -- topClass names
+        // the failure in a finding that is published as a window claim, so it
+        // has to come from the same span as the counts beside it (#518 review).
+        // Total, not just safer: the filter below drops any entry with
+        // winFailures === 0 (a rate over a non-zero denominator cannot reach
+        // 0.95 with a zero numerator), and this increment fires under exactly
+        // the same guard as winFailures, so every entry that SHIPS has at least
+        // one in-window class count and a real topClass. Entries left with the
+        // UNCLASSIFIED default are precisely the ones the filter discards.
+        if (e.ts >= cutoff) {
+          cap.winFailures++;
+          cap.classCounts.set(cls, (cap.classCounts.get(cls) ?? 0) + 1);
+        }
         byAction.set(action, cap);
       }
       if (e.ts >= cutoff) {
@@ -237,13 +248,20 @@ export function failureTaxonomy(
     // claim published into the backlog. Issue #491 filed `scan 27/27` with ZERO
     // scan attempts inside the claimed window (last attempt eleven days back),
     // and `survey_system 11/11` while its two most recent attempts had
-    // SUCCEEDED once the scanner was fitted. Both gates below are needed and
-    // neither replaces the other:
-    //   - windowAttempts >= 1: an action nobody tried recently is NOT ATTEMPTED,
-    //     never 100% failed. A rate with an empty denominator is not a rate.
-    //   - the window's own rate must clear the same bar: recent successes are
-    //     the game telling us the capability works now, and they must not be
-    //     outvoted by a dead history.
+    // SUCCEEDED once the scanner was fitted. The window rate clause is the one
+    // that does the work, and it covers both halves:
+    //   - recent successes are the game telling us the capability works now,
+    //     and they must not be outvoted by a dead history;
+    //   - an action nobody tried recently is NOT ATTEMPTED, never 100% failed.
+    // The `windowAttempts > 0` clause is REDUNDANT today and kept deliberately:
+    // with a zero denominator the rate is 0/0 = NaN, and every NaN comparison
+    // is false, so the rate clause already excludes those entries -- by
+    // accident of IEEE-754, not by intent. Dropping the guard leaves the suite
+    // green (verified by deleting this line: 73 pass, 0 fail across
+    // failures/server/strategy-review-dump), which is exactly why it stays. An
+    // explicit "a rate with an empty denominator is not a rate" beats resting
+    // the not-attempted case on NaN semantics that a later reshape of the rate
+    // clause would silently take away. It is a guard, not a second filter.
     // The window is deliberately NOT held to BROKEN_CAPABILITY_MIN_ATTEMPTS --
     // that floor guards against "one bad afternoon" and the lifetime pair
     // already carries it. Applying it here too was the simpler alternative

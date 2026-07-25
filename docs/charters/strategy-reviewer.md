@@ -119,6 +119,8 @@ pull is deterministic and stays cheap.
 
 ## CHANGELOG
 
+- v1.5 (2026-07-25) — broken-capability entries carry both pairs; quote the window pair against a
+  window claim (#518/#491).
 - v1.0 (2026-07-13) — initial charter (#164, council adoption #3; method per #142/#158, L-21).
 - v1.1 (2026-07-13) — explicit caveman EXEMPTION recorded (judgment role; the why is the
   deliverable), per the compression-registers decision (docs/decisions.md 2026-07-14).
