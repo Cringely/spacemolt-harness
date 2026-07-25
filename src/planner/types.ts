@@ -313,6 +313,58 @@ export interface PlanContext {
   // nearby entities and not in transit); the digest then renders no location
   // section (ABSENCE IS NOT A VERDICT, #94).
   locationInfo?: LocationInfo;
+  // Station geography (issue #517): confirmed station systems from the pilot's
+  // OWN docking history -- most recently confirmed first, capped
+  // (MAX_STATION_SIGHTINGS), and never including the system it is in right now.
+  // The gap this closes (live 2026-07-25): `Connections` names only the systems
+  // one hop away, so `travel_to{system_id}` -- which reaches any system several
+  // jumps out, and which the digest already tells the planner to prefer -- had
+  // no candidate ids at all. Starved of destinations, the pilot guessed: 8 jumps
+  // in 48 minutes and 70 planner calls in 6h hunting for somewhere to refuel,
+  // while reasoning from an NPC's chat prose about a station it had itself
+  // docked at nine hours earlier.
+  // Derived from data already in our event store (successful `dock` results),
+  // so it costs no game call and assumes no response shape. Undefined/empty
+  // until the pilot has docked somewhere -- the digest then renders no section
+  // (ABSENCE IS NOT A VERDICT, #94: an empty memory is "we have not confirmed
+  // one", never "there are no stations").
+  knownStations?: StationSighting[];
+}
+
+// Station geography (issue #517): one confirmed station system.
+//
+// TWO ids, because arriving in the right system is not arriving at the station.
+// `systemId` is the travel_to target; `stationPoiId` is the in-system travel
+// target that actually puts the ship at the dock. Live trace, 2026-07-25
+// 01:00-01:03: `jump{gold_run}` landed the ship at `aurelia` (the system's SUN),
+// the immediately following bare `dock` failed "No station at this location",
+// and only `travel{gold_run_extraction_hub}` then `dock` worked. The reference
+// says the same thing in two lines: travel moves between POIs INSIDE a system
+// while jump crosses between systems (upstream/docs/travel.md:3), and "`dock`
+// requires being at a POI with a base" (travel.md:51). A record carrying only
+// the system id leaves the planner exactly one failed dock short.
+//
+// Both ids come from the same place: the ship's OWN position on the tick a dock
+// (or a docked service action) succeeded -- `StatusSnapshot.systemId` and
+// `.poiId`, structured fields, never parsed from arrival text. Docking requires
+// already being at a POI with a base and does not move the ship, so the POI it
+// was standing at IS the station. `stationPoiId` is undefined only for rows
+// written before the field existed, or a tick whose status carried no position.
+//
+// `station` is the game-authored display name (bounded at the producer, see
+// STATION_NAME_MAX) so the planner can connect a name it meets in NPC or chat
+// prose to a system it can fly to. `services` holds what a success has PROVEN
+// works at THIS station -- market, crafting; see STATION_SERVICE_BY_ACTION for
+// why refuel and repair are deliberately not in that set -- and is dropped
+// wholesale when a later observation lands at a different station in the same
+// system, because a service is a fact about the station that proved it. Empty
+// means unproven, never known-absent. `lastSeen` orders the shortlist by recency.
+export interface StationSighting {
+  systemId: string;
+  stationPoiId?: string;
+  station?: string;
+  services: string[];
+  lastSeen: number; // epoch ms
 }
 
 // Purchase discovery (issue #220): one estimate_purchase answer. itemId/name come

@@ -17,6 +17,11 @@ export interface StatusSnapshot {
                             // existing StatusSnapshot literals elsewhere in
                             // the test suite don't need updating just to add
                             // a field they don't use.
+  // The POI the ship is at RIGHT NOW, docked or not. VERIFIED live
+  // (test/fixtures/spacemolt-probe-2026-07-12.json: get_status.location.poi_id
+  // = "moonshadow_iii", the same id get_system's POI list carries) -- so it is
+  // in the POI id space `travel{id}` takes, unlike dockedAt (a BASE id).
+  poiId?: string | null;
   dockedAt?: string | null; // base id if docked, else null; added for F-1
                             // surroundings (see planner/types.ts) -- same
                             // "optional, additive" reasoning as systemId above.
@@ -541,6 +546,7 @@ const StatusSchema = z.object({
     docked_at: z.string().nullable(),
     in_transit: z.boolean(),
     system_id: z.string().nullable().optional(),
+    poi_id: z.string().nullable().optional(),
   }).partial().default({}),
   // .catch([]) rather than .default([]): defends against the whole `cargo`
   // key being present but not an array (wrong type entirely), not just absent
@@ -780,6 +786,7 @@ export class SpacemoltClient implements GameApi {
       docked: s.location.docked_at != null,
       inTransit: s.location.in_transit ?? false,
       systemId: s.location.system_id ?? null,
+      poiId: s.location.poi_id ?? null,
       dockedAt: s.location.docked_at ?? null,
       // stall-watcher v4: keep only the numeric stats (drop the nested
       // credits_earned_taxable_by_category object). undefined when the block is

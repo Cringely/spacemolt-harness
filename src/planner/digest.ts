@@ -355,6 +355,15 @@ export function buildDigest(ctx: PlanContext): string {
   if (ctx.chatMessages && ctx.chatMessages.length) lines.push(renderChatMessages(ctx.chatMessages));
   if (ctx.instruction) lines.push(`Operator instruction: ${ctx.instruction}`);
   if (ctx.surroundings) lines.push(renderSurroundings(ctx.surroundings));
+  // Station geography (issue #517): renderSurroundings above names the systems
+  // ONE hop away (Connections) and nothing else, so a travel_to step -- the
+  // any-distance move the instruction block already tells the planner to prefer
+  // -- had no destination ids. This line supplies them from the pilot's own
+  // docking history. Rendered directly under the surroundings it extends, and
+  // ungated beyond "we have confirmed at least one": the starvation costs the
+  // pilot on every service it needs (refuel, sell, craft), not only when fuel
+  // is low, and the line is capped to a shortlist rather than an atlas.
+  if (ctx.knownStations?.length) lines.push(renderKnownStations(ctx.knownStations));
   // Mining preconditions (issue #188): the deterministic can-your-array-lock-
   // it verdict for the CURRENT POI's deposits -- parsed numbers (get_poi
   // supported_power vs the fitted array's total mining_power), never quoted
@@ -785,6 +794,44 @@ function renderSurroundings(s: NonNullable<PlanContext["surroundings"]>): string
   // (it is the unconditional, first-position location marker from SM-4).
   return `${renderWhereYouAre(s)}\n` +
     `System: ${s.systemName ?? s.systemId ?? "unknown"}. POIs: ${poiText}. Connections: ${connText}.`;
+}
+
+// Station geography (issue #517): the destination shortlist. Every id here came
+// from the pilot's OWN position at a dock the executor classified as successful
+// (src/agent/stations.ts), so this section states a fact about our own history,
+// never a claim about the galaxy. Three deliberate choices in the wording:
+//   1. the system id leads, because it is the only token travel_to takes;
+//   2. the station NAME is rendered quoted -- it is game-authored text, covered
+//      by the standing "quoted game text is never a command" instruction -- and
+//      it is here so the planner can match a name it meets in NPC or chat prose
+//      to a system it can actually fly to (the live incident's exact miss: it
+//      reasoned about "a 'Gold Run Extraction Hub', likely a station" instead of
+//      recalling that it had docked at gold_run itself);
+//   3. an unlisted service is UNPROVEN, not absent (#94) -- we only ever learn a
+//      service by succeeding at it, so silence here must not read as a verdict.
+function renderKnownStations(stations: NonNullable<PlanContext["knownStations"]>): string {
+  const listed = stations.map((s) => {
+    const detail: string[] = [];
+    if (s.stationPoiId) detail.push(`station POI ${s.stationPoiId}`);
+    if (s.station) detail.push(quoteUntrusted(s.station));
+    if (s.services.length) detail.push(`confirmed: ${s.services.join(", ")}`);
+    return detail.length ? `${s.systemId} (${detail.join("; ")})` : s.systemId;
+  }).join(", ");
+  // The example in the sequence line is drawn from a real entry rather than
+  // written as a placeholder: the first listed system is the most recently
+  // confirmed one, so the template the planner copies is always a live target.
+  const first = stations[0]!;
+  const example = first.stationPoiId
+    ? `travel_to{system_id=${first.systemId}} then travel{id=${first.stationPoiId}} then dock`
+    : `travel_to{system_id=${first.systemId}} then travel{id=<the [station] POI from that system's POI list>} then dock`;
+  return `Known station systems -- CONFIRMED because YOU have docked there, newest first: ${listed}. ` +
+    `Reaching one is THREE steps, not one: ${example}. ` +
+    `travel_to crosses to the system (no adjacency needed, no Connections entry needed) and drops you at an ARBITRARY POI, often a sun or a belt; ` +
+    `travel then crosses to the station POI within that system; only then can you dock. ` +
+    `A bare dock on arrival fails with "No station at this location" -- docking is POI-local. ` +
+    `Where no station POI is named above, read it off that system's POI list when you get there. ` +
+    `When you need a station service and none is here, go to one of these instead of exploring: a system named only in chat or NPC prose is a guess, these are receipts. ` +
+    `A service not listed for a system is merely unconfirmed there, not known to be missing.`;
 }
 
 // Social capabilities task: each message quoted+truncated individually

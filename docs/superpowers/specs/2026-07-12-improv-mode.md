@@ -63,6 +63,21 @@ Resources / survival:
 - If you've already committed to a remedy (heading to refuel), don't re-open that decision every
   tick just because the condition still reads bad. Commit until it completes or provably fails —
   re-deciding a fix already under way is the classic token-burning livelock.
+- When you need a station and none is here, go to one you have ALREADY DOCKED AT — your briefing
+  lists them as confirmed station systems, and `travel_to{system_id}` reaches any of them from
+  anywhere, no adjacency needed. Exploring for a station is the expensive mistake: live
+  2026-07-25, a pilot spent 8 jumps in 48 minutes and 70 planner calls hunting for a refuel while
+  reasoning from an NPC's chat prose about a station it had itself docked and refuelled at nine
+  hours earlier. A station named in chat or NPC prose is a rumour; one you docked at is a receipt.
+  (Also a §5 memory: the shortlist is compiled from your own successful docks and survives restarts.)
+- Getting to a station is THREE steps, never one: `travel_to{system_id}`, then `travel{id=<station
+  POI>}`, then `dock`. A `jump` or `travel_to` drops you at an ARBITRARY POI in the destination
+  system — often the sun — and `dock` is POI-local ("`dock` requires being at a POI with a base",
+  upstream/docs/travel.md:51). A bare `dock` on arrival returns "No station at this location" and
+  costs you a tick. Live 2026-07-25 01:00: `jump gold_run` → arrived at `aurelia` → `dock` failed →
+  `travel gold_run_extraction_hub` → `dock` worked. That failure class ran 23x in 24h. Your briefing
+  names the station POI id for systems where it is known; where it is not, read it off the POI list
+  when you arrive — it is the POI marked `[station]`.
 
 Verify effects (never trust a success envelope):
 - Before selling, note the item's cargo quantity; after, re-query and confirm it dropped. A
@@ -500,6 +515,22 @@ The model gets the wheel, not the safety switches:
   control there, since you read the type from `get_system` yourself). The map memory stays
   deterministic in both modes: a self-driving agent that talks itself into retrying a refused POI
   is still re-briefed the learned refusal, and the lesson survives restarts.
+- **Station geography memory** (#517, live 2026-07-25): every successful `dock` records the system
+  it happened in, the STATION POI within that system, and the station's name — bounded map memory
+  (8 systems, oldest-evicted), restart-safe (rebuilt from persisted `station_observed` events on
+  construction). Both ids come from the ship's own pre-action position (`get_status.location`'s
+  `system_id` and `poi_id`), which is exact rather than inferred: docking requires already being at
+  a POI with a base and does not move you, so the POI you were at IS the station, even in a system
+  holding two of them. Success comes from the executor's own outcome classification, never from
+  parsed prose, so a reworded game message can cost only the display name, never an id.
+  Services are tagged only for actions the reference documents as REQUIRING the station service
+  (market, crafting). Refuel and repair are deliberately excluded: both fall back to burning cargo
+  consumables and report success, so a docked success proves nothing about the station, and a wrong
+  service tag routes the pilot somewhere that cannot serve it. Both modes get the compiled
+  shortlist in their briefing; the §4 rules above are the behavioural half. It stays deterministic
+  because the failure it fixes is a memory failure, not a judgment one: the knowledge was in the
+  event store the whole time and no amount of reasoning could recover it from a prompt that never
+  carried it.
 - **Catalog-gated jettison guard** (#94, operator mandate 2026-07-13): a `jettison` of an item
   whose catalog `base_value` clears the value floor (`JETTISON_VALUE_FLOOR`, 50cr — see
   `src/agent/executor.ts`) is short-circuited to a blocked wake naming the value and the

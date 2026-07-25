@@ -74,7 +74,7 @@ describe("SpacemoltClient", () => {
       structuredContent: {
         ship: { fuel: 40, max_fuel: 100, hull: 80, max_hull: 100, cargo_used: 5, cargo_capacity: 50 },
         player: { credits: 1234 },
-        location: { docked_at: "base-1", in_transit: false, system_id: "sys-alpha" },
+        location: { docked_at: "base-1", in_transit: false, system_id: "sys-alpha", poi_id: "poi-1" },
       },
     }));
     const client = makeClient();
@@ -83,7 +83,7 @@ describe("SpacemoltClient", () => {
     expect(s).toEqual({
       credits: 1234, fuel: 40, maxFuel: 100, hull: 80, maxHull: 100,
       cargoUsed: 5, cargoCapacity: 50, docked: true, inTransit: false, systemId: "sys-alpha",
-      dockedAt: "base-1", cargo: [],
+      poiId: "poi-1", dockedAt: "base-1", cargo: [],
     });
   });
 
