@@ -195,10 +195,13 @@ export function rememberStation(
  * harness executed and recorded as succeeding. It does NOT make the position
  * generally trustworthy, because the ship can change system with no successful
  * move on the record at all. On the production snapshot, 164 of 1,234 observed
- * system changes had none: 90 with no action rows whatsoever between the two
- * snapshots, and most of the rest a `jump:wait ... jump:blocked` retry chain
- * where the server moved the ship anyway. The reference says so outright
- * (docs/game-reference/upstream/docs/travel.md:36): "If you abort early the
+ * system changes had none: 90 with no MOVE rows (`jump`/`travel_to`/`travel`)
+ * between the two snapshots, and most of the rest a `jump:wait ... jump:blocked`
+ * retry chain where the server moved the ship anyway. (49 of those 90 windows do
+ * carry other action rows -- only 41 are empty of actions entirely. The 164 of
+ * 1,234 figure is exact under every definition; the 90 is not, so it is stated
+ * with its predicate.) The reference says so outright
+ * (docs/game-reference/upstream/docs/travel.md:33): "If you abort early the
  * movement still completes server-side; verify where you are with `get_status`
  * before retrying." A snapshot is the only thing that actually establishes
  * position; this rule only keeps us from trusting a position we KNOW we left.

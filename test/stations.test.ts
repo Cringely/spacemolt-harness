@@ -762,7 +762,7 @@ describe("historical station backfill (issue #525)", () => {
 
   // ---- `travel` is a move WITHIN a system, and must never clear the position --
   //
-  // THE receipt (docs/game-reference/upstream/docs/travel.md:5): "`travel` moves
+  // THE receipt (docs/game-reference/upstream/docs/travel.md:3): "`travel` moves
   // you between POIs inside a system, `jump` carries you along a lane to an
   // adjacent system." So a travel cannot change which system you are in, and
   // travel-then-dock is the ORDINARY way to reach a station -- you arrive in the

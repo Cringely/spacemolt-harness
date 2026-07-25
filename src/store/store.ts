@@ -200,7 +200,7 @@ export class Store {
    *
    * `travel` is deliberately NOT in that list, and it is the highest-consequence
    * word in this query. The reference is explicit
-   * (docs/game-reference/upstream/docs/travel.md:5): "`travel` moves you between
+   * (docs/game-reference/upstream/docs/travel.md:3): "`travel` moves you between
    * POIs inside a system, `jump` carries you along a lane to an adjacent
    * system." An intra-system hop cannot invalidate a system id, and travel-then-
    * dock is the NORMAL way to reach a station -- so treating it as a move would
