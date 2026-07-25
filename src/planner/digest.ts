@@ -812,13 +812,24 @@ function renderSurroundings(s: NonNullable<PlanContext["surroundings"]>): string
 function renderKnownStations(stations: NonNullable<PlanContext["knownStations"]>): string {
   const listed = stations.map((s) => {
     const detail: string[] = [];
+    if (s.stationPoiId) detail.push(`station POI ${s.stationPoiId}`);
     if (s.station) detail.push(quoteUntrusted(s.station));
     if (s.services.length) detail.push(`confirmed: ${s.services.join(", ")}`);
     return detail.length ? `${s.systemId} (${detail.join("; ")})` : s.systemId;
   }).join(", ");
+  // The example in the sequence line is drawn from a real entry rather than
+  // written as a placeholder: the first listed system is the most recently
+  // confirmed one, so the template the planner copies is always a live target.
+  const first = stations[0]!;
+  const example = first.stationPoiId
+    ? `travel_to{system_id=${first.systemId}} then travel{id=${first.stationPoiId}} then dock`
+    : `travel_to{system_id=${first.systemId}} then travel{id=<the [station] POI from that system's POI list>} then dock`;
   return `Known station systems -- CONFIRMED because YOU have docked there, newest first: ${listed}. ` +
-    `Reach any of them with travel_to{system_id=<the bare id above, e.g. ${stations[0]!.systemId}>} from wherever you are -- ` +
-    `travel_to needs no Connections entry and no adjacency. ` +
+    `Reaching one is THREE steps, not one: ${example}. ` +
+    `travel_to crosses to the system (no adjacency needed, no Connections entry needed) and drops you at an ARBITRARY POI, often a sun or a belt; ` +
+    `travel then crosses to the station POI within that system; only then can you dock. ` +
+    `A bare dock on arrival fails with "No station at this location" -- docking is POI-local. ` +
+    `Where no station POI is named above, read it off that system's POI list when you get there. ` +
     `When you need a station service and none is here, go to one of these instead of exploring: a system named only in chat or NPC prose is a guess, these are receipts. ` +
     `A service not listed for a system is merely unconfirmed there, not known to be missing.`;
 }

@@ -331,17 +331,32 @@ export interface PlanContext {
   knownStations?: StationSighting[];
 }
 
-// Station geography (issue #517): one confirmed station system. `systemId` is
-// the travel_to target and the only load-bearing field -- it comes from the
-// pilot's own position at a dock the executor classified as successful, never
-// from parsed prose. `station` is the game-authored display name (bounded at
-// the producer, see STATION_NAME_MAX) and exists so the planner can connect a
-// name it meets in NPC or chat prose to a system id it can actually fly to.
-// `services` holds what a docked success has PROVEN works there (refuel,
-// market, repair, crafting -- see STATION_SERVICE_BY_ACTION); empty means
-// unproven, never absent. `lastSeen` orders the shortlist by recency.
+// Station geography (issue #517): one confirmed station system.
+//
+// TWO ids, because arriving in the right system is not arriving at the station.
+// `systemId` is the travel_to target; `stationPoiId` is the in-system travel
+// target that actually puts the ship at the dock. Live trace, 2026-07-25
+// 01:00-01:03: `jump{gold_run}` landed the ship at `aurelia` (the system's SUN),
+// the immediately following bare `dock` failed "No station at this location",
+// and only `travel{gold_run_extraction_hub}` then `dock` worked. The reference
+// says the same thing in two lines: travel moves between POIs INSIDE a system
+// while jump crosses between systems (upstream/docs/travel.md:3), and "`dock`
+// requires being at a POI with a base" (travel.md:51). A record carrying only
+// the system id leaves the planner exactly one failed dock short.
+//
+// `systemId` is the only field that is never absent: it comes from the pilot's
+// own position at a dock the executor classified as successful, never from
+// parsed prose. `stationPoiId` is read from get_system's structured POI data
+// (PoiInfo.hasBase / the docked current POI), not from arrival text, and stays
+// undefined until a replan in that system supplies it. `station` is the
+// game-authored display name (bounded at the producer, see STATION_NAME_MAX) so
+// the planner can connect a name it meets in NPC or chat prose to a system it
+// can fly to. `services` holds what a docked success has PROVEN works there
+// (refuel, market, repair, crafting -- see STATION_SERVICE_BY_ACTION); empty
+// means unproven, never absent. `lastSeen` orders the shortlist by recency.
 export interface StationSighting {
   systemId: string;
+  stationPoiId?: string;
   station?: string;
   services: string[];
   lastSeen: number; // epoch ms

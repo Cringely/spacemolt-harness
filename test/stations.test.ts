@@ -31,11 +31,23 @@ const segin: SystemInfo = {
 
 // The system the pilot had confirmed by docking: gold_run / Gold Run Extraction
 // Hub, one of the 12 station systems a query over the live store recovered from
-// successful dock results alone.
+// successful dock results alone. Its POI list carries the sun the 2026-07-25
+// 01:00 jump actually landed at, so the fixture reproduces the trap: arriving in
+// this system does NOT put the ship at the station.
 const goldRun: SystemInfo = {
   id: "gold_run", name: "Gold Run", connections: ["xihe"],
-  pois: [{ id: "gold_run_hub", name: "Gold Run Extraction Hub", type: "station", hasBase: true }],
-  currentPoi: { id: "gold_run_hub", name: "Gold Run Extraction Hub", type: "station", hasBase: true },
+  pois: [
+    { id: "aurelia", name: "Aurelia", type: "sun" },
+    { id: "gold_run_extraction_hub", name: "Gold Run Extraction Hub", type: "station", hasBase: true },
+  ],
+  currentPoi: { id: "gold_run_extraction_hub", name: "Gold Run Extraction Hub", type: "station", hasBase: true },
+};
+
+// gold_run as seen from the sun, where a jump drops you: same POI list, but the
+// ship is at `aurelia` and undocked. This is the 01:00-01:01 position.
+const goldRunAtSun: SystemInfo = {
+  ...goldRun,
+  currentPoi: { id: "aurelia", name: "Aurelia", type: "sun" },
 };
 
 /**
@@ -66,14 +78,22 @@ function fakeGame(opts: {
   return { api, state };
 }
 
-/** Drives one dock at `system`, so the agent learns that station. */
+/**
+ * Drives one dock at `system`, so the agent learns that station.
+ *
+ * Three ticks, because the two halves of a sighting are learned at two
+ * different seams: the dock itself teaches the SYSTEM (the executor holds the
+ * action and the status but no map), and the replan after it teaches the
+ * in-system STATION POI (a replan holds fresh get_system data).
+ */
 async function dockOnce(store: Store, system: SystemInfo, resultText: string, now: number): Promise<void> {
   const { api } = fakeGame({ system, status: { systemId: system.id }, results: { dock: resultText } });
   const agent = new Agent({
     id: "a1", persona: "miner", api, store, planner: new MockPlanner([dockPlan]), config, now: () => now,
   });
   await agent.runOnce(); // wake: no_plan -> replan
-  await agent.runOnce(); // dock -> success, station learned
+  await agent.runOnce(); // dock -> success, system learned
+  await agent.runOnce(); // wake: plan_done -> replan, station POI learned
 }
 
 describe("station geography (issue #517)", () => {
@@ -111,9 +131,12 @@ describe("station geography (issue #517)", () => {
     const digest = buildDigest(ctx);
     expect(digest).toContain("gold_run");
     expect(digest).toContain("Gold Run Extraction Hub");
-    // and it must be usable: the id is offered as a travel_to target, not just
-    // mentioned somewhere in the prose.
-    expect(digest).toContain("travel_to{system_id=");
+    // Usable, not merely mentioned: the prompt has to carry the WHOLE route.
+    // A system id alone leaves the planner one failed dock short -- live
+    // 2026-07-25 01:00, a jump into gold_run landed at the sun and the bare
+    // dock that followed returned "No station at this location".
+    expect(digest).toContain("travel_to{system_id=gold_run}");
+    expect(digest).toContain("travel{id=gold_run_extraction_hub}");
   });
 
   // Restart safety is the whole point of persisting this: the knowledge the live
@@ -121,18 +144,27 @@ describe("station geography (issue #517)", () => {
   test("a station confirmed by docking survives a restart", async () => {
     const store = new Store(":memory:");
     await dockOnce(store, goldRun, "Docked at Gold Run Extraction Hub", 1_000_000);
-    expect(store.recentEventsByType("a1", "station_observed", 10).length).toBe(1);
+    // Two facts, two events: the system from the dock, the station POI from the
+    // replan that followed it.
+    expect(store.recentEventsByType("a1", "station_observed", 10).length).toBe(2);
 
-    // "restart": a fresh Agent over the same store, elsewhere in the galaxy.
+    // "restart": a fresh Agent over the same store, elsewhere in the galaxy,
+    // with no plan in flight so its first tick replans (the resumed dock plan
+    // would otherwise execute first, and this test is about the memory).
+    store.clearPlan("a1");
     const { api } = fakeGame({ system: segin, status: { systemId: "segin" } });
     const planner = new MockPlanner([dockPlan]);
     const agent = new Agent({
       id: "a1", persona: "miner", api, store, planner, config, now: () => 3_000_000,
     });
     await agent.runOnce();
-    expect(planner.contexts.at(-1)!.knownStations).toEqual([
-      { systemId: "gold_run", station: "Gold Run Extraction Hub", services: [], lastSeen: 1_000_000 },
-    ]);
+    expect(planner.contexts.at(-1)!.knownStations).toEqual([{
+      systemId: "gold_run",
+      stationPoiId: "gold_run_extraction_hub",
+      station: "Gold Run Extraction Hub",
+      services: [],
+      lastSeen: 1_000_000,
+    }]);
   });
 
   // Persisted-state schema tolerance (AGENTS.md): stored observations outlive the
@@ -142,7 +174,9 @@ describe("station geography (issue #517)", () => {
   test("stored observations that no longer validate are discarded, not fatal", async () => {
     const store = new Store(":memory:");
     // Three artifacts an older or hand-edited build could have left behind:
-    // no systemId at all, a services list of the wrong shape, and a good row.
+    // no systemId at all, a services list of the wrong shape, and a row written
+    // before stationPoiId existed at all (the shape this branch itself shipped
+    // first, so it is a real predecessor, not an invented one).
     store.appendEvent({ agentId: "a1", ts: 100, type: "station_observed", payload: { station: "Nameless" } });
     store.appendEvent({
       agentId: "a1", ts: 200, type: "station_observed",
@@ -162,10 +196,14 @@ describe("station geography (issue #517)", () => {
 
     const known = planner.contexts.at(-1)!.knownStations!;
     // The unusable row is gone; the bad-shape services degraded to empty rather
-    // than riding a string into the prompt; the good row is intact.
+    // than riding a string into the prompt; the good rows are intact and simply
+    // carry no station POI until a replan in those systems supplies one.
     expect(known.map((s) => s.systemId)).toEqual(["market_prime", "haven"]);
     expect(known.find((s) => s.systemId === "haven")!.services).toEqual([]);
     expect(known.find((s) => s.systemId === "market_prime")!.services).toEqual(["market"]);
+    expect(known.every((s) => s.stationPoiId === undefined)).toBe(true);
+    // and the digest still routes usefully without it, rather than inventing a POI
+    expect(buildDigest(planner.contexts.at(-1)!)).toContain("read it off that system's POI list");
   });
 
   // The docked guard on service attribution. refuel has two modes (openapi-v2,
@@ -203,7 +241,7 @@ describe("station geography (issue #517)", () => {
     await a2.runOnce();
     await a2.runOnce();
     expect(dockedStore.recentEventsByType("a1", "station_observed", 10).map((e) => e.payload)).toEqual([
-      { systemId: "gold_run", station: undefined, services: ["refuel"] },
+      { systemId: "gold_run", stationPoiId: undefined, station: undefined, services: ["refuel"] },
     ]);
   });
 
@@ -214,9 +252,80 @@ describe("station geography (issue #517)", () => {
   test("an unrecognized dock wording still confirms the system, just without a name", async () => {
     const store = new Store(":memory:");
     await dockOnce(store, goldRun, "Docking clamps engaged, welcome aboard.", 1_000_000);
-    expect(store.recentEventsByType("a1", "station_observed", 10).map((e) => e.payload)).toEqual([
-      { systemId: "gold_run", station: undefined, services: [] },
-    ]);
+    expect(store.recentEventsByType("a1", "station_observed", 10).at(-1)!.payload).toEqual({
+      systemId: "gold_run",
+      // read from get_system's structured POI data, so it survives the wording change
+      stationPoiId: "gold_run_extraction_hub",
+      station: undefined,
+      services: [],
+    });
+  });
+
+  // The in-system leg, learned the way the live trace says it must be. A jump
+  // drops the ship at an arbitrary POI (2026-07-25 01:00: `aurelia`, the sun),
+  // so the station POI id is read from get_system's structured POI list rather
+  // than from where the ship happens to be standing.
+  test("the station POI is learned from the system's POI data, not from the ship's position", async () => {
+    const store = new Store(":memory:");
+    // A sighting stored before the POI id existed -- system confirmed, in-system
+    // leg unknown. This is both the older artifact and the state any dock leaves
+    // behind before the next replan.
+    store.appendEvent({
+      agentId: "a1", ts: 1_000_000, type: "station_observed",
+      payload: { systemId: "gold_run", station: "Gold Run Extraction Hub", services: ["refuel"] },
+    });
+
+    // A pass through gold_run that never docks: parked at the sun, exactly the
+    // 01:01 position. The station POI still resolves, by elimination over
+    // hasBase -- the field that could have saved the whole three-minute detour,
+    // sitting in a response the pilot had already fetched.
+    const { api } = fakeGame({ system: goldRunAtSun, status: { systemId: "gold_run", docked: false } });
+    const agent = new Agent({
+      id: "a1", persona: "miner", api, store, planner: new MockPlanner([dockPlan]), config, now: () => 2_000_000,
+    });
+    await agent.runOnce();
+
+    expect(store.recentEventsByType("a1", "station_observed", 10).at(-1)!.payload).toEqual({
+      systemId: "gold_run",
+      stationPoiId: "gold_run_extraction_hub",
+      station: "Gold Run Extraction Hub",
+      services: ["refuel"],
+    });
+  });
+
+  // Ambiguity teaches nothing. A wrong station POI is worse than an absent one:
+  // absent leaves the planner reading the POI list on arrival (which works),
+  // while wrong routes it confidently to the wrong rock and earns the same
+  // "No station at this location" this whole fix exists to stop.
+  test("a system with two bases teaches no station POI unless the pilot is docked at one", async () => {
+    const twoBases: SystemInfo = {
+      id: "haven", name: "Haven", connections: ["segin"],
+      pois: [
+        { id: "grand_exchange", name: "Grand Exchange Station", type: "station", hasBase: true },
+        { id: "haven_outpost", name: "Haven Outpost", type: "station", hasBase: true },
+      ],
+      currentPoi: { id: "haven_drift", name: "Haven Drift", type: "asteroid_belt" },
+    };
+    const store = new Store(":memory:");
+    await dockOnce(store, twoBases, "Docked at Grand Exchange Station", 1_000_000);
+    // No stationPoiId key at all: the replan looked, found two candidates and
+    // declined to guess.
+    expect(store.recentEventsByType("a1", "station_observed", 10).at(-1)!.payload)
+      .toEqual({ systemId: "haven", station: "Grand Exchange Station", services: [] });
+
+    // Docked, the ambiguity is gone: the POI you are docked at IS the station
+    // ("`dock` requires being at a POI with a base", upstream/docs/travel.md:51).
+    store.clearPlan("a1"); // replan on the first tick rather than resuming
+    const { api } = fakeGame({
+      system: { ...twoBases, currentPoi: { id: "grand_exchange", name: "Grand Exchange Station", type: "station", hasBase: true } },
+      status: { systemId: "haven", docked: true, dockedAt: "grand_exchange" },
+    });
+    const agent = new Agent({
+      id: "a1", persona: "miner", api, store, planner: new MockPlanner([dockPlan]), config, now: () => 2_000_000,
+    });
+    await agent.runOnce();
+    expect(store.recentEventsByType("a1", "station_observed", 10).at(-1)!.payload)
+      .toMatchObject({ systemId: "haven", stationPoiId: "grand_exchange" });
   });
 
   // A list of places to GO must not include where you already are: offering the

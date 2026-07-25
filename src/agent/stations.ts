@@ -92,12 +92,13 @@ export function dockedStationName(resultText: string | undefined): string | unde
  */
 export function rememberStation(
   sightings: Map<string, StationSighting>,
-  obs: { systemId: string; station?: string; service?: string; now: number },
+  obs: { systemId: string; stationPoiId?: string; station?: string; service?: string; now: number },
 ): boolean {
   const existing = sightings.get(obs.systemId);
   if (!existing) {
     sightings.set(obs.systemId, {
       systemId: obs.systemId,
+      stationPoiId: obs.stationPoiId,
       station: obs.station,
       services: obs.service ? [obs.service] : [],
       lastSeen: obs.now,
@@ -106,6 +107,13 @@ export function rememberStation(
     return true;
   }
   let learned = false;
+  // The in-system leg. Learned separately from the dock itself (a replan in
+  // that system supplies it, see stationPoiFromSurroundings) and last one wins,
+  // for the same reason the name does: a system can hold more than one station.
+  if (obs.stationPoiId && obs.stationPoiId !== existing.stationPoiId) {
+    existing.stationPoiId = obs.stationPoiId;
+    learned = true;
+  }
   // A station name we didn't have, or a DIFFERENT one: last dock wins. A
   // system can hold more than one station and we keep one name per system --
   // the id is what travel_to needs, the name is the human/NPC-prose handle
@@ -132,6 +140,40 @@ function evictOldest(sightings: Map<string, StationSighting>): void {
     if (oldestKey === undefined) return;
     sightings.delete(oldestKey);
   }
+}
+
+/**
+ * The station POI id for the CURRENT system, read from get_system's structured
+ * POI data -- never from arrival prose. Undefined when this system's station
+ * cannot be identified without guessing.
+ *
+ * Two rules, strongest first:
+ *   1. DOCKED: the POI you are docked at IS the station. The reference is
+ *      unambiguous -- "`dock` requires being at a POI with a base"
+ *      (upstream/docs/travel.md:51) -- so no cross-check against the POI list
+ *      adds anything here.
+ *   2. UNDOCKED with exactly ONE `hasBase` POI in the system: that is the
+ *      station, by elimination. (PoiInfo.hasBase is VERIFIED live -- see
+ *      client.ts and test/fixtures/spacemolt-probe-2026-07-12.json.)
+ * Two or more bases and no dock means the system genuinely has more than one
+ * station and nothing here says which we used, so we learn nothing rather than
+ * pick one -- a wrong POI id is worse than an absent one, because the digest
+ * would route the pilot confidently to the wrong rock.
+ *
+ * Rule 2 exists because rule 1 needs a replan to happen while still docked. It
+ * recovers the id on ANY later pass through the system, including the pass in
+ * the live trace: at 01:01 the pilot sat at `aurelia` in gold_run with the hub
+ * sitting right there in its own POI list, one field away from the answer it
+ * spent the next two minutes rediscovering.
+ */
+export function stationPoiFromSurroundings(
+  pois: Array<{ id: string; hasBase?: boolean }>,
+  currentPoiId: string | undefined,
+  docked: boolean,
+): string | undefined {
+  if (docked && currentPoiId) return currentPoiId;
+  const bases = pois.filter((p) => p.hasBase);
+  return bases.length === 1 ? bases[0]!.id : undefined;
 }
 
 /**

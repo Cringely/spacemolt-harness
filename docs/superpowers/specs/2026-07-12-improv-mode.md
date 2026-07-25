@@ -69,8 +69,15 @@ Resources / survival:
   2026-07-25, a pilot spent 8 jumps in 48 minutes and 70 planner calls hunting for a refuel while
   reasoning from an NPC's chat prose about a station it had itself docked and refuelled at nine
   hours earlier. A station named in chat or NPC prose is a rumour; one you docked at is a receipt.
-  (Also a §5 harness memory: the shortlist is compiled from your own successful docks and survives
-  restarts.)
+  (Also a §5 memory: the shortlist is compiled from your own successful docks and survives restarts.)
+- Getting to a station is THREE steps, never one: `travel_to{system_id}`, then `travel{id=<station
+  POI>}`, then `dock`. A `jump` or `travel_to` drops you at an ARBITRARY POI in the destination
+  system — often the sun — and `dock` is POI-local ("`dock` requires being at a POI with a base",
+  upstream/docs/travel.md:51). A bare `dock` on arrival returns "No station at this location" and
+  costs you a tick. Live 2026-07-25 01:00: `jump gold_run` → arrived at `aurelia` → `dock` failed →
+  `travel gold_run_extraction_hub` → `dock` worked. That failure class ran 23x in 24h. Your briefing
+  names the station POI id for systems where it is known; where it is not, read it off the POI list
+  when you arrive — it is the POI marked `[station]`.
 
 Verify effects (never trust a success envelope):
 - Before selling, note the item's cargo quantity; after, re-query and confirm it dropped. A
@@ -511,10 +518,14 @@ The model gets the wheel, not the safety switches:
 - **Station geography memory** (#517, live 2026-07-25): every successful `dock` records the system
   it happened in, the station's name, and (from any docked success of refuel/sell/buy/repair/craft)
   which services are proven to work there — bounded map memory (8 systems, oldest-evicted),
-  restart-safe (rebuilt from persisted `station_observed` events on construction). Success comes
+  restart-safe (rebuilt from persisted `station_observed` events on construction). The in-system
+  STATION POI id is stamped separately, at the next replan in that system, from `get_system`'s
+  structured POI data: the POI you are docked at, or the system's single `has_base` POI. Two bases
+  and no dock teaches nothing — a wrong POI id routes the pilot confidently to the wrong rock,
+  which is worse than an absent one that makes it read the POI list on arrival. Success comes
   from the executor's own outcome classification, never from parsed prose, so a reworded game
-  message can cost only the display name, never the system id. Both modes get the compiled
-  shortlist in their briefing; the §4 rule above is the behavioural half. It stays deterministic
+  message can cost only the display name, never an id. Both modes get the compiled
+  shortlist in their briefing; the §4 rules above are the behavioural half. It stays deterministic
   because the failure it fixes is a memory failure, not a judgment one: the knowledge was in the
   event store the whole time and no amount of reasoning could recover it from a prompt that never
   carried it.

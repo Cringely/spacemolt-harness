@@ -147,6 +147,7 @@ const PlanContextSchema = z.object({
   // confirmed here yet" rendering.
   knownStations: z.array(z.object({
     systemId: z.string(),
+    stationPoiId: z.string().optional(),
     station: z.string().optional(),
     services: z.array(z.string()).default([]),
     lastSeen: z.number(),

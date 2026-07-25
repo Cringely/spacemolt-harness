@@ -9,7 +9,8 @@ import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from
 import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
 import { executeTick, miningEquipmentKey, type LearnedSparseRule, type StepResult } from "./executor";
 import {
-  MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, dockedStationName, knownStationSystems, rememberStation,
+  MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, dockedStationName, knownStationSystems,
+  rememberStation, stationPoiFromSurroundings,
 } from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
@@ -622,11 +623,14 @@ export class Agent {
     // payload written by an older or hand-edited build must never crash the
     // boot path.
     for (const e of this.store.recentEventsByType(this.id, "station_observed", MAX_STATION_SIGHTINGS * 4)) {
-      const p = e.payload as { systemId?: unknown; station?: unknown; services?: unknown } | null;
+      const p = e.payload as { systemId?: unknown; stationPoiId?: unknown; station?: unknown; services?: unknown } | null;
       if (!p || typeof p.systemId !== "string" || !p.systemId) continue;
       const services = Array.isArray(p.services) ? p.services.filter((s): s is string => typeof s === "string") : [];
       this.stationSightings.set(p.systemId, {
         systemId: p.systemId,
+        // Absent on every event written before the POI id existed: those rows
+        // still load, and the next replan in that system fills it in.
+        stationPoiId: typeof p.stationPoiId === "string" ? p.stationPoiId : undefined,
         station: typeof p.station === "string" ? p.station : undefined,
         services,
         lastSeen: e.ts,
@@ -1673,6 +1677,11 @@ export class Agent {
       // refused it and THIS replan already shows the marker.
       this.learnSparseDeposit(wake, surroundings, statusSnap);
       this.applySparseMarkers(surroundings, statusSnap?.modules);
+      // Station geography (issue #517): the one seam holding fresh map data for
+      // the system the pilot is standing in -- see applyStationPoi. Runs on
+      // every replan, cheap (a filter over POIs already fetched) and silent
+      // unless it actually learns the in-system leg.
+      this.applyStationPoi(surroundings, statusSnap);
       // Mission-funnel fix (issue #147): fetched here, on the same
       // once-per-replan cadence as gatherSurroundings above -- not per tick.
       const missionsText = await this.gatherMissions(statusSnap);
@@ -2107,9 +2116,42 @@ export class Agent {
       now: this.now(),
     });
     if (!learned) return;
-    const entry = this.stationSightings.get(systemId)!;
+    this.emitStationObserved(systemId);
+  }
+
+  // Station geography (issue #517), the in-system half. A dock teaches WHICH
+  // SYSTEM has a station; it cannot teach which POI in that system it is,
+  // because at the moment of the dock the loop holds no map data (the executor
+  // sees the action and the status, not get_system). A replan does hold the map,
+  // so the POI id is stamped here, from structured POI fields only -- see
+  // stationPoiFromSurroundings for the two rules and why an ambiguous system
+  // teaches nothing.
+  //
+  // Confirmed systems ONLY. A hasBase POI in a system we have never docked at is
+  // the game's claim, not our receipt, and this memory's whole contract is that
+  // every entry in it is a place the pilot has actually been.
+  private applyStationPoi(surroundings: Surroundings | undefined, status: StatusSnapshot | null): void {
+    if (!surroundings?.systemId) return;
+    const existing = this.stationSightings.get(surroundings.systemId);
+    if (!existing) return;
+    const poiId = stationPoiFromSurroundings(
+      surroundings.pois, surroundings.currentPoi?.id, status?.docked === true,
+    );
+    if (!poiId) return;
+    const learned = rememberStation(this.stationSightings, {
+      systemId: surroundings.systemId, stationPoiId: poiId, now: this.now(),
+    });
+    if (learned) this.emitStationObserved(surroundings.systemId);
+  }
+
+  // One writer for the persisted event, shared by both learn seams: the payload
+  // is the FULL entry as of the change, so an ascending replay is last-write-
+  // wins and the constructor needs no delta merge.
+  private emitStationObserved(systemId: string): void {
+    const entry = this.stationSightings.get(systemId);
+    if (!entry) return;
     this.emit("station_observed", {
-      systemId, station: entry.station, services: entry.services,
+      systemId, stationPoiId: entry.stationPoiId, station: entry.station, services: entry.services,
     });
   }
 
