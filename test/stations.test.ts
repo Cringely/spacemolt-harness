@@ -461,3 +461,172 @@ describe("station geography (issue #517)", () => {
     expect(buildDigest(ctx)).not.toContain("Segin Waystation");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Historical backfill (issue #525).
+//
+// #517 shipped a memory that only ever learns FORWARD, and the live pilot met
+// the consequence the same day: stranded at duskmere (a sun, no base) with fuel
+// 2/130 and cargo 100/100, 58 plans in 6h, and `knownStations (2) === []` in
+// every one of them. 482 historical docks were in the store; all of them carry
+// `params: {}`, so nothing structured could be grouped by system, and the pilot
+// had had zero successful docks since the deploy BECAUSE it was stranded. The
+// feature could not populate until the pilot docked and the pilot could not
+// dock without it -- a cold-start deadlock.
+//
+// Every fixture below therefore has the structured index ABSENT and only the
+// historical shape present. A fixture where the two agree cannot fail.
+describe("historical station backfill (issue #525)", () => {
+  /** One `status_snapshot` in the shape the live store holds. */
+  function snapshot(store: Store, ts: number, systemId: string | null): void {
+    store.appendEvent({
+      agentId: "a1", ts, type: "status_snapshot",
+      payload: { credits: 97_585, fuel: 2, hull: 95, cargoUsed: 100, systemId },
+    });
+  }
+  /** One `action` row in the shape the live store holds -- note `params: {}`. */
+  function action(
+    store: Store, ts: number, act: string, outcome: string, result: unknown,
+  ): void {
+    store.appendEvent({
+      agentId: "a1", ts, type: "action",
+      payload: { action: act, params: {}, outcome, result },
+    });
+  }
+
+  async function knownStationsAfterBoot(store: Store, now = 9_000_000) {
+    const { api } = fakeGame({ system: segin, status: { systemId: "segin" } });
+    const planner = new MockPlanner([dockPlan]);
+    const agent = new Agent({ id: "a1", persona: "miner", api, store, planner, config, now: () => now });
+    await agent.runOnce();
+    return planner.contexts.at(-1)!.knownStations!;
+  }
+
+  // THE regression test. Nothing but history in the store, and the digest still
+  // names somewhere to go.
+  test("a fresh boot recovers station systems from dock history alone", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "gold_run");
+    action(store, 1_100, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+    snapshot(store, 2_000, "market_prime");
+    action(store, 2_100, "dock", "plan_done", "Docked at Market Prime Exchange.");
+    // The structured index the #517 loader reads is EMPTY -- as it was live.
+    expect(store.recentEventsByType("a1", "station_observed", 10)).toHaveLength(0);
+
+    const known = await knownStationsAfterBoot(store);
+    // toStrictEqual on the array, not toEqual: `expect(["a", undefined])
+    // .toEqual(["a"])` PASSES in Bun, so a dropped element is invisible to the
+    // obvious assertion (the same trap PR #18's review caught).
+    expect(known.map((s) => s.systemId)).toStrictEqual(["market_prime", "gold_run"]);
+    // Recovered whole enough to route with: the name is the handle that lets the
+    // planner connect an NPC's prose to a system id. No POI and no services --
+    // history proves neither, and inventing either would recreate #517's own bug
+    // (a confident trip to a station that cannot do the thing).
+    expect(known.find((s) => s.systemId === "gold_run")).toEqual({
+      systemId: "gold_run", stationPoiId: undefined,
+      station: "Gold Run Extraction Hub", services: [], lastSeen: 1_100,
+    });
+  });
+
+  // The result string is human prose and its shape is not a contract. A row we
+  // cannot read must cost us that row's NAME and nothing else -- never the boot.
+  test("an unreadable dock result is skipped, not fatal", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "haven");
+    // Four shapes a reworded game, an older build, or a hand-edited store can
+    // leave behind: prose that names no station, empty text, an absent field,
+    // and a non-string where a string is expected.
+    action(store, 1_100, "dock", "continue", "Docking clamps engaged; welcome aboard.");
+    action(store, 1_200, "dock", "continue", "");
+    action(store, 1_300, "dock", "plan_done", null);
+    action(store, 1_400, "dock", "continue", { text: "Docked at Object Station" });
+    snapshot(store, 2_000, "gold_run");
+    action(store, 2_100, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+
+    const known = await knownStationsAfterBoot(store);
+    // Booted at all, and the readable row survived alongside the unreadable ones.
+    expect(known.map((s) => s.systemId)).toStrictEqual(["gold_run"]);
+    expect(known[0]!.station).toBe("Gold Run Extraction Hub");
+  });
+
+  // A dock with nothing before it has no system to belong to. Attributing it to
+  // whatever comes NEXT would be worse than dropping it: a wrong system id in
+  // the shortlist is a confident jump to a place with no station, which is the
+  // failure this whole feature exists to end.
+  test("a dock with no preceding position is dropped, not misattributed", async () => {
+    const store = new Store(":memory:");
+    action(store, 1_000, "dock", "continue", "Docked at Orphan Station.");
+    // A snapshot whose systemId is null teaches no position either -- the live
+    // payload writes `systemId: status.systemId ?? null`.
+    snapshot(store, 1_100, null);
+    action(store, 1_200, "dock", "continue", "Docked at Still Orphaned Depot.");
+    snapshot(store, 2_000, "gold_run");
+    action(store, 2_100, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+
+    const known = await knownStationsAfterBoot(store);
+    expect(known.map((s) => s.systemId)).toStrictEqual(["gold_run"]);
+    expect(known.map((s) => s.station)).toStrictEqual(["Gold Run Extraction Hub"]);
+  });
+
+  // A dock that FAILED proves the opposite of what this reads for. The live
+  // store holds 279 of them ("No station at this location") against 718
+  // successes, and success comes off the executor's recorded outcome, never off
+  // prose -- the #517 rule, applied to the same data read backwards.
+  test("a blocked dock teaches nothing", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "duskmere");
+    action(store, 1_100, "dock", "blocked", "No station at this location");
+    // A reworded failure that happens to READ like a success still teaches
+    // nothing, because the outcome is what is consulted.
+    action(store, 1_200, "dock", "blocked", "Docked at Nowhere Station.");
+    action(store, 1_300, "dock", "wait", "Docked at Also Nowhere.");
+    // ...and a non-dock success is not a dock.
+    action(store, 1_400, "mine", "continue", "Docked at Not A Dock Station.");
+
+    expect(await knownStationsAfterBoot(store)).toStrictEqual([]);
+  });
+
+  // Precedence. A structured `station_observed` row carries the station POI and
+  // the proven services; a derived row carries neither. Letting history win
+  // would silently downgrade the record the pilot actually needs -- the POI id
+  // is what turns "the right system" into "at the dock".
+  test("a structured sighting outranks the derived one for the same system", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "gold_run");
+    action(store, 1_100, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+    store.appendEvent({
+      agentId: "a1", ts: 5_000, type: "station_observed",
+      payload: {
+        systemId: "gold_run", stationPoiId: "gold_run_extraction_hub",
+        station: "Gold Run Extraction Hub", services: ["market"],
+      },
+    });
+
+    const known = await knownStationsAfterBoot(store);
+    expect(known).toHaveLength(1);
+    expect(known[0]).toEqual({
+      systemId: "gold_run", stationPoiId: "gold_run_extraction_hub",
+      station: "Gold Run Extraction Hub", services: ["market"], lastSeen: 5_000,
+    });
+  });
+
+  // History is unbounded and the shortlist is a prompt line. The live store
+  // recovers 16 systems from 718 successful docks; without a cap here every one
+  // of them would render, which is the dump the digest's clipping discipline
+  // exists to prevent. Newest wins, same order as every other path into this map.
+  test("the backfill is capped, keeping the most recent systems", async () => {
+    const store = new Store(":memory:");
+    // The 16 systems the live snapshot actually recovers, oldest first.
+    const systems = ["gold_run", "market_prime", "cargo_lanes", "the_levy", "haven", "traders_rest",
+      "factory_belt", "sirius", "first_step", "frontier", "deep_range", "unknown_edge",
+      "void_gate", "starfall", "last_light", "treasure_cache"];
+    systems.forEach((sys, i) => {
+      snapshot(store, 1_000 + i * 10, sys);
+      action(store, 1_005 + i * 10, "dock", "continue", `Docked at ${sys} Station.`);
+    });
+
+    const known = await knownStationsAfterBoot(store);
+    expect(known.map((s) => s.systemId))
+      .toStrictEqual([...systems].slice(-MAX_STATION_SIGHTINGS).reverse());
+  });
+});

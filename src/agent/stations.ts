@@ -1,4 +1,5 @@
 import type { StationSighting } from "../planner/types";
+import type { DockTrailRow } from "../store/store";
 
 // Station geography (issue #517): the pilot's own memory of WHERE stations are.
 //
@@ -161,6 +162,72 @@ export function rememberStation(
   }
   existing.lastSeen = obs.now;
   return learned;
+}
+
+/**
+ * The station systems recoverable from history alone (issue #525) -- one entry
+ * per system, most recently confirmed first.
+ *
+ * WHY THIS EXISTS. rememberStation above only ever learns FORWARD, from a dock
+ * happening now. The live pilot met the cost the day that shipped: stranded at
+ * a sun with fuel 2/130 and cargo 100/100, it needed a station to route to,
+ * had 482 historical docks in its own event store, and was shown
+ * `knownStations === []` in all 58 plans it burned over six hours. The feature
+ * could not populate until it docked; it could not dock without the feature.
+ * The deadlock breaks from data already on disk, so this reads it.
+ *
+ * THE WALK. `dock` does not move the ship, so the system a dock happened in is
+ * the last position the pilot reported before it -- the nearest preceding
+ * `status_snapshot`. Walking the trail in order while carrying that position is
+ * the whole algorithm.
+ *
+ * WHAT IS TRUSTED, AND WHAT IS NOT. Success comes off the recorded `outcome`,
+ * the executor's own StepResult kind, never off prose -- the same split #517
+ * draws, and the reason 279 "No station at this location" rows and a reworded
+ * failure that happens to read like a success both teach nothing here. Prose is
+ * consulted for the station NAME and nothing else, through the same parser the
+ * live path uses. So a game that rewords its dock message costs a display name,
+ * never the load-bearing fact that this system has a dockable station.
+ *
+ * WHAT IS NOT CLAIMED. No `stationPoiId` and no `services`. Neither is derivable
+ * from history -- the trail records where the ship SAID it was, not which POI it
+ * stood at -- and inventing either would recreate #517's own bug: a confident
+ * route to a station that cannot do the thing. A derived row is a weaker record
+ * on purpose, and the caller lets any structured sighting outrank it.
+ *
+ * NO CAP HERE, and that is deliberate. The obvious `.slice(0, MAX)` on the way
+ * out is dead: the caller merges these into a map that ALREADY holds structured
+ * sightings, so only the caller knows how many slots are left, and its own stop
+ * is what has to bind. Two caps would mean one of them could never fail a test
+ * -- the same redundant-trim shape PR #18's ablation deleted from the reload
+ * path. Sorted newest-first so the caller filling N slots fills them with the
+ * N most recent.
+ *
+ * Pure, like everything else here: the caller supplies the rows.
+ */
+export function deriveStationSightings(trail: DockTrailRow[]): StationSighting[] {
+  const bySystem = new Map<string, StationSighting>();
+  let position: string | undefined;
+  for (const row of trail) {
+    if (row.type === "status_snapshot") {
+      // A snapshot whose systemId is absent or null reports an UNKNOWN
+      // position, not a move -- the live payload writes `status.systemId ??
+      // null`. It leaves the last known position standing rather than clearing
+      // it, because a dock cannot happen mid-jump: the ship that docks next is
+      // still where it last said it was. Clearing here would silently drop
+      // real history every time one status call came back thin.
+      if (typeof row.systemId === "string" && row.systemId) position = row.systemId;
+      continue;
+    }
+    if (row.outcome !== "continue" && row.outcome !== "plan_done") continue;
+    if (!position) continue; // nothing to attribute it to -- drop it, never guess
+    const station = dockedStationName(typeof row.result === "string" ? row.result : undefined);
+    if (!station) continue;
+    // Last dock in a system wins, same as rememberStation: one record per
+    // system, carrying the most recently confirmed name.
+    bySystem.set(position, { systemId: position, station, services: [], lastSeen: row.ts });
+  }
+  return [...bySystem.values()].sort((a, b) => b.lastSeen - a.lastSeen);
 }
 
 function evictOldest(sightings: Map<string, StationSighting>): void {

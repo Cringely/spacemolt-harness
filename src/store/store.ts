@@ -13,6 +13,21 @@ export interface PlanCursor {
   iteration: number;
 }
 
+/**
+ * One row of the dock trail (see Store.dockTrail, issue #525) -- either a
+ * position sample or a dock attempt, in the order they happened. Every field
+ * past `type`/`ts` comes straight out of json_extract, so it is `unknown` and
+ * the caller narrows: a payload written by an older build, or a game that
+ * reworded its prose, must not be able to type-lie its way into the pilot's map.
+ */
+export interface DockTrailRow {
+  type: string;
+  ts: number;
+  systemId: unknown;
+  outcome: unknown;
+  result: unknown;
+}
+
 export class Store {
   private db: Database;
   /** Broadcast hook: dashboard server subscribes here (Plan 3). */
@@ -168,6 +183,47 @@ export class Store {
     return rows.reverse().map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
     }));
+  }
+
+  /**
+   * The agent's dock trail: every `status_snapshot` and every `dock` action it
+   * has recorded, ascending, projected down to the five fields the station
+   * backfill reads (issue #525).
+   *
+   * WHY A RAW TRAIL AND NOT AN ANSWER. Where the ship WAS when a dock succeeded
+   * is not stored on the dock row -- all 482 historical docks in the live store
+   * carry `params: {}` -- so the system has to come from the nearest PRECEDING
+   * status_snapshot, and joining a row to its nearest predecessor is what SQL
+   * here is worst at. Two shapes were measured against the 98,920-event
+   * production snapshot:
+   *
+   *   correlated subquery (one statement, the obvious form):  9,713 ms
+   *   this projected trail + a linear walk in the caller:        37 ms
+   *
+   * 263x, and the reason is structural rather than tunable: idx_events_agent_ts
+   * is on (agent_id, ts), so the per-dock "latest snapshot before id N" lookup
+   * has no index to stand on and re-scans. Adding a covering index to make the
+   * elegant query fast would be new persisted state (and a migration) to save
+   * 37 ms once per process start. Projecting in SQL rather than returning
+   * payloads is the other half of the win: the caller never parses the ~1 KB
+   * `progress` block that rides on every snapshot.
+   *
+   * The projection is deliberately untyped past `string | null`: json_extract
+   * returns whatever the payload held, and `result` in particular is game-
+   * authored text whose shape is not a contract. Callers narrow it themselves.
+   */
+  dockTrail(agentId: string): DockTrailRow[] {
+    return this.db
+      .query(`SELECT type, ts,
+                     json_extract(payload, '$.systemId') AS systemId,
+                     json_extract(payload, '$.outcome')  AS outcome,
+                     json_extract(payload, '$.result')   AS result
+              FROM events
+              WHERE agent_id = ?
+                AND (type = 'status_snapshot'
+                     OR (type = 'action' AND json_extract(payload, '$.action') = 'dock'))
+              ORDER BY id ASC`)
+      .all(agentId) as DockTrailRow[];
   }
 
   savePlan(agentId: string, plan: Plan, goals: string[]): void {

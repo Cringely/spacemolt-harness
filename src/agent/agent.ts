@@ -9,8 +9,8 @@ import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from
 import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
 import { executeTick, miningEquipmentKey, type LearnedSparseRule, type StepResult } from "./executor";
 import {
-  MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, dockedStationName, knownStationSystems,
-  rememberStation,
+  MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
+  knownStationSystems, rememberStation,
 } from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
@@ -643,12 +643,36 @@ export class Agent {
         lastSeen: e.ts,
       });
     }
+    // Historical backfill (issue #525), and it runs AFTER the structured reload
+    // above for a reason. #517's memory learns only forward, so on the day it
+    // deployed the stranded pilot -- fuel 2/130, cargo full, no base in the
+    // system -- read `knownStations === []` in all 58 plans it burned over six
+    // hours, while 482 of its own docks sat in the event store. It could not
+    // populate the memory without docking and could not dock without it.
+    //
+    // Precedence, which is what the ordering buys: a structured sighting carries
+    // the station POI and the proven services and a derived one carries neither,
+    // so history fills GAPS and never overwrites -- `has()` skips a system
+    // already known. That also makes this self-retiring: once the pilot has
+    // docked its way back to a full structured map, every derived row is
+    // skipped.
+    //
+    // The size check is the ONLY cap on this path, which is why it lives here
+    // and not in deriveStationSightings: history is unbounded (the live store
+    // yields 16 systems) and the shortlist is a prompt line, and only this seam
+    // knows how many slots the structured reload already spent. Derived rows
+    // arrive newest-first, so the slots that remain go to the most recent.
+    for (const derived of deriveStationSightings(this.store.dockTrail(this.id))) {
+      if (this.stationSightings.size >= MAX_STATION_SIGHTINGS) break;
+      if (this.stationSightings.has(derived.systemId)) continue;
+      this.stationSightings.set(derived.systemId, derived);
+    }
     // No post-load cap loop here, unlike the MAX_GOALS reload above: the query
     // returns at most one row per system and takes the newest MAX_STATION_
-    // SIGHTINGS of them, so the map is already at or under the cap when the
-    // loop above finishes. The trim this replaced was dead code -- deleting it
-    // changed no test, which is how it was caught (PR #18 review ablation).
-    // Runtime growth past the cap stays rememberStation's job.
+    // SIGHTINGS of them, and the backfill above stops at the same cap, so the
+    // map is already at or under it. The trim this replaced was dead code --
+    // deleting it changed no test, which is how it was caught (PR #18 review
+    // ablation). Runtime growth past the cap stays rememberStation's job.
     // Experiment latch (#240): re-latch from a persisted experiment_reverted
     // event, but only when its payload matches the CURRENT experiment config --
     // an operator who changes the counter or window has started a NEW
