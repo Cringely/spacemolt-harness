@@ -188,10 +188,15 @@ export function knownStationSystems(
   sightings: Map<string, StationSighting>,
   currentSystemId?: string | null,
 ): StationSighting[] {
+  // No cap here. The map is already bounded twice -- evictOldest on every
+  // write, the SQL LIMIT on every reload -- so a third `.slice(0, MAX)` could
+  // never bind, which is exactly why raising the SQL limit to 100 left the
+  // whole suite green (PR #18 review addendum). An unreachable guard makes the
+  // reachable one untestable; the same redundant-trim shape was deleted from
+  // the constructor last round for the same reason.
   return [...sightings.values()]
     .filter((s) => s.systemId !== currentSystemId)
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .slice(0, MAX_STATION_SIGHTINGS)
     // Copies, not the live records (PR #18 review, F6). rememberStation mutates
     // entries in place, so handing out references makes the returned list a
     // window onto memory that keeps changing under whoever holds it -- the

@@ -168,11 +168,24 @@ describe("station geography (issue #517)", () => {
   // 2026-07-12 chat-enum incident took production down.
   test("stored observations that no longer validate are discarded, not fatal", async () => {
     const store = new Store(":memory:");
-    // Three artifacts an older or hand-edited build could have left behind:
-    // no systemId at all, a services list of the wrong shape, and a row written
-    // before stationPoiId existed at all (the shape this branch itself shipped
-    // first, so it is a real predecessor, not an invented one).
+    // Four artifacts an older or hand-edited build could have left behind: no
+    // systemId at all, a systemId of the wrong TYPE, a services list of the
+    // wrong shape, and a row written before stationPoiId existed at all (the
+    // shape this branch itself shipped first, so it is a real predecessor, not
+    // an invented one).
+    //
+    // The two bad-systemId rows are discarded by different things, and only one
+    // of them exercises the loader. `json_extract(payload,'$.systemId')` is NULL
+    // for the missing key, so SQL drops that row before the loader ever sees it
+    // -- keep it to pin that behavior, but it proves nothing about the guard.
+    // The NUMERIC one is what the guard is for: json_extract returns 12345, the
+    // row passes the WHERE clause, and `typeof p.systemId !== "string"` is the
+    // only thing between it and `travel_to{system_id=12345}` in a live prompt.
     store.appendEvent({ agentId: "a1", ts: 100, type: "station_observed", payload: { station: "Nameless" } });
+    store.appendEvent({
+      agentId: "a1", ts: 150, type: "station_observed",
+      payload: { systemId: 12345, station: "Numeric Station", services: ["market"] },
+    });
     store.appendEvent({
       agentId: "a1", ts: 200, type: "station_observed",
       payload: { systemId: "haven", station: "Grand Exchange Station", services: "refuel" },
@@ -190,10 +203,17 @@ describe("station geography (issue #517)", () => {
     await agent.runOnce();
 
     const known = planner.contexts.at(-1)!.knownStations!;
-    // The unusable row is gone; the bad-shape services degraded to empty rather
+    // The unusable rows are gone; the bad-shape services degraded to empty rather
     // than riding a string into the prompt; the good rows are intact and simply
     // carry no station POI until a replan in those systems supplies one.
-    expect(known.map((s) => s.systemId)).toEqual(["market_prime", "haven"]);
+    //
+    // toStrictEqual, not toEqual, and the length assertion above it (PR #18
+    // review addendum). Bun mirrors Jest here: `expect(["a","b",undefined])
+    // .toEqual(["a","b"])` PASSES, so the obvious assertion is structurally
+    // incapable of failing when a discarded row leaks through as `undefined`.
+    // The test named the right behavior and could not detect its absence.
+    expect(known).toHaveLength(2);
+    expect(known.map((s) => s.systemId)).toStrictEqual(["market_prime", "haven"]);
     expect(known.find((s) => s.systemId === "haven")!.services).toEqual([]);
     expect(known.find((s) => s.systemId === "market_prime")!.services).toEqual(["market"]);
     expect(known.every((s) => s.stationPoiId === undefined)).toBe(true);
@@ -271,18 +291,23 @@ describe("station geography (issue #517)", () => {
   test("a system with two bases still teaches the station the pilot actually docked at", async () => {
     const twoBases: SystemInfo = {
       id: "haven", name: "Haven", connections: ["segin"],
+      // The pilot is docked at the SECOND base, not the first. Deliberate: with
+      // the docked station at pois[0] this test passes just as happily against
+      // "take the first POI with a base", which is the wrong rule and the one a
+      // map-elimination design would have used. Ordered this way, only the
+      // ship's own position satisfies it.
       pois: [
         { id: "grand_exchange", name: "Grand Exchange Station", type: "station", hasBase: true },
         { id: "haven_outpost", name: "Haven Outpost", type: "station", hasBase: true },
       ],
-      currentPoi: { id: "grand_exchange", name: "Grand Exchange Station", type: "station", hasBase: true },
+      currentPoi: { id: "haven_outpost", name: "Haven Outpost", type: "station", hasBase: true },
     };
     const store = new Store(":memory:");
-    await dockOnce(store, twoBases, "Docked at Grand Exchange Station", 1_000_000);
+    await dockOnce(store, twoBases, "Docked at Haven Outpost", 1_000_000);
     expect(store.recentEventsByType("a1", "station_observed", 10).at(-1)!.payload)
       .toEqual({
-        systemId: "haven", stationPoiId: "grand_exchange",
-        station: "Grand Exchange Station", services: [],
+        systemId: "haven", stationPoiId: "haven_outpost",
+        station: "Haven Outpost", services: [],
       });
   });
 
@@ -388,8 +413,11 @@ describe("station geography (issue #517)", () => {
     expect(sightings.has("sys_2")).toBe(false); // now the oldest
   });
 
-  // The reload's own cap, which is the SQL LIMIT rather than a JS trim: with
-  // more stored systems than we retain, the newest win.
+  // The reload's own cap: the SQL LIMIT, and now the only thing capping the
+  // reload path. This test USED to pass with that limit raised to 100, because
+  // a redundant `.slice(0, MAX)` in knownStationSystems silently re-capped the
+  // result -- a guard covering for the guard under test. The slice is gone, so
+  // this now fails if the LIMIT is loosened.
   test("past the cap, the oldest sighting is evicted and the newest survive", () => {
     const store = new Store(":memory:");
     // Twelve systems, oldest first -- the count a query over the live store
