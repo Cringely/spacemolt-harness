@@ -344,16 +344,21 @@ export interface PlanContext {
 // requires being at a POI with a base" (travel.md:51). A record carrying only
 // the system id leaves the planner exactly one failed dock short.
 //
-// `systemId` is the only field that is never absent: it comes from the pilot's
-// own position at a dock the executor classified as successful, never from
-// parsed prose. `stationPoiId` is read from get_system's structured POI data
-// (PoiInfo.hasBase / the docked current POI), not from arrival text, and stays
-// undefined until a replan in that system supplies it. `station` is the
-// game-authored display name (bounded at the producer, see STATION_NAME_MAX) so
-// the planner can connect a name it meets in NPC or chat prose to a system it
-// can fly to. `services` holds what a docked success has PROVEN works there
-// (refuel, market, repair, crafting -- see STATION_SERVICE_BY_ACTION); empty
-// means unproven, never absent. `lastSeen` orders the shortlist by recency.
+// Both ids come from the same place: the ship's OWN position on the tick a dock
+// (or a docked service action) succeeded -- `StatusSnapshot.systemId` and
+// `.poiId`, structured fields, never parsed from arrival text. Docking requires
+// already being at a POI with a base and does not move the ship, so the POI it
+// was standing at IS the station. `stationPoiId` is undefined only for rows
+// written before the field existed, or a tick whose status carried no position.
+//
+// `station` is the game-authored display name (bounded at the producer, see
+// STATION_NAME_MAX) so the planner can connect a name it meets in NPC or chat
+// prose to a system it can fly to. `services` holds what a success has PROVEN
+// works at THIS station -- market, crafting; see STATION_SERVICE_BY_ACTION for
+// why refuel and repair are deliberately not in that set -- and is dropped
+// wholesale when a later observation lands at a different station in the same
+// system, because a service is a fact about the station that proved it. Empty
+// means unproven, never known-absent. `lastSeen` orders the shortlist by recency.
 export interface StationSighting {
   systemId: string;
   stationPoiId?: string;

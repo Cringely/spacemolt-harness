@@ -39,21 +39,42 @@ export const MAX_STATION_SIGHTINGS = 8;
 export const STATION_NAME_MAX = 48;
 
 // Which station SERVICE a successful action proves, when that action succeeded
-// while DOCKED. Sourced from the game's own dock description
-// (docs/game-reference/upstream/openapi-v2.json, /api/v2/spacemolt/dock:
-// "You must be at a POI with a base. Docking is required for trading,
-// refueling, repairs, and ship upgrades.") -- so a docked success of one of
-// these is proof the corresponding service exists at that station, no response
-// shape assumed and no extra game call made. refuel is the strongest of them
-// and the one the live incident needed: the same reference (refuel, mode 3)
-// documents "Docked at refuel station with credits -> station refueling",
-// which is exactly why the docked guard is load-bearing -- an UNDOCKED refuel
-// burns fuel cells from cargo (mode 4) and proves nothing about geography.
+// while DOCKED.
+//
+// Admission rule, and it is narrow on purpose: an action earns a place here only
+// if the reference documents the station service as REQUIRED, with no fallback
+// path that can succeed without it. A service tag routes the pilot somewhere, so
+// a wrong one recreates the exact failure this whole fix exists to stop -- a
+// confident trip to a station that cannot do the thing.
+//
+// ADMITTED (openapi-v2.json, docs/game-reference/upstream):
+//   sell, buy -> market. /api/v2/spacemolt/sell and /buy document no mode that
+//     fills an order away from a market, and the dock description names trading
+//     as a thing docking is required for.
+//   craft -> crafting. /api/v2/spacemolt/craft opens "Must be docked at a base
+//     with crafting AND storage service" -- a stated precondition with no
+//     alternative, so a success is proof.
+//
+// REJECTED, both for the same reason (PR #18 review, F2):
+//   refuel. /api/v2/spacemolt/refuel documents FOUR modes, and the two that
+//     matter here are "(3) Docked at refuel station with credits -> station
+//     refueling" and "(4) Otherwise -> fuel cells from cargo". Mode 4 is
+//     "otherwise", NOT "undocked": a refuel while docked at a base with no pump,
+//     or with no credits, falls through to burning cargo cells and SUCCEEDS.
+//     Tagging that station `refuel` would send the pilot back to it and earn a
+//     `no_refueling_pump` -- a class the live incident logged. `docked` cannot
+//     discriminate mode 3 from mode 4, and the signal that could
+//     (CurrentPoiInfo.fuelReserve, get_system) is not in hand at the seam that
+//     learns this. Per #517's own scope -- services are tagged "where the
+//     observation is cheap to attribute" -- no tag beats a wrong one.
+//   repair. Identical shape: "No target: station repair if docked (credits),
+//     else uses repair kits from cargo."
+//
+// The general lesson, worth stating because it generalizes past these two: an
+// action with a cargo-consumable fallback proves nothing about where you are.
 export const STATION_SERVICE_BY_ACTION: Record<string, string> = {
-  refuel: "refuel",
   sell: "market",
   buy: "market",
-  repair: "repair",
   craft: "crafting",
 };
 
@@ -107,11 +128,23 @@ export function rememberStation(
     return true;
   }
   let learned = false;
-  // The in-system leg. Learned separately from the dock itself (a replan in
-  // that system supplies it, see stationPoiFromSurroundings) and last one wins,
-  // for the same reason the name does: a system can hold more than one station.
+  // Ordering: this reset runs BEFORE the name and service merges below, so one
+  // observation that both moves us to a new station and proves a service there
+  // lands that service on the NEW station.
+  // A DIFFERENT station in a system we already know: the record describes one
+  // station, so the name and the proven services belong to the station that
+  // proved them and are dropped with it (PR #18 review, F3). Without this reset
+  // the fields drift apart -- stationPoiId and station are last-write-wins while
+  // services accumulate across every station in the system -- and the digest,
+  // which renders them as one line, would advertise station B as offering what
+  // was only ever proven at station A. That is this fix's own bug pointed at a
+  // POI instead of a system: a confident route to a station that cannot do the
+  // thing. An observation carrying NO station POI (an unknown position) cannot
+  // tell us we moved, so it never resets anything.
   if (obs.stationPoiId && obs.stationPoiId !== existing.stationPoiId) {
     existing.stationPoiId = obs.stationPoiId;
+    existing.station = undefined;
+    existing.services = [];
     learned = true;
   }
   // A station name we didn't have, or a DIFFERENT one: last dock wins. A
@@ -143,40 +176,6 @@ function evictOldest(sightings: Map<string, StationSighting>): void {
 }
 
 /**
- * The station POI id for the CURRENT system, read from get_system's structured
- * POI data -- never from arrival prose. Undefined when this system's station
- * cannot be identified without guessing.
- *
- * Two rules, strongest first:
- *   1. DOCKED: the POI you are docked at IS the station. The reference is
- *      unambiguous -- "`dock` requires being at a POI with a base"
- *      (upstream/docs/travel.md:51) -- so no cross-check against the POI list
- *      adds anything here.
- *   2. UNDOCKED with exactly ONE `hasBase` POI in the system: that is the
- *      station, by elimination. (PoiInfo.hasBase is VERIFIED live -- see
- *      client.ts and test/fixtures/spacemolt-probe-2026-07-12.json.)
- * Two or more bases and no dock means the system genuinely has more than one
- * station and nothing here says which we used, so we learn nothing rather than
- * pick one -- a wrong POI id is worse than an absent one, because the digest
- * would route the pilot confidently to the wrong rock.
- *
- * Rule 2 exists because rule 1 needs a replan to happen while still docked. It
- * recovers the id on ANY later pass through the system, including the pass in
- * the live trace: at 01:01 the pilot sat at `aurelia` in gold_run with the hub
- * sitting right there in its own POI list, one field away from the answer it
- * spent the next two minutes rediscovering.
- */
-export function stationPoiFromSurroundings(
-  pois: Array<{ id: string; hasBase?: boolean }>,
-  currentPoiId: string | undefined,
-  docked: boolean,
-): string | undefined {
-  if (docked && currentPoiId) return currentPoiId;
-  const bases = pois.filter((p) => p.hasBase);
-  return bases.length === 1 ? bases[0]!.id : undefined;
-}
-
-/**
  * The destination shortlist for the digest: confirmed station systems, most
  * recently confirmed first, EXCLUDING the system the pilot is in right now.
  *
@@ -192,5 +191,13 @@ export function knownStationSystems(
   return [...sightings.values()]
     .filter((s) => s.systemId !== currentSystemId)
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .slice(0, MAX_STATION_SIGHTINGS);
+    .slice(0, MAX_STATION_SIGHTINGS)
+    // Copies, not the live records (PR #18 review, F6). rememberStation mutates
+    // entries in place, so handing out references makes the returned list a
+    // window onto memory that keeps changing under whoever holds it -- the
+    // PlanContext the planner was given, the payload an eval replays. Nothing
+    // exploits that today; the copy costs one allocation per replan and removes
+    // the whole class. `services` is copied too: a shallow spread would share
+    // the array that push() mutates.
+    .map((s) => ({ ...s, services: [...s.services] }));
 }

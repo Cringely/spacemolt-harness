@@ -128,6 +128,48 @@ export class Store {
     }));
   }
 
+  /**
+   * The LATEST event of one type per distinct `payload[key]` value, most recent
+   * first, capped at `limit` DISTINCT KEYS.
+   *
+   * The difference from recentEventsByType matters, and a live-shaped bug is
+   * why this exists (PR #18 review). That method takes the most recent N EVENTS
+   * globally, which is exactly right for a memory that writes one event per key
+   * (poi_incompatible, mine_sparse_learned) and silently wrong for one that
+   * writes several. The station memory (#517) emits per fact learned -- the
+   * station, its name, each proven service -- so a busy system can spend a
+   * dozen rows while a system docked at once spends one. Under a global row
+   * window the quiet system is evicted FIRST, which is precisely backwards:
+   * it is the rarely-revisited destination the pilot most needs reminding of.
+   *
+   * Grouping on the key makes that impossible rather than unlikely. Each key
+   * contributes exactly one row (its newest, `HAVING id = MAX(id)`), so `limit`
+   * bounds distinct keys and no amount of chatter about one key can push
+   * another out of the window. Ascending by id, like recentEventsByType, so a
+   * caller replaying into an insertion-ordered structure keeps oldest-first
+   * eviction correct.
+   *
+   * Requires each payload to be a JSON object carrying `key`; rows where it is
+   * absent or null are skipped, which is the same tolerance the callers' own
+   * loaders apply. `key` is restricted to an identifier because it is
+   * interpolated into the JSON path.
+   */
+  latestEventPerPayloadKey(
+    agentId: string, type: string, key: string, limit: number,
+  ): Array<AgentEvent & { id: number }> {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid payload key: ${key}`);
+    const rows = this.db
+      .query(`SELECT id, agent_id, ts, type, payload FROM events
+              WHERE agent_id = ? AND type = ? AND json_extract(payload, '$.${key}') IS NOT NULL
+              GROUP BY json_extract(payload, '$.${key}')
+              HAVING id = MAX(id)
+              ORDER BY id DESC LIMIT ?`)
+      .all(agentId, type, limit) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
+    return rows.reverse().map((r) => ({
+      id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
+    }));
+  }
+
   savePlan(agentId: string, plan: Plan, goals: string[]): void {
     this.db
       .query(`INSERT INTO plans (agent_id, plan, step, iteration, goals) VALUES (?, ?, 0, 0, ?)

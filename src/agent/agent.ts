@@ -10,7 +10,7 @@ import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from 
 import { executeTick, miningEquipmentKey, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, dockedStationName, knownStationSystems,
-  rememberStation, stationPoiFromSurroundings,
+  rememberStation,
 } from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
@@ -609,20 +609,27 @@ export class Agent {
       }
     }
     // Station geography (issue #517): rebuild the confirmed-station map from
-    // persisted events, same pattern and same tolerant-loader discipline as the
-    // two reloads above. Each stored event carries the FULL entry as of the
-    // change, so an ascending replay is last-write-wins and needs no delta
-    // merge; lastSeen comes from the event's own ts, so recency ordering
-    // survives the restart. The read limit is 4x the map cap because one system
-    // can teach at most a handful of facts (its name, then each of the four
-    // service tags), so 4x covers every system's full history at the cap
-    // without reading the whole table.
-    // Schema tolerance (AGENTS.md): an entry missing its systemId is SKIPPED,
-    // and a `services` field that is not an array of strings degrades to an
-    // empty list rather than propagating a bad shape into the digest -- a
-    // payload written by an older or hand-edited build must never crash the
-    // boot path.
-    for (const e of this.store.recentEventsByType(this.id, "station_observed", MAX_STATION_SIGHTINGS * 4)) {
+    // persisted events, same tolerant-loader discipline as the two reloads
+    // above. Each stored event carries the FULL entry as of the change, so
+    // last-write-wins needs no delta merge; lastSeen comes from the event's own
+    // ts, so recency ordering survives the restart.
+    //
+    // latestEventPerPayloadKey, NOT recentEventsByType (PR #18 review, F1): this
+    // memory emits once per FACT learned, so systems contribute wildly different
+    // row counts, and a most-recent-N-ROWS window evicts the system with the
+    // fewest rows -- the one docked at once and never revisited. That is the
+    // incident's own system, forgotten on restart by the memory built to
+    // remember it. Grouping by systemId gives each system exactly one row, so
+    // the limit bounds SYSTEMS and the eviction is impossible rather than
+    // merely unlikely. The two reloads above keep recentEventsByType correctly:
+    // they write exactly one event per key, so rows and keys are the same thing.
+    //
+    // Schema tolerance (AGENTS.md): a row whose systemId is absent is dropped by
+    // the query itself, a non-string one by the check below, and a `services`
+    // field that is not an array of strings degrades to an empty list rather
+    // than propagating a bad shape into the digest -- a payload written by an
+    // older or hand-edited build must never crash the boot path.
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "station_observed", "systemId", MAX_STATION_SIGHTINGS)) {
       const p = e.payload as { systemId?: unknown; stationPoiId?: unknown; station?: unknown; services?: unknown } | null;
       if (!p || typeof p.systemId !== "string" || !p.systemId) continue;
       const services = Array.isArray(p.services) ? p.services.filter((s): s is string => typeof s === "string") : [];
@@ -636,13 +643,12 @@ export class Agent {
         lastSeen: e.ts,
       });
     }
-    // The cap is enforced on load too, for the same reason MAX_GOALS is: a
-    // stored stream written under a larger cap (or by a future config) may
-    // carry more systems than we retain -- keep the most recently confirmed.
-    for (const s of [...this.stationSightings.values()].sort((a, b) => a.lastSeen - b.lastSeen)) {
-      if (this.stationSightings.size <= MAX_STATION_SIGHTINGS) break;
-      this.stationSightings.delete(s.systemId);
-    }
+    // No post-load cap loop here, unlike the MAX_GOALS reload above: the query
+    // returns at most one row per system and takes the newest MAX_STATION_
+    // SIGHTINGS of them, so the map is already at or under the cap when the
+    // loop above finishes. The trim this replaced was dead code -- deleting it
+    // changed no test, which is how it was caught (PR #18 review ablation).
+    // Runtime growth past the cap stays rememberStation's job.
     // Experiment latch (#240): re-latch from a persisted experiment_reverted
     // event, but only when its payload matches the CURRENT experiment config --
     // an operator who changes the counter or window has started a NEW
@@ -1677,11 +1683,6 @@ export class Agent {
       // refused it and THIS replan already shows the marker.
       this.learnSparseDeposit(wake, surroundings, statusSnap);
       this.applySparseMarkers(surroundings, statusSnap?.modules);
-      // Station geography (issue #517): the one seam holding fresh map data for
-      // the system the pilot is standing in -- see applyStationPoi. Runs on
-      // every replan, cheap (a filter over POIs already fetched) and silent
-      // unless it actually learns the in-system leg.
-      this.applyStationPoi(surroundings, statusSnap);
       // Mission-funnel fix (issue #147): fetched here, on the same
       // once-per-replan cadence as gatherSurroundings above -- not per tick.
       const missionsText = await this.gatherMissions(statusSnap);
@@ -2111,6 +2112,13 @@ export class Agent {
     if (!isDock && !service) return;
     const learned = rememberStation(this.stationSightings, {
       systemId,
+      // The station POI, from the ship's OWN pre-action position. `dock`
+      // requires already being at a POI with a base (upstream/docs/travel.md:51)
+      // and does not move the ship, so on a dock success the POI we were at IS
+      // the station -- no map data, no elimination over hasBase, and no
+      // ambiguity when a system holds two stations. Same for a docked
+      // refuel/sell/repair/craft: the ship is at the station it is docked to.
+      stationPoiId: status.poiId ?? undefined,
       station: isDock ? dockedStationName(result.resultText) : undefined,
       service,
       now: this.now(),
@@ -2119,32 +2127,7 @@ export class Agent {
     this.emitStationObserved(systemId);
   }
 
-  // Station geography (issue #517), the in-system half. A dock teaches WHICH
-  // SYSTEM has a station; it cannot teach which POI in that system it is,
-  // because at the moment of the dock the loop holds no map data (the executor
-  // sees the action and the status, not get_system). A replan does hold the map,
-  // so the POI id is stamped here, from structured POI fields only -- see
-  // stationPoiFromSurroundings for the two rules and why an ambiguous system
-  // teaches nothing.
-  //
-  // Confirmed systems ONLY. A hasBase POI in a system we have never docked at is
-  // the game's claim, not our receipt, and this memory's whole contract is that
-  // every entry in it is a place the pilot has actually been.
-  private applyStationPoi(surroundings: Surroundings | undefined, status: StatusSnapshot | null): void {
-    if (!surroundings?.systemId) return;
-    const existing = this.stationSightings.get(surroundings.systemId);
-    if (!existing) return;
-    const poiId = stationPoiFromSurroundings(
-      surroundings.pois, surroundings.currentPoi?.id, status?.docked === true,
-    );
-    if (!poiId) return;
-    const learned = rememberStation(this.stationSightings, {
-      systemId: surroundings.systemId, stationPoiId: poiId, now: this.now(),
-    });
-    if (learned) this.emitStationObserved(surroundings.systemId);
-  }
-
-  // One writer for the persisted event, shared by both learn seams: the payload
+  // The persisted event: the payload
   // is the FULL entry as of the change, so an ascending replay is last-write-
   // wins and the constructor needs no delta merge.
   private emitStationObserved(systemId: string): void {

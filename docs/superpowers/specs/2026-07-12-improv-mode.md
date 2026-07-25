@@ -516,15 +516,17 @@ The model gets the wheel, not the safety switches:
   deterministic in both modes: a self-driving agent that talks itself into retrying a refused POI
   is still re-briefed the learned refusal, and the lesson survives restarts.
 - **Station geography memory** (#517, live 2026-07-25): every successful `dock` records the system
-  it happened in, the station's name, and (from any docked success of refuel/sell/buy/repair/craft)
-  which services are proven to work there — bounded map memory (8 systems, oldest-evicted),
-  restart-safe (rebuilt from persisted `station_observed` events on construction). The in-system
-  STATION POI id is stamped separately, at the next replan in that system, from `get_system`'s
-  structured POI data: the POI you are docked at, or the system's single `has_base` POI. Two bases
-  and no dock teaches nothing — a wrong POI id routes the pilot confidently to the wrong rock,
-  which is worse than an absent one that makes it read the POI list on arrival. Success comes
-  from the executor's own outcome classification, never from parsed prose, so a reworded game
-  message can cost only the display name, never an id. Both modes get the compiled
+  it happened in, the STATION POI within that system, and the station's name — bounded map memory
+  (8 systems, oldest-evicted), restart-safe (rebuilt from persisted `station_observed` events on
+  construction). Both ids come from the ship's own pre-action position (`get_status.location`'s
+  `system_id` and `poi_id`), which is exact rather than inferred: docking requires already being at
+  a POI with a base and does not move you, so the POI you were at IS the station, even in a system
+  holding two of them. Success comes from the executor's own outcome classification, never from
+  parsed prose, so a reworded game message can cost only the display name, never an id.
+  Services are tagged only for actions the reference documents as REQUIRING the station service
+  (market, crafting). Refuel and repair are deliberately excluded: both fall back to burning cargo
+  consumables and report success, so a docked success proves nothing about the station, and a wrong
+  service tag routes the pilot somewhere that cannot serve it. Both modes get the compiled
   shortlist in their briefing; the §4 rules above are the behavioural half. It stays deterministic
   because the failure it fixes is a memory failure, not a judgment one: the knowledge was in the
   event store the whole time and no amount of reasoning could recover it from a prompt that never
