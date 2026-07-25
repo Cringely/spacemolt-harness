@@ -254,6 +254,63 @@ describe("POST /api/agents/:id/instruct", () => {
     });
     expect(res.status).toBe(404);
   });
+
+  // #527: the boundary half of the query-action gate. The matching rule itself
+  // is covered exhaustively in test/instruct-gate.test.ts; what these two prove
+  // is the WIRING -- that the gate runs before agent.instruct(), that the
+  // rejected steer never reaches the agent at all, and that the accepted one is
+  // completely unaffected by the new check.
+  test("rejects a steer that orders a query action, and the agent never sees it", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([
+      { goal: "mine", steps: [{ action: "mine", params: {}, repeat: 5 }] },
+      { goal: "obey", steps: [{ action: "undock", params: {} }] },
+    ]);
+    const agent = new Agent({ id: "miner", persona: "p", api: stubApi(), store, planner, config, now: () => 0 });
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    await agent.runOnce();
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        text: "Use find_route with id gold_run (a base is confirmed there) and jump to the first hop it returns, then dock and refuel.",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; action: string; detail: string };
+    expect(body.error).toBe("query_action_instruction");
+    expect(body.action).toBe("find_route");
+    expect(body.detail).toContain("find_route");
+
+    // The mine plan is still running: no instruction wake was queued, so the
+    // agent did not replan. A gate that 400s but still calls agent.instruct()
+    // would fail here.
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(1);
+  });
+
+  test("a steer that only names mutations is untouched by the gate", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([
+      { goal: "mine", steps: [{ action: "mine", params: {}, repeat: 5 }] },
+      { goal: "obey", steps: [{ action: "undock", params: {} }] },
+    ]);
+    const agent = new Agent({ id: "miner", persona: "p", api: stubApi(), store, planner, config, now: () => 0 });
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    await agent.runOnce();
+
+    const text = "jump to gold_run, then dock and refuel. Do NOT spend the last fuel cell.";
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    expect(res.status).toBe(204);
+
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(2);
+    expect(planner.contexts[1]!.wake.reason).toBe("instruction");
+    expect(planner.contexts[1]!.instruction).toBe(text);
+  });
 });
 
 describe("GET /api/agents/:id/usage", () => {

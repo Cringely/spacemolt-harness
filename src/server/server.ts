@@ -9,6 +9,7 @@ import {
   USAGE_WINDOW_HOURS, USAGE_WINDOW_OPTIONS,
 } from "./usage";
 import { failureTaxonomy } from "./failures";
+import { findDirectedQueryAction, queryActionRejectionDetail } from "./instruct-gate";
 import { missionSummary } from "./missions";
 import { evaluateReviewGate, markReviewRan } from "../review/review-gate";
 import { readDump, REVIEW_WINDOW_HOURS } from "../../scripts/strategy-review-dump";
@@ -321,6 +322,23 @@ export function startDashboardServer(opts: DashboardServerOptions): DashboardSer
         const parsed = InstructBodySchema.safeParse(raw);
         if (!parsed.success) {
           return Response.json({ error: "invalid_body", detail: parsed.error.message }, { status: 400 });
+        }
+        // #527: a steer that ORDERS a query action is structurally unplannable
+        // (the planner's vocabulary is mutations-only), so it never retires and
+        // re-raises into every later plan. Reject it here, at the same boundary
+        // and in the same 400 shape as the length bound above, while the
+        // operator is still typing. See src/server/instruct-gate.ts for the
+        // matching rule and the false negatives it accepts on purpose.
+        const queryAction = findDirectedQueryAction(parsed.data.text);
+        if (queryAction) {
+          return Response.json(
+            {
+              error: "query_action_instruction",
+              action: queryAction,
+              detail: queryActionRejectionDetail(queryAction),
+            },
+            { status: 400 },
+          );
         }
         agent.instruct(parsed.data.text);
         return new Response(null, { status: 204 });
