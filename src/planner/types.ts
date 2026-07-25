@@ -313,6 +313,38 @@ export interface PlanContext {
   // nearby entities and not in transit); the digest then renders no location
   // section (ABSENCE IS NOT A VERDICT, #94).
   locationInfo?: LocationInfo;
+  // Station geography (issue #517): confirmed station systems from the pilot's
+  // OWN docking history -- most recently confirmed first, capped
+  // (MAX_STATION_SIGHTINGS), and never including the system it is in right now.
+  // The gap this closes (live 2026-07-25): `Connections` names only the systems
+  // one hop away, so `travel_to{system_id}` -- which reaches any system several
+  // jumps out, and which the digest already tells the planner to prefer -- had
+  // no candidate ids at all. Starved of destinations, the pilot guessed: 8 jumps
+  // in 48 minutes and 70 planner calls in 6h hunting for somewhere to refuel,
+  // while reasoning from an NPC's chat prose about a station it had itself
+  // docked at nine hours earlier.
+  // Derived from data already in our event store (successful `dock` results),
+  // so it costs no game call and assumes no response shape. Undefined/empty
+  // until the pilot has docked somewhere -- the digest then renders no section
+  // (ABSENCE IS NOT A VERDICT, #94: an empty memory is "we have not confirmed
+  // one", never "there are no stations").
+  knownStations?: StationSighting[];
+}
+
+// Station geography (issue #517): one confirmed station system. `systemId` is
+// the travel_to target and the only load-bearing field -- it comes from the
+// pilot's own position at a dock the executor classified as successful, never
+// from parsed prose. `station` is the game-authored display name (bounded at
+// the producer, see STATION_NAME_MAX) and exists so the planner can connect a
+// name it meets in NPC or chat prose to a system id it can actually fly to.
+// `services` holds what a docked success has PROVEN works there (refuel,
+// market, repair, crafting -- see STATION_SERVICE_BY_ACTION); empty means
+// unproven, never absent. `lastSeen` orders the shortlist by recency.
+export interface StationSighting {
+  systemId: string;
+  station?: string;
+  services: string[];
+  lastSeen: number; // epoch ms
 }
 
 // Purchase discovery (issue #220): one estimate_purchase answer. itemId/name come

@@ -138,6 +138,19 @@ const PlanContextSchema = z.object({
     transitDestPoiName: z.string().optional(),
     transitArrivalTick: z.number().optional(),
   }).optional(),
+  // Station geography (issue #517): mirrors PlanContext.knownStations /
+  // StationSighting (planner/types.ts), so a harvested case replays the
+  // destination shortlist the planner was actually shown. `services` defaults
+  // to empty rather than being required: a hand-written or older case that
+  // names a system without one still loads (persisted state outlives the
+  // schema that wrote it), and an empty list is already the digest's "nothing
+  // confirmed here yet" rendering.
+  knownStations: z.array(z.object({
+    systemId: z.string(),
+    station: z.string().optional(),
+    services: z.array(z.string()).default([]),
+    lastSeen: z.number(),
+  })).optional(),
 });
 
 // Key parity, at COMPILE time (issue #272). The comment above promised a drift

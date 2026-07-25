@@ -1,11 +1,16 @@
 import type { GameApi, StatusSnapshot, CargoItem, MarketRow, FittedModule, ShipFit, ActiveMissionInfo, PoiDepositsResult, LocationInfo } from "../client/client";
 import type { Store, PlanCursor } from "../store/store";
 import { PlanSchema, type Plan } from "../registry/plan";
-import type { Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus } from "../planner/types";
+import type {
+  Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
+} from "../planner/types";
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
 import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
-import { executeTick, miningEquipmentKey, type LearnedSparseRule } from "./executor";
+import { executeTick, miningEquipmentKey, type LearnedSparseRule, type StepResult } from "./executor";
+import {
+  MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, dockedStationName, knownStationSystems, rememberStation,
+} from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
 import { evaluateReflex, type ReflexConfig } from "./reflex";
@@ -456,6 +461,22 @@ export class Agent {
   // in the key (a refit stops the match), and the DEPOSIT state -- which
   // regenerates with no change signal -- ages out on SPARSE_RULE_TTL_HOURS.
   private sparseRules = new Map<string, { equipmentKey: string; detail: string; learnedAt: number }>();
+  // Station geography (issue #517): systemId -> the station confirmed there by
+  // the pilot's own successful dock, plus whatever services a docked success has
+  // since proven (see src/agent/stations.ts for the whole mechanism and the live
+  // incident). Feeds the digest's destination shortlist so a travel_to step has
+  // candidate ids instead of only the one-hop Connections list. Bounded
+  // (MAX_STATION_SIGHTINGS, oldest-lastSeen evicted) and restart-safe via
+  // persisted station_observed events -- the same events-table-as-durable-state
+  // pattern as incompatiblePois and sparseRules above, and restart-safety is the
+  // whole point: the knowledge this replaces was already in the store, nine
+  // hours and at least one restart old, and the pilot could not see it.
+  // No self-heal or TTL, unlike the two memories above: station geography does
+  // not change with the ship's fit and does not regenerate -- a station that
+  // existed stays existing (a repossessed PLAYER station could vanish, per
+  // upstream/docs/stations.md, but every sighting here is one we docked at, and
+  // a stale entry costs one blocked dock that immediately re-teaches the truth).
+  private stationSightings = new Map<string, StationSighting>();
   // Rung-1 latch: the timestamp of the last steward re-steer. THE bound on the
   // instruction-class re-steer burn (see runSteward). Gated now - last >= window.
   // Seeded to -Infinity ("never steered") so the FIRST re-steer is always
@@ -585,6 +606,38 @@ export class Agent {
           learnedAt: e.ts,
         });
       }
+    }
+    // Station geography (issue #517): rebuild the confirmed-station map from
+    // persisted events, same pattern and same tolerant-loader discipline as the
+    // two reloads above. Each stored event carries the FULL entry as of the
+    // change, so an ascending replay is last-write-wins and needs no delta
+    // merge; lastSeen comes from the event's own ts, so recency ordering
+    // survives the restart. The read limit is 4x the map cap because one system
+    // can teach at most a handful of facts (its name, then each of the four
+    // service tags), so 4x covers every system's full history at the cap
+    // without reading the whole table.
+    // Schema tolerance (AGENTS.md): an entry missing its systemId is SKIPPED,
+    // and a `services` field that is not an array of strings degrades to an
+    // empty list rather than propagating a bad shape into the digest -- a
+    // payload written by an older or hand-edited build must never crash the
+    // boot path.
+    for (const e of this.store.recentEventsByType(this.id, "station_observed", MAX_STATION_SIGHTINGS * 4)) {
+      const p = e.payload as { systemId?: unknown; station?: unknown; services?: unknown } | null;
+      if (!p || typeof p.systemId !== "string" || !p.systemId) continue;
+      const services = Array.isArray(p.services) ? p.services.filter((s): s is string => typeof s === "string") : [];
+      this.stationSightings.set(p.systemId, {
+        systemId: p.systemId,
+        station: typeof p.station === "string" ? p.station : undefined,
+        services,
+        lastSeen: e.ts,
+      });
+    }
+    // The cap is enforced on load too, for the same reason MAX_GOALS is: a
+    // stored stream written under a larger cap (or by a future config) may
+    // carry more systems than we retain -- keep the most recently confirmed.
+    for (const s of [...this.stationSightings.values()].sort((a, b) => a.lastSeen - b.lastSeen)) {
+      if (this.stationSightings.size <= MAX_STATION_SIGHTINGS) break;
+      this.stationSightings.delete(s.systemId);
     }
     // Experiment latch (#240): re-latch from a persisted experiment_reverted
     // event, but only when its payload matches the CURRENT experiment config --
@@ -1721,6 +1774,14 @@ export class Agent {
         purchaseEstimates,
         marketInsightsText,
         locationInfo,
+        // Station geography (issue #517): the destination shortlist, read from
+        // the memory the executor writes on every successful dock -- no game
+        // call, no fetch to gate. The current system is excluded inside
+        // knownStationSystems (a list of places to GO must not include where
+        // you already are); surroundings is the position of record here, with
+        // the status snapshot as the fallback for a replan whose get_system
+        // failed.
+        knownStations: knownStationSystems(this.stationSightings, surroundings?.systemId ?? statusSnap?.systemId),
       };
       const raw = await planner.plan(ctx);
       // Offline planner eval (issue #263, born from SM-9): record the exact
@@ -2010,6 +2071,46 @@ export class Agent {
       if (oldest !== undefined) this.sparseRules.delete(oldest);
     }
     this.emit("mine_sparse_learned", { poiId, equipmentKey, detail });
+  }
+
+  // Station geography (issue #517): fold a successful action into the
+  // confirmed-station memory. Two kinds of evidence, both already in hand:
+  //   - a `dock` success proves this system has a dockable station, and its
+  //     result text usually names it ("Docked at Gold Run Extraction Hub");
+  //   - any STATION_SERVICE_BY_ACTION action succeeding while DOCKED proves that
+  //     service works at the station here -- the strongest being refuel, whose
+  //     UNDOCKED mode burns cargo fuel cells and proves nothing about geography
+  //     (openapi-v2 refuel modes 3 vs 4), which is why the docked guard is
+  //     load-bearing rather than defensive.
+  // Success is read off the executor's StepResult kind, never off prose. Nothing
+  // is learned from blocked/wait/server_retry, so the incident window's 23 "No
+  // station at this location" dock failures teach nothing here -- correctly:
+  // they are evidence about a POI, not about a station.
+  // Emits station_observed only on a NEW fact, so the persisted stream (the
+  // restart-safe source the constructor rebuilds from) stays one event per fact
+  // rather than one per dock.
+  private learnStation(action: string | undefined, result: StepResult, status: StatusSnapshot | null): void {
+    if (!action) return;
+    if (result.kind !== "continue" && result.kind !== "plan_done") return;
+    const systemId = status?.systemId;
+    if (!systemId) return; // unknown position -> nothing to attribute the station to
+    const isDock = action === "dock";
+    // A service is only proven by a success we KNOW was made while docked;
+    // unknown dock state teaches nothing (fail-safe, the convention every
+    // executor guard here follows).
+    const service = status.docked === true ? STATION_SERVICE_BY_ACTION[action] : undefined;
+    if (!isDock && !service) return;
+    const learned = rememberStation(this.stationSightings, {
+      systemId,
+      station: isDock ? dockedStationName(result.resultText) : undefined,
+      service,
+      now: this.now(),
+    });
+    if (!learned) return;
+    const entry = this.stationSightings.get(systemId)!;
+    this.emit("station_observed", {
+      systemId, station: entry.station, services: entry.services,
+    });
   }
 
   private sparseRuleValid(rule: { learnedAt: number }): boolean {
@@ -2537,6 +2638,13 @@ export class Agent {
     this.emit("action", {
       action: step?.action, params: step?.params, outcome: result.kind, result: result.resultText,
     });
+
+    // Station geography (issue #517): learn here, at the one seam where the
+    // action, the outcome and the pre-action position are all in hand. A dock
+    // does not move the ship, so `status` (this tick's pre-action snapshot,
+    // already fetched in runOnce -- no extra call) names the system the station
+    // is in.
+    this.learnStation(step?.action, result, status);
 
     // stall-watcher v4 strand signal: count CONSECUTIVE fuel-blocked movement
     // attempts here (the producer of blocks), so the count accrues even on ticks

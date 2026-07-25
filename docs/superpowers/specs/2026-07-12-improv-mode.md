@@ -63,6 +63,14 @@ Resources / survival:
 - If you've already committed to a remedy (heading to refuel), don't re-open that decision every
   tick just because the condition still reads bad. Commit until it completes or provably fails —
   re-deciding a fix already under way is the classic token-burning livelock.
+- When you need a station and none is here, go to one you have ALREADY DOCKED AT — your briefing
+  lists them as confirmed station systems, and `travel_to{system_id}` reaches any of them from
+  anywhere, no adjacency needed. Exploring for a station is the expensive mistake: live
+  2026-07-25, a pilot spent 8 jumps in 48 minutes and 70 planner calls hunting for a refuel while
+  reasoning from an NPC's chat prose about a station it had itself docked and refuelled at nine
+  hours earlier. A station named in chat or NPC prose is a rumour; one you docked at is a receipt.
+  (Also a §5 harness memory: the shortlist is compiled from your own successful docks and survives
+  restarts.)
 
 Verify effects (never trust a success envelope):
 - Before selling, note the item's cargo quantity; after, re-query and confirm it dropped. A
@@ -500,6 +508,16 @@ The model gets the wheel, not the safety switches:
   control there, since you read the type from `get_system` yourself). The map memory stays
   deterministic in both modes: a self-driving agent that talks itself into retrying a refused POI
   is still re-briefed the learned refusal, and the lesson survives restarts.
+- **Station geography memory** (#517, live 2026-07-25): every successful `dock` records the system
+  it happened in, the station's name, and (from any docked success of refuel/sell/buy/repair/craft)
+  which services are proven to work there — bounded map memory (8 systems, oldest-evicted),
+  restart-safe (rebuilt from persisted `station_observed` events on construction). Success comes
+  from the executor's own outcome classification, never from parsed prose, so a reworded game
+  message can cost only the display name, never the system id. Both modes get the compiled
+  shortlist in their briefing; the §4 rule above is the behavioural half. It stays deterministic
+  because the failure it fixes is a memory failure, not a judgment one: the knowledge was in the
+  event store the whole time and no amount of reasoning could recover it from a prompt that never
+  carried it.
 - **Catalog-gated jettison guard** (#94, operator mandate 2026-07-13): a `jettison` of an item
   whose catalog `base_value` clears the value floor (`JETTISON_VALUE_FLOOR`, 50cr — see
   `src/agent/executor.ts`) is short-circuited to a blocked wake naming the value and the
