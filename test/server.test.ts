@@ -318,9 +318,9 @@ describe("GET /api/agents/:id/usage", () => {
 });
 
 // #158 failure taxonomy endpoint: the pure aggregation is unit-tested in
-// test/failures.test.ts; these prove the ROUTE wiring -- above all that the
-// events read is LIFETIME (a pre-window 5/5-blocked history must still flag a
-// broken capability while contributing nothing to the window table).
+// test/failures.test.ts; these prove the ROUTE wiring -- that the events read is
+// LIFETIME (a mostly-pre-window history reaches the wire with its full depth)
+// while the window counts #518 added ride along beside it.
 describe("GET /api/agents/:id/failures", () => {
   test("window table vs lifetime broken-capability split comes through the wire", async () => {
     const { agent, store } = makeAgent();
@@ -332,6 +332,12 @@ describe("GET /api/agents/:id/failures", () => {
         payload: { action: "buy", params: {}, outcome: "blocked", result: "invalid_item: Unknown item 'fuel_cells'." },
       });
     }
+    // A 6th blocked buy INSIDE the window -- the capability is still broken
+    // TODAY, which is what makes it a reportable finding at all (#518).
+    store.appendEvent({
+      agentId: "miner", ts: now - 2 * 60 * 60 * 1000, type: "action",
+      payload: { action: "buy", params: {}, outcome: "blocked", result: "invalid_item: Unknown item 'fuel_cells'." },
+    });
     // One blocked sell INSIDE the window.
     store.appendEvent({
       agentId: "miner", ts: now - 60 * 1000, type: "action",
@@ -343,14 +349,21 @@ describe("GET /api/agents/:id/failures", () => {
       windowHours: number;
       classes: Array<{ class: string; count: number }>;
       newClasses: string[];
-      brokenCapabilities: Array<{ action: string; failures: number; attempts: number; failureRate: number; topClass: string }>;
+      brokenCapabilities: Array<{
+        action: string; failures: number; attempts: number; failureRate: number;
+        windowAttempts: number; windowFailures: number; topClass: string;
+      }>;
     };
     expect(body.windowHours).toBe(24);
-    expect(body.classes).toHaveLength(1); // the old buy blocks are outside the window
-    expect(body.classes[0]!.class).toBe("sell:no_buyers");
-    expect(body.newClasses).toEqual(["sell:no_buyers"]); // first-ever occurrence is in-window
-    expect(body.brokenCapabilities).toEqual([
-      { action: "buy", attempts: 5, failures: 5, failureRate: 1, topClass: "invalid_item" },
+    expect(body.classes.map((c) => c.class)).toStrictEqual(["invalid_item", "sell:no_buyers"]);
+    expect(body.newClasses).toStrictEqual(["sell:no_buyers"]); // invalid_item's first-ever occurrence predates the window
+    // attempts 6 (lifetime read reached the route) vs windowAttempts 1 (only
+    // one of them is inside the 24h the route reports against).
+    expect(body.brokenCapabilities).toStrictEqual([
+      {
+        action: "buy", attempts: 6, failures: 6, failureRate: 1,
+        windowAttempts: 1, windowFailures: 1, topClass: "invalid_item",
+      },
     ]);
   });
 
