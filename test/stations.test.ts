@@ -760,6 +760,63 @@ describe("historical station backfill (issue #525)", () => {
     expect(known.map((s) => s.systemId)).toStrictEqual(["gold_run"]);
   });
 
+  // ---- `travel` is a move WITHIN a system, and must never clear the position --
+  //
+  // THE receipt (docs/game-reference/upstream/docs/travel.md:5): "`travel` moves
+  // you between POIs inside a system, `jump` carries you along a lane to an
+  // adjacent system." So a travel cannot change which system you are in, and
+  // travel-then-dock is the ORDINARY way to reach a station -- you arrive in the
+  // system by jumping, then travel to the station POI and dock.
+  //
+  // This is the highest-consequence word in the whole change and nothing pinned
+  // it before these two tests: treating `travel` as a position-invalidating move
+  // collapses the production map from 713 kept docks across 16 systems to 19
+  // across 4, discarding 699 of 718 docks. There are two independent places a
+  // future edit could introduce that, so there are two tests.
+
+  // SITE 1, the store's projection. `travel` must not reach the walk at all.
+  // Goes red the moment `'travel'` is added to dockTrail's action IN list.
+  test("a travel row is left out of the projected dock trail", () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "gold_run");
+    action(store, 1_100, "travel", "continue", "Travelled to Gold Run Extraction Hub.");
+    action(store, 1_200, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+
+    // The travel row IS in the store -- so this asserts an exclusion that had
+    // something to exclude, rather than passing on an empty fixture.
+    expect(store.recentEventsByType("a1", "action", 10)).toHaveLength(2);
+    expect(store.dockTrail("a1").map((r) => `${r.type}:${r.action ?? ""}`))
+      .toStrictEqual(["status_snapshot:", "action:dock"]);
+  });
+
+  // SITE 2, the walk itself. deriveStationSightings is an exported pure function
+  // taking a plain row array, so the store's WHERE clause is not what makes this
+  // safe -- a caller can hand it anything. Driven directly for exactly that
+  // reason. Goes red the moment `travel` joins `jump`/`travel_to` in the move
+  // branch: the dock would be dropped as stale and the list would come back [].
+  test("a successful travel does not make the carried position stale", () => {
+    const derived = deriveStationSightings([
+      { type: "status_snapshot", ts: 1_000, action: null, systemId: "gold_run", outcome: null, result: null },
+      { type: "action", ts: 1_100, action: "travel", outcome: "continue", systemId: null, result: "Travelled to the station." },
+      { type: "action", ts: 1_200, action: "dock", outcome: "continue", systemId: null, result: "Docked at Gold Run Extraction Hub." },
+    ]);
+    expect(derived.map((s) => s.systemId)).toStrictEqual(["gold_run"]);
+    expect(derived.map((s) => s.station)).toStrictEqual(["Gold Run Extraction Hub"]);
+  });
+
+  // ...and the pair holds together: widening the store to admit `travel` stays
+  // INERT only because the walk fails closed on an action it does not recognise.
+  // That guard is unreachable through today's dockTrail (0 rows reach it across
+  // 15,244 in production), so this drives the function directly to hold the seam
+  // contract that makes the widening safe. Red if the `row.action !== "dock"`
+  // guard is dropped: the travel row's result text parses as a station name.
+  test("an unrecognised row reaching the walk is discarded, not read as a dock", () => {
+    expect(deriveStationSightings([
+      { type: "status_snapshot", ts: 1_000, action: null, systemId: "gold_run", outcome: null, result: null },
+      { type: "action", ts: 1_100, action: "travel", outcome: "continue", systemId: null, result: "Docked at Phantom Station." },
+    ]).map((s) => s.station)).toStrictEqual([]);
+  });
+
   // A snapshot that names no system re-establishes nothing. The live payload
   // writes `systemId: status.systemId ?? null` whenever the status read came
   // back thin, so this is a shape the store really holds -- and a stale position

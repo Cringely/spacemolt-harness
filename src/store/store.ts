@@ -196,9 +196,18 @@ export class Store {
    * a jump and its dock between two snapshots with nothing in between. The
    * caller needs the moves to know the position it is carrying went stale (PR
    * #22 review, F1); without them it attributes the dock to the system the ship
-   * LEFT. `travel` is deliberately NOT here: it moves between POIs inside one
-   * system, so it cannot invalidate a system id, and including it would discard
-   * the travel-then-dock pair that is the normal way to reach a station.
+   * LEFT.
+   *
+   * `travel` is deliberately NOT in that list, and it is the highest-consequence
+   * word in this query. The reference is explicit
+   * (docs/game-reference/upstream/docs/travel.md:5): "`travel` moves you between
+   * POIs inside a system, `jump` carries you along a lane to an adjacent
+   * system." An intra-system hop cannot invalidate a system id, and travel-then-
+   * dock is the NORMAL way to reach a station -- so treating it as a move would
+   * discard almost every dock we have. Measured on the production snapshot:
+   * 713 kept docks across 16 systems becomes 19 kept across 4, dropping 699 of
+   * 718. Both halves of that are pinned by tests in test/stations.test.ts; see
+   * "travel is a move WITHIN a system" there.
    *
    * WHY A RAW TRAIL AND NOT AN ANSWER. Where the ship WAS when a dock succeeded
    * is not stored on the dock row -- all 482 historical docks in the live store
@@ -230,12 +239,29 @@ export class Store {
    * json_extract discards that ONE row and lets the rest of the history load,
    * which is what the convention asks for -- where catching the throw and
    * returning nothing would silently delete the pilot's whole geography over a
-   * single bad byte. The cheap `type IN (...)` test leads so json_valid runs on
-   * the 13k rows that can qualify rather than all 99k: same tolerance, measured
-   * 45 ms against 71 ms for the same query with json_valid in front. A NULL
-   * payload is filtered by the same predicate (json_valid(NULL) is NULL, not
-   * true) and a JSON scalar still passes it, yielding NULL columns the caller
-   * already narrows away -- both were inert here before and stay inert.
+   * single bad byte.
+   *
+   * WHY `type IN (...)` LEADS, and the earlier justification for it was wrong.
+   * It was argued as correctness -- that a `reflex` row could carry
+   * `action: dock` and be misread as a plan dock. A reflex row cannot:
+   * `ReflexFire` types its action `"refuel" | "repair"` (src/agent/reflex.ts:9),
+   * so no typed reflex write can name a dock, and the row set is IDENTICAL with
+   * and without this clause (15,244 rows both ways against the production
+   * snapshot). The narrow correctness claim that survives is a seam contract
+   * rather than a live filter: `appendEvent` does not type its payload, so ANY
+   * event type can carry an `action` field, and the test below pins that by
+   * writing one directly. Real data has never contained one.
+   *
+   * It earns its place on PERFORMANCE instead, by more than was claimed. The
+   * cheap type test leads so json_valid and the json_extract behind it run on
+   * the ~15k rows that can qualify rather than all 99k: 45 ms with it against
+   * 72 ms without, median of 12 runs on the same snapshot. The json_valid
+   * tolerance sitting behind it is free at this point -- dropping it too moves
+   * nothing outside run-to-run noise, so the tolerance costs no measurable time
+   * once the type test has already narrowed the scan. A NULL payload is filtered
+   * by that same json_valid (json_valid(NULL) is NULL, not true) and a JSON
+   * scalar still passes it, yielding NULL columns the caller already narrows
+   * away -- both were inert here before and stay inert.
    */
   dockTrail(agentId: string): DockTrailRow[] {
     return this.db

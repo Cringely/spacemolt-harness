@@ -184,18 +184,42 @@ export function rememberStation(
  * (agent.ts, inside `if (wake)`) while plan steps also execute on non-wake ones.
  * So a plain `[travel_to X, dock]` plan runs the jump AND its dock with no
  * snapshot between them, and the carried position still names the system the
- * ship left. The `moved` flag below is what makes the attribution safe: a
- * successful `jump`/`travel_to` marks the carried position stale, and every dock
- * after it is DROPPED until a snapshot re-establishes where the ship is. Losing
- * a dock costs one candidate destination; keeping a wrong one manufactures the
- * exact false "there is a station here" belief this feature exists to prevent.
+ * ship left. Clearing the position on a successful `jump`/`travel_to` is what
+ * makes that attribution safe: every dock after a move is DROPPED until a
+ * snapshot re-establishes where the ship is. Losing a dock costs one candidate
+ * destination; keeping a wrong one manufactures the exact false "there is a
+ * station here" belief this feature exists to prevent.
  *
- * On today's data the flag drops nothing (production snapshot, 718 nameable
- * successful docks: 713 kept, 0 dropped by this flag, 16 systems either way).
- * That is a property of the data, not of the algorithm -- a cross-system move
- * usually ENDS a plan, so the next tick wakes and snapshots before the dock. It
- * is not a reason to trust the position without the flag: the reviewer drove the
- * real Agent with a two-step plan and got a dock attributed to the wrong system.
+ * WHAT THAT DOES AND DOES NOT COVER, stated precisely because the scope is
+ * narrower than it looks. It makes the PLAN-STEP attribution safe: a move this
+ * harness executed and recorded as succeeding. It does NOT make the position
+ * generally trustworthy, because the ship can change system with no successful
+ * move on the record at all. On the production snapshot, 164 of 1,234 observed
+ * system changes had none: 90 with no action rows whatsoever between the two
+ * snapshots, and most of the rest a `jump:wait ... jump:blocked` retry chain
+ * where the server moved the ship anyway. The reference says so outright
+ * (docs/game-reference/upstream/docs/travel.md:36): "If you abort early the
+ * movement still completes server-side; verify where you are with `get_status`
+ * before retrying." A snapshot is the only thing that actually establishes
+ * position; this rule only keeps us from trusting a position we KNOW we left.
+ *
+ * Output impact of that gap today is zero, and it was checked rather than
+ * assumed. Of the 713 kept docks, 704 are corroborated by the next snapshot that
+ * names a system with no successful move in between, 5 have no later evidence
+ * either way, and 4 are contradicted. All 4 of those name stations that match
+ * the system they were attributed to ("Gold Run Extraction Hub" in `gold_run`,
+ * "Cargo Lanes Freight Depot" in `cargo_lanes`), and both systems are confirmed
+ * independently by many other docks -- so the derived map is the same 16 systems
+ * with or without them. Tracked separately rather than guarded here: a guard
+ * with no output to change is a guard no test can hold honest.
+ *
+ * On today's data the staleness rule itself drops nothing (production snapshot,
+ * 718 nameable successful docks: 713 kept, 5 dropped for no position at all, 0
+ * dropped as stale, 16 systems either way). That is a property of the data, not
+ * of the algorithm -- a cross-system move usually ENDS a plan, so the next tick
+ * wakes and snapshots before the dock. It is not a reason to drop the rule: the
+ * reviewer drove the real Agent with a two-step plan and got a dock attributed
+ * to the wrong system without it.
  *
  * WHAT IS TRUSTED, AND WHAT IS NOT. Success comes off the recorded `outcome`,
  * the executor's own StepResult kind, never off prose -- the same split #517
@@ -223,10 +247,13 @@ export function rememberStation(
  */
 export function deriveStationSightings(trail: DockTrailRow[]): StationSighting[] {
   const bySystem = new Map<string, StationSighting>();
+  // `undefined` means "we do not know where the ship is" -- and it carries BOTH
+  // reasons for not knowing: nothing has been reported yet, or a successful move
+  // invalidated what was reported. A separate `moved` flag alongside this was
+  // redundant: `position` is read at exactly the two sites below, both inside the
+  // dock branch, so `moved === true` and `position === undefined` always gated
+  // the identical row set. Clearing the position IS the staleness mark.
   let position: string | undefined;
-  // Set by a successful move, cleared by a snapshot: true means "the position
-  // below is where the ship WAS, not where it is". See the heuristic note above.
-  let moved = false;
   for (const row of trail) {
     if (row.type === "status_snapshot") {
       // A snapshot whose systemId is absent or null reports an UNKNOWN
@@ -234,12 +261,9 @@ export function deriveStationSightings(trail: DockTrailRow[]): StationSighting[]
       // ?? null`. It leaves the last known position standing rather than
       // clearing it, because clearing would silently drop real history every
       // time one status call came back thin. It deliberately does NOT clear
-      // `moved` either: a snapshot that names no system re-establishes nothing,
-      // so a position that went stale before it is still stale after it.
-      if (typeof row.systemId === "string" && row.systemId) {
-        position = row.systemId;
-        moved = false;
-      }
+      // the position either: a snapshot that names no system re-establishes
+      // nothing, so a position that went stale before it is still stale after it.
+      if (typeof row.systemId === "string" && row.systemId) position = row.systemId;
       continue;
     }
     const succeeded = row.outcome === "continue" || row.outcome === "plan_done";
@@ -248,17 +272,29 @@ export function deriveStationSightings(trail: DockTrailRow[]): StationSighting[]
       // fuel, no route) left the ship exactly where it was, and treating it as
       // a move would throw away the dock that a stranded pilot then performs
       // in place -- the state the whole feature exists to get out of.
-      if (succeeded) moved = true;
+      if (succeeded) position = undefined;
       continue;
     }
-    // Fail closed on anything else. The store's WHERE clause is what decides
-    // which rows arrive, and this walk now has to tell two kinds apart, so
-    // "not a move, therefore a dock" is exactly the unchecked assumption that
-    // produced F1. A row whose action we do not recognise teaches nothing.
+    // Fail closed on anything else. Be honest about what this is: against the
+    // store's current WHERE clause it is UNREACHABLE -- that clause admits only
+    // `dock`, `jump` and `travel_to`, the two moves are consumed above, and the
+    // production snapshot confirms it (0 rows reach this line across 15,244).
+    // It is a SEAM CONTRACT, not a live guard, and it earns its line as one:
+    // this is an exported pure function whose input is a plain row array, so
+    // callers other than dockTrail can and do supply it (the tests below drive
+    // it directly), and "not a move, therefore a dock" would be an unchecked
+    // assumption about a caller this function cannot see.
+    //
+    // It is also the coupling that makes the store's action list safe to widen.
+    // Add `travel` to that IN list and 2,163 production rows arrive here and are
+    // discarded, leaving the derived map byte-identical -- measured. Without
+    // this line they would be read as docks. What is NOT safe is teaching the
+    // move branch above about `travel`; see the test that pins it.
     if (row.action !== "dock") continue;
     if (!succeeded) continue;
-    if (!position) continue; // nothing to attribute it to -- drop it, never guess
-    if (moved) continue;     // the position is stale -- drop it, never guess
+    // No known position: either nothing was ever reported, or a move cleared it.
+    // Both mean the same thing here -- drop the dock, never guess a system.
+    if (!position) continue;
     const station = dockedStationName(typeof row.result === "string" ? row.result : undefined);
     if (!station) continue;
     // Last dock in a system wins, same as rememberStation: one record per
