@@ -176,10 +176,26 @@ export function rememberStation(
  * could not populate until it docked; it could not dock without the feature.
  * The deadlock breaks from data already on disk, so this reads it.
  *
- * THE WALK. `dock` does not move the ship, so the system a dock happened in is
- * the last position the pilot reported before it -- the nearest preceding
- * `status_snapshot`. Walking the trail in order while carrying that position is
- * the whole algorithm.
+ * THE WALK, AND WHY IT IS A HEURISTIC. `dock` does not move the ship, so the
+ * system a dock happened in is the last position the pilot reported before it
+ * -- the nearest preceding `status_snapshot`. Walking the trail in order while
+ * carrying that position is the whole algorithm. But the position is only as
+ * fresh as the last snapshot, and snapshots are emitted ONLY on wake ticks
+ * (agent.ts, inside `if (wake)`) while plan steps also execute on non-wake ones.
+ * So a plain `[travel_to X, dock]` plan runs the jump AND its dock with no
+ * snapshot between them, and the carried position still names the system the
+ * ship left. The `moved` flag below is what makes the attribution safe: a
+ * successful `jump`/`travel_to` marks the carried position stale, and every dock
+ * after it is DROPPED until a snapshot re-establishes where the ship is. Losing
+ * a dock costs one candidate destination; keeping a wrong one manufactures the
+ * exact false "there is a station here" belief this feature exists to prevent.
+ *
+ * On today's data the flag drops nothing (production snapshot, 718 nameable
+ * successful docks: 713 kept, 0 dropped by this flag, 16 systems either way).
+ * That is a property of the data, not of the algorithm -- a cross-system move
+ * usually ENDS a plan, so the next tick wakes and snapshots before the dock. It
+ * is not a reason to trust the position without the flag: the reviewer drove the
+ * real Agent with a two-step plan and got a dock attributed to the wrong system.
  *
  * WHAT IS TRUSTED, AND WHAT IS NOT. Success comes off the recorded `outcome`,
  * the executor's own StepResult kind, never off prose -- the same split #517
@@ -208,19 +224,41 @@ export function rememberStation(
 export function deriveStationSightings(trail: DockTrailRow[]): StationSighting[] {
   const bySystem = new Map<string, StationSighting>();
   let position: string | undefined;
+  // Set by a successful move, cleared by a snapshot: true means "the position
+  // below is where the ship WAS, not where it is". See the heuristic note above.
+  let moved = false;
   for (const row of trail) {
     if (row.type === "status_snapshot") {
       // A snapshot whose systemId is absent or null reports an UNKNOWN
-      // position, not a move -- the live payload writes `status.systemId ??
-      // null`. It leaves the last known position standing rather than clearing
-      // it, because a dock cannot happen mid-jump: the ship that docks next is
-      // still where it last said it was. Clearing here would silently drop
-      // real history every time one status call came back thin.
-      if (typeof row.systemId === "string" && row.systemId) position = row.systemId;
+      // position, not a fresh one -- the live payload writes `status.systemId
+      // ?? null`. It leaves the last known position standing rather than
+      // clearing it, because clearing would silently drop real history every
+      // time one status call came back thin. It deliberately does NOT clear
+      // `moved` either: a snapshot that names no system re-establishes nothing,
+      // so a position that went stale before it is still stale after it.
+      if (typeof row.systemId === "string" && row.systemId) {
+        position = row.systemId;
+        moved = false;
+      }
       continue;
     }
-    if (row.outcome !== "continue" && row.outcome !== "plan_done") continue;
+    const succeeded = row.outcome === "continue" || row.outcome === "plan_done";
+    if (row.action === "jump" || row.action === "travel_to") {
+      // Only a SUCCESSFUL move invalidates the position. A blocked jump (no
+      // fuel, no route) left the ship exactly where it was, and treating it as
+      // a move would throw away the dock that a stranded pilot then performs
+      // in place -- the state the whole feature exists to get out of.
+      if (succeeded) moved = true;
+      continue;
+    }
+    // Fail closed on anything else. The store's WHERE clause is what decides
+    // which rows arrive, and this walk now has to tell two kinds apart, so
+    // "not a move, therefore a dock" is exactly the unchecked assumption that
+    // produced F1. A row whose action we do not recognise teaches nothing.
+    if (row.action !== "dock") continue;
+    if (!succeeded) continue;
     if (!position) continue; // nothing to attribute it to -- drop it, never guess
+    if (moved) continue;     // the position is stale -- drop it, never guess
     const station = dockedStationName(typeof row.result === "string" ? row.result : undefined);
     if (!station) continue;
     // Last dock in a system wins, same as rememberStation: one record per

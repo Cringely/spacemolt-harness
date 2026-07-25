@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Agent, type AgentConfig } from "../src/agent/agent";
 import { MockPlanner } from "../src/planner/mock";
 import { Store } from "../src/store/store";
@@ -7,7 +11,16 @@ import type { GameApi, StatusSnapshot, SystemInfo } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
 import type { Plan } from "../src/registry/plan";
 import type { StationSighting } from "../src/planner/types";
-import { MAX_STATION_SIGHTINGS, rememberStation } from "../src/agent/stations";
+import { deriveStationSightings, MAX_STATION_SIGHTINGS, rememberStation } from "../src/agent/stations";
+
+// On-disk stores, needed only where a malformed row has to be written past the
+// typed writer (a second connection cannot attach to ":memory:").
+const tempDbs: string[] = [];
+afterAll(() => {
+  for (const p of tempDbs) {
+    try { rmSync(p, { force: true }); rmSync(`${p}-wal`, { force: true }); rmSync(`${p}-shm`, { force: true }); } catch { /* best effort */ }
+  }
+});
 
 // Station geography (issue #517). The state every test here drives is the one
 // the live pilot was actually in (miner, 2026-07-25 00:10-00:58 UTC): cargo
@@ -628,5 +641,233 @@ describe("historical station backfill (issue #525)", () => {
     const known = await knownStationsAfterBoot(store);
     expect(known.map((s) => s.systemId))
       .toStrictEqual([...systems].slice(-MAX_STATION_SIGHTINGS).reverse());
+  });
+
+  // ---- PR #22 review, F1: the position the walk carries can be STALE --------
+  //
+  // Every fixture above places a status_snapshot immediately before its dock,
+  // which is a shape the real Agent does not always produce: snapshots are
+  // emitted only inside `if (wake)`, and plan steps also execute on non-wake
+  // ticks. So the fixtures could not fail on the one case that matters.
+
+  /**
+   * The reviewer's reproduction, driven through the REAL Agent rather than
+   * hand-written rows: a plain two-step `[travel_to gold_run, dock]` plan. The
+   * replan tick wakes and snapshots (segin); the jump, its settle tick and the
+   * dock all run on non-wake ticks, so nothing re-reports position between the
+   * move and the dock. A walk that trusts the carried position claims a station
+   * in SEGIN -- the system the ship left -- which is the false "there is a
+   * station here" belief this whole feature exists to prevent.
+   */
+  function movingGame() {
+    const goldRunOnly: SystemInfo = {
+      id: "gold_run", name: "Gold Run", connections: ["segin"],
+      pois: [{ id: "gold_run_extraction_hub", name: "Gold Run Extraction Hub", type: "station", hasBase: true }],
+      currentPoi: { id: "gold_run_extraction_hub", name: "Gold Run Extraction Hub", type: "station", hasBase: true },
+    };
+    const state = {
+      system: { ...segin, connections: ["gold_run"] } as SystemInfo,
+      status: {
+        credits: 5_000, fuel: 80, maxFuel: 100, hull: 100, maxHull: 100,
+        cargoUsed: 0, cargoCapacity: 100, docked: false, inTransit: false,
+        systemId: "segin", poiId: "segin_belt_a",
+      } as StatusSnapshot,
+    };
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        if (name === "find_route") {
+          return { result: "route", structuredContent: { found: true, route: [{ system_id: "segin" }, { system_id: "gold_run" }] } };
+        }
+        if (name === "jump") {
+          state.system = goldRunOnly;
+          state.status = { ...state.status, systemId: "gold_run", poiId: "gold_run_extraction_hub" };
+          return { result: "Jumped to Gold Run" };
+        }
+        if (name === "dock") return { result: "Docked at Gold Run Extraction Hub" };
+        return { result: "ok" };
+      },
+      async status() { return state.status; },
+      async notifications() { return []; },
+      async getSystem() { return state.system; },
+    };
+    return api;
+  }
+
+  test("a dock the real Agent records after an unsnapshotted move is dropped, not misattributed", async () => {
+    const store = new Store(":memory:");
+    const plan: Plan = {
+      goal: "travel then dock",
+      steps: [{ action: "travel_to", params: { system_id: "gold_run" } }, { action: "dock", params: {} }],
+    };
+    let now = 1_000_000;
+    const agent = new Agent({
+      id: "a1", persona: "miner", api: movingGame(), store,
+      planner: new MockPlanner([plan]), config, now: () => now,
+    });
+    for (let i = 0; i < 4; i++) { await agent.runOnce(); now += 5_000; }
+
+    // The fixture's own premise, asserted rather than assumed: the Agent really
+    // did record the move and the dock with no position sample between them.
+    // If a future change starts snapshotting on non-wake ticks this assertion
+    // fails loudly instead of leaving the test below quietly vacuous.
+    const trail = store.dockTrail("a1");
+    const shape = trail.map((r) => `${r.type}:${r.action ?? ""}:${r.outcome ?? ""}`);
+    expect(shape).toStrictEqual([
+      "status_snapshot::",
+      "action:travel_to:continue",
+      "action:travel_to:continue",
+      "action:dock:plan_done",
+    ]);
+
+    // The dock is real and it names a real station, but nothing in the record
+    // says WHERE it happened -- the last reported position is a system the ship
+    // has since left. One lost candidate destination; zero invented ones.
+    expect(deriveStationSightings(trail)).toStrictEqual([]);
+  });
+
+  // The recovery half. A move only makes the position stale UNTIL the ship
+  // reports again, so the ordinary shape -- move, wake, snapshot, dock -- still
+  // learns, and it learns the system the pilot actually docked in.
+  // `duskmere` and not `segin` as the departure system on purpose: the boot in
+  // knownStationsAfterBoot happens IN segin, and the shortlist excludes the
+  // system the pilot is already in -- so a fixture that misattributes to segin
+  // would be hidden by that filter and the assertion could not fail.
+  test("a snapshot after a move re-establishes position, and the next dock lands in the new system", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "duskmere");
+    action(store, 1_100, "jump", "continue", "Jumped to Gold Run");
+    action(store, 1_200, "dock", "continue", "Docked at Ghost Station.");   // stale: dropped
+    snapshot(store, 1_300, "gold_run");
+    action(store, 1_400, "dock", "plan_done", "Docked at Gold Run Extraction Hub.");
+
+    const known = await knownStationsAfterBoot(store);
+    expect(known.map((s) => s.systemId)).toStrictEqual(["gold_run"]);
+    expect(known.map((s) => s.station)).toStrictEqual(["Gold Run Extraction Hub"]);
+  });
+
+  // Only a SUCCESSFUL move invalidates the position. A blocked jump -- no fuel,
+  // no route -- left the ship exactly where it was, and the pilot docking in
+  // place afterwards is the stranded state the whole feature exists to escape.
+  // Treating a failed move as a move would throw that record away.
+  test("a blocked move leaves the carried position standing", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "gold_run");
+    action(store, 1_100, "jump", "blocked", "insufficient fuel for jump");
+    action(store, 1_200, "travel_to", "blocked", "no route to market_prime");
+    action(store, 1_300, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+
+    const known = await knownStationsAfterBoot(store);
+    expect(known.map((s) => s.systemId)).toStrictEqual(["gold_run"]);
+  });
+
+  // A snapshot that names no system re-establishes nothing. The live payload
+  // writes `systemId: status.systemId ?? null` whenever the status read came
+  // back thin, so this is a shape the store really holds -- and a stale position
+  // is still stale after it.
+  test("a position-less snapshot does not revalidate a stale position", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "duskmere");
+    action(store, 1_100, "travel_to", "continue", "Jumped to Gold Run");
+    snapshot(store, 1_200, null);
+    action(store, 1_300, "dock", "continue", "Docked at Somewhere Station.");
+
+    expect(await knownStationsAfterBoot(store)).toStrictEqual([]);
+  });
+
+  // Fail closed on an action the walk does not recognise. The store's WHERE
+  // clause decides which rows arrive, but the walk now has to tell moves from
+  // docks, so "not a move, therefore a dock" would be the same unchecked
+  // assumption that produced F1. Driven directly, because the store filter is
+  // exactly what this guard exists to not depend on.
+  test("an unrecognised action row is not read as a dock", () => {
+    expect(deriveStationSightings([
+      { type: "status_snapshot", ts: 1_000, action: null, systemId: "gold_run", outcome: null, result: null },
+      { type: "action", ts: 1_100, action: "mine", outcome: "continue", systemId: null, result: "Docked at Not A Dock Station." },
+    ])).toStrictEqual([]);
+  });
+
+  // `action` is not a field only `type='action'` rows carry -- a `reflex` row
+  // carries one too, and it is the game call the loop made INSTEAD of the plan
+  // step. The trail's type filter is what keeps those out. Without it the walk
+  // would read a reflex as a plan dock and learn a station from a call that
+  // never docked anything.
+  test("a non-action row carrying an action field stays out of the trail", async () => {
+    const store = new Store(":memory:");
+    snapshot(store, 1_000, "duskmere");
+    store.appendEvent({
+      agentId: "a1", ts: 1_100, type: "reflex",
+      payload: { action: "dock", reason: "Docked at Phantom Station.", outcome: "continue", result: "Docked at Phantom Station." },
+    });
+
+    expect(store.dockTrail("a1")).toHaveLength(1);
+    expect(await knownStationsAfterBoot(store)).toStrictEqual([]);
+  });
+
+  // ---- PR #22 review, F2: a malformed payload must not kill the boot --------
+  //
+  // AGENTS.md: persisted state outlives the schema that wrote it, so a stored
+  // artifact that no longer validates is DISCARDED, never fatal. json_extract
+  // throws on text that is not JSON, and this query now evaluates it over every
+  // `type='action'` row -- 50k+ in the live store -- so one bad row anywhere in
+  // the history would take the whole boot path down with it.
+  test("a malformed stored payload is discarded, and the rest of the history still loads", async () => {
+    const dbPath = join(tmpdir(), `spacemolt-stations-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+    tempDbs.push(dbPath);
+    const store = new Store(dbPath);
+    snapshot(store, 1_000, "gold_run");
+    action(store, 1_100, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+    // Written past the appendEvent seam on purpose: appendEvent JSON.stringifys,
+    // so no typed writer can produce this. A half-written or hand-edited row can,
+    // and the boot path has to survive one sitting anywhere in 50k rows of
+    // history -- including a snapshot row, which the type filter alone lets past.
+    const raw = new Database(dbPath);
+    raw.query("INSERT INTO events (agent_id, ts, type, payload) VALUES (?, ?, ?, ?)")
+      .run("a1", 1_200, "action", '{"action":"dock","outcome":');
+    raw.query("INSERT INTO events (agent_id, ts, type, payload) VALUES (?, ?, ?, ?)")
+      .run("a1", 1_300, "status_snapshot", "not json at all");
+    raw.close();
+
+    // The bad rows are discarded; the good history is untouched.
+    expect(() => store.dockTrail("a1")).not.toThrow();
+    expect(store.dockTrail("a1")).toHaveLength(2);
+    expect(deriveStationSightings(store.dockTrail("a1")).map((s) => s.systemId)).toStrictEqual(["gold_run"]);
+    // ...and the boot path that reads it -- the Agent constructor, where the
+    // backfill runs -- comes up rather than dying on the way in.
+    const { api } = fakeGame({ system: segin, status: { systemId: "segin" } });
+    expect(() => new Agent({
+      id: "a1", persona: "miner", api, store, planner: new MockPlanner([dockPlan]), config, now: () => 9_000_000,
+    })).not.toThrow();
+    store.close();
+  });
+
+  // ---- PR #22 review, F3: the retirement has to be real in COST -------------
+  //
+  // The derived list is the loop's iterable, so it is fully computed before the
+  // first `break`. A pilot with a full structured map was still paying the trail
+  // scan (~40 ms against the live store) at every boot, forever, to build rows
+  // it was guaranteed to discard.
+  test("the dock trail is not read at all once the structured map is full", async () => {
+    const store = new Store(":memory:");
+    for (let i = 0; i < MAX_STATION_SIGHTINGS; i++) {
+      store.appendEvent({
+        agentId: "a1", ts: 5_000 + i, type: "station_observed",
+        payload: { systemId: `structured_${i}`, stationPoiId: `poi_${i}`, station: `Station ${i}`, services: ["market"] },
+      });
+    }
+    // History the backfill WOULD have read, so a call that happens is a call
+    // that did real work rather than one that returned nothing.
+    snapshot(store, 1_000, "gold_run");
+    action(store, 1_100, "dock", "continue", "Docked at Gold Run Extraction Hub.");
+
+    let trailReads = 0;
+    const realTrail = store.dockTrail.bind(store);
+    store.dockTrail = (id: string) => { trailReads++; return realTrail(id); };
+
+    const known = await knownStationsAfterBoot(store);
+    expect(trailReads).toBe(0);
+    // ...and the map is genuinely full of the structured rows, so the guard is
+    // skipping work rather than skipping a slot it should have filled.
+    expect(known).toHaveLength(MAX_STATION_SIGHTINGS);
+    expect(known.every((s) => s.systemId.startsWith("structured_"))).toBe(true);
   });
 });

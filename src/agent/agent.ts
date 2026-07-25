@@ -653,19 +653,26 @@ export class Agent {
     // Precedence, which is what the ordering buys: a structured sighting carries
     // the station POI and the proven services and a derived one carries neither,
     // so history fills GAPS and never overwrites -- `has()` skips a system
-    // already known. That also makes this self-retiring: once the pilot has
-    // docked its way back to a full structured map, every derived row is
-    // skipped.
+    // already known.
     //
-    // The size check is the ONLY cap on this path, which is why it lives here
-    // and not in deriveStationSightings: history is unbounded (the live store
-    // yields 16 systems) and the shortlist is a prompt line, and only this seam
-    // knows how many slots the structured reload already spent. Derived rows
-    // arrive newest-first, so the slots that remain go to the most recent.
-    for (const derived of deriveStationSightings(this.store.dockTrail(this.id))) {
-      if (this.stationSightings.size >= MAX_STATION_SIGHTINGS) break;
-      if (this.stationSightings.has(derived.systemId)) continue;
-      this.stationSightings.set(derived.systemId, derived);
+    // Self-retiring, and the OUTER size check is what makes that true in cost
+    // and not just in effect (PR #22 review, F3). The derived list is the loop's
+    // iterable, so it is fully computed before the first `break`: without the
+    // outer guard a pilot with a full structured map still paid the ~40 ms trail
+    // scan at every boot, forever, to produce rows every iteration then discards.
+    // With it, a full map never reads the trail at all.
+    //
+    // The INNER size check is the only cap on this path, which is why it lives
+    // here and not in deriveStationSightings: history is unbounded (the live
+    // store yields 16 systems) and the shortlist is a prompt line, and only this
+    // seam knows how many slots the structured reload already spent. Derived
+    // rows arrive newest-first, so the slots that remain go to the most recent.
+    if (this.stationSightings.size < MAX_STATION_SIGHTINGS) {
+      for (const derived of deriveStationSightings(this.store.dockTrail(this.id))) {
+        if (this.stationSightings.size >= MAX_STATION_SIGHTINGS) break;
+        if (this.stationSightings.has(derived.systemId)) continue;
+        this.stationSightings.set(derived.systemId, derived);
+      }
     }
     // No post-load cap loop here, unlike the MAX_GOALS reload above: the query
     // returns at most one row per system and takes the newest MAX_STATION_
