@@ -122,6 +122,15 @@ Both sides must agree on one thing no schema forces: the body reaches the script
 
 **Spanning test.** `test/instruct-gate.test.ts`, "the gate never blocks something plan.ts can plan". It reads the action names out of `PlanStepSchema.options` (plan.ts's own output, not the predicate that built it) and asserts none is in `GATED_QUERY_ACTIONS`. Ablation: adding `|| a.name === "find_route"` to plan.ts:9 turns it red. The sibling test "no mutation is ever gated" does NOT cover this: it re-derives from `REGISTRY` and never reads `plan.ts`.
 
+## 13. Backlog-issues repo pin: `gen-backlog.py` ↔ `filing.ts` (#550)
+
+**Side A**: `scripts/gen-backlog.py:27`: `BACKLOG_REPO = "Cringely/spacemolt"`, passed explicitly as `--repo` on the `gh issue list` call at `scripts/gen-backlog.py:111` so the regen always reads the private issues repo regardless of which checkout invokes it.
+**Side B**: `src/scheduler/filing.ts:61`: `FILING_REPO = "Cringely/spacemolt"`, the same pin for the headless finding-filer's `gh issue` calls, fixed for the identical reason one incident earlier.
+
+**How they drift.** Both constants exist because an unscoped `gh issue` call resolves against the checkout's `origin` remote, not the issues SSOT (true before the 2026-07-21 public flip, when they were the same repo, and false after). Each file pins the same string independently, with no shared import or schema forcing agreement. A future repo move (or a third `gh` call site added without reading this page) can update one pin and leave the other stale, and each side's own tests stay green: `gen-backlog.py` would keep writing wherever it points, `filing.ts` would keep filing wherever it points, and nothing but this entry says they must be the same place. This is the exact class #550 caught: `gen-backlog.py`'s original form carried no pin at all, silently regenerating `docs/backlog.md` from `spacemolt-harness`'s own 3 leftover issues instead of the private backlog's 95.
+
+**Spanning test.** `test/gen-backlog-repo.test.ts` ("BACKLOG_REPO agrees with filing.ts's FILING_REPO") reads both source files and asserts the same literal. Its sibling test ("the gh issue list call always passes --repo BACKLOG_REPO") pins the #550 regression directly: dropping `--repo` from the `subprocess.run` args (the original bug) fails it. `test/scheduler-filing.test.ts:73` separately pins `FILING_REPO`'s value.
+
 ## Keeping the manifest current
 
 Adding a new hand-paired instruction seam (two files that must agree with no shared schema forcing it)? Add a section here with real file:line anchors, and either point at an existing spanning test or write one. A seam entry with no spanning test and no noted reason is not finished.
