@@ -28,6 +28,14 @@
             "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-guardrails.sh\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-ceremony-findings.ts\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

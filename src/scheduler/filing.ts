@@ -10,6 +10,13 @@
 // module imports NO spawn/agent module and returns data only (the reviewer
 // verifies the import graph; plan §C2).
 //
+// Visibility fix (2026-07-26 operator escalation): every filed issue also
+// carries a deterministic priority label (resolvePriorityLabel below) — the
+// PM's own read of the backlog is priority-ordered, and a `machine-filed`-only
+// issue was invisible to it (#551-554 filed with that label alone). See
+// DEFAULT_TRIAGE_LABEL for why the default is applied HERE, not left to the
+// spawned job to remember.
+//
 // gh access is injected (GhRunner) so tests run offline; dedup uses gh's own
 // --json output — external jq is absent on this host, never shell out to it.
 //
@@ -42,6 +49,13 @@ export interface FindingInput {
   title: string;
   /** The finding text itself (the CLI reads it from STDIN), never a file path. */
   body: string;
+  /**
+   * Optional caller-suggested triage priority (e.g. "priority:P0"). An
+   * override on top of the deterministic default below — never the only
+   * source (#issue: ceremony findings must not depend on an LLM volunteering
+   * the right label; see resolvePriorityLabel).
+   */
+  priority?: string;
 }
 
 export interface FindingOutcome {
@@ -50,6 +64,27 @@ export interface FindingOutcome {
 }
 
 export const MACHINE_LABEL = "machine-filed";
+
+// Producer fix: every ceremony-filed issue carried ONLY `machine-filed`, no
+// priority label — invisible to a PM who reads the backlog by priority
+// (verified: #551-554 filed 2026-07-26, `machine-filed` was the sole label).
+// A deterministic default applied HERE, not a label the spawned job is
+// merely told to pass, because this project has already been burned trusting
+// an LLM to volunteer a field on its own (#542: `plan.instruction_done` never
+// came from the planner). If the caller passes a recognized priority it wins
+// (an escalation on top of the default); anything else — omitted, typo'd,
+// unrecognized — silently falls back to DEFAULT_TRIAGE_LABEL. Never throws:
+// a bad priority hint is not grounds to drop a finding.
+export const DEFAULT_TRIAGE_LABEL = "priority:P2";
+
+// Verified to exist in Cringely/spacemolt via `gh label list` before use
+// (2026-07-26) — an unknown label 422s `gh issue create` and turns a working
+// ceremony silent, which is worse than the invisibility bug this fixes.
+const ALLOWED_PRIORITY_LABELS = new Set(["priority:P0", "priority:P1", "priority:P2", "priority:P3"]);
+
+export function resolvePriorityLabel(requested: string | undefined): string {
+  return requested !== undefined && ALLOWED_PRIORITY_LABELS.has(requested) ? requested : DEFAULT_TRIAGE_LABEL;
+}
 
 // The issues SSOT is the PRIVATE repo (AGENTS.md backlog-model), not whatever
 // remote the checkout's `origin` happens to point at. Before the 2026-07-21
@@ -203,6 +238,7 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   const provenance = `filed-by: scheduler/${jobId} cycle ${cycleId}`;
   const marker = `<!-- sm-dedup:${dedupKey} -->`;
   const body = `${rawBody.trimEnd()}\n\n${marker}\n${provenance}\n`;
+  const priorityLabel = resolvePriorityLabel(input.priority);
 
   // (a)(4): over the cap, everything folds into ONE per-cycle summary issue.
   if (counter.count >= FINDINGS_PER_CYCLE_CAP) {
@@ -219,6 +255,8 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
         `scheduler/${jobId} cycle ${cycleId}: findings over cap`,
         "--label",
         MACHINE_LABEL,
+        "--label",
+        priorityLabel,
         "--body-file",
         scratch,
       ]);
@@ -242,9 +280,22 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
     return { outcome: "bumped", issue: match.number };
   }
 
-  // (a)(2): label + provenance on every created issue.
+  // (a)(2): label + provenance on every created issue. Priority label too
+  // (producer fix): a PM who reads the backlog by priority must see this
+  // issue without depending on the filing job having passed one.
   const scratch = writeScratchBody(stateDir, body);
-  const stdout = run(gh, ["issue", "create", "--title", title, "--label", MACHINE_LABEL, "--body-file", scratch]);
+  const stdout = run(gh, [
+    "issue",
+    "create",
+    "--title",
+    title,
+    "--label",
+    MACHINE_LABEL,
+    "--label",
+    priorityLabel,
+    "--body-file",
+    scratch,
+  ]);
   counter.count += 1;
   saveCounter(stateDir, jobId, cycleId, counter);
   return { outcome: "created", issue: parseIssueNumber(stdout) };

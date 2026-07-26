@@ -5,11 +5,13 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEFAULT_TRIAGE_LABEL,
   FILING_REPO,
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
   fileFinding,
   readActiveCycle,
+  resolvePriorityLabel,
   writeActiveCycle,
   type GhRunner,
 } from "../src/scheduler/filing";
@@ -49,6 +51,11 @@ const finding = (n = 1) => ({
   title: `Test finding ${n}`,
   body: `finding body ${n}`,
 });
+
+// A `gh issue create`/`create` call carries repeated `--label X` pairs; this
+// pulls every label value out in argument order (indexOf alone only finds
+// the first, which would blind-spot a missing SECOND label).
+const labelsOf = (args: string[]) => args.reduce<string[]>((acc, a, i) => (a === "--label" ? [...acc, args[i + 1]!] : acc), []);
 
 describe("finding filer (C2)", () => {
   // Catches: the 2026-07-22 silent-break — the filer's dedup/create/comment
@@ -128,6 +135,48 @@ describe("finding filer (C2)", () => {
     expect(args.body).toContain("filed-by: scheduler/standup cycle standup-1752800000000");
   });
 
+  // Catches: the 2026-07-26 invisibility bug — a `machine-filed`-only issue
+  // is outside the PM's priority-ordered backlog read (#551-554, sole label
+  // `machine-filed`). Every CREATED issue must ALSO carry a priority label,
+  // with no caller input at all.
+  test("created issue carries a default priority label with no caller input", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    fileFinding(gh, dir, finding());
+    const create = calls.find((c) => c.args[1] === "create")!;
+    expect(labelsOf(create.args)).toEqual(["machine-filed", DEFAULT_TRIAGE_LABEL]);
+  });
+
+  // Catches: correctness silently depending on the LLM volunteering the
+  // right label (the #542 `plan.instruction_done` failure class) — a
+  // recognized override wins, but ONLY as an addition to the default path,
+  // never the sole source.
+  test("a recognized --priority override replaces the default", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    fileFinding(gh, dir, { ...finding(), priority: "priority:P0" });
+    const create = calls.find((c) => c.args[1] === "create")!;
+    expect(labelsOf(create.args)).toEqual(["machine-filed", "priority:P0"]);
+  });
+
+  // Catches: a job that mistypes or invents a priority string silently
+  // dropping the finding out of the priority read instead of degrading.
+  test("an unrecognized --priority value falls back to the default, never throws", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    expect(() => fileFinding(gh, dir, { ...finding(), priority: "urgent!!" })).not.toThrow();
+    const create = calls.find((c) => c.args[1] === "create")!;
+    expect(labelsOf(create.args)).toEqual(["machine-filed", DEFAULT_TRIAGE_LABEL]);
+  });
+
+  test("resolvePriorityLabel: allowlisted values pass through, everything else defaults", () => {
+    expect(resolvePriorityLabel("priority:P0")).toBe("priority:P0");
+    expect(resolvePriorityLabel("priority:P3")).toBe("priority:P3");
+    expect(resolvePriorityLabel(undefined)).toBe(DEFAULT_TRIAGE_LABEL);
+    expect(resolvePriorityLabel("priority:P9")).toBe(DEFAULT_TRIAGE_LABEL);
+    expect(resolvePriorityLabel("")).toBe(DEFAULT_TRIAGE_LABEL);
+  });
+
   // Catches: the ON-ARRIVAL filing defect (#114) — a job that produced the
   // finding body as a STRING (there is no outbox file-jail to write to) must
   // file successfully. The whole capability was dead when the only file-CREATING
@@ -165,6 +214,9 @@ describe("finding filer (C2)", () => {
     expect(creates.length).toBe(FINDINGS_PER_CYCLE_CAP + 1); // 5 findings + 1 summary
     const summary = creates[creates.length - 1]!;
     expect(summary.args[summary.args.indexOf("--title") + 1]).toContain("over cap");
+    // The cap-summary issue is also outside the priority-ordered read unless
+    // it carries a priority label — same visibility bug as the per-finding path.
+    expect(labelsOf(summary.args)).toEqual(["machine-filed", DEFAULT_TRIAGE_LABEL]);
     // Seventh: appends to the SAME summary issue — no second summary.
     const seventh = fileFinding(gh, dir, finding(7));
     expect(seventh.outcome).toBe("capped");
