@@ -512,3 +512,47 @@ Source: docs/decisions.md (2026-07-19, wave 3 orchestration); PR #437 (wave-3 in
 **Why it matters for building agents.** Any agent that reviews another agent's history, a strategy reviewer, a triage bot, a stall detector, inherits this failure mode the moment it mixes an all-time counter with a windowed one. The output looks like a normal percentage, reads as confident, and costs real triage time chasing a defect that stopped mattering months ago (or never was one). The check is cheap and mechanical: before trusting any computed rate, name what population the top number counts and what population the bottom number counts, and confirm they are the same population over the same span.
 
 Source: issue #518 (bug: reviewer reports lifetime totals as windowed rates); issue #491 (the correction, rescoped from three phantom capabilities to the one real `scan_poi` precondition gate).
+
+## L-43 — A green suite is not evidence a rule is right
+
+**What happened.** PR #24's instruct-gate matcher went through three review rounds. The round-2 rule passed every test in the suite (docs/decisions.md counts 1519 at that point), because the suite was written by the same people who had designed the rule and believed it correct. Independent review did not trust the green run. It built new sentences aimed at one specific design choice, the round-2 promotion of joiners (`and`, `then`) to clause boundaries, and found that a boundary strands whatever came before it: "Do not dock and run get_status" loses its negation. That single class of sentence was not in the suite because nobody who believed the rule had thought to write it.
+
+**The principle.** A test suite only checks the failure modes its authors imagined. When every test comes from people who already believe a rule is correct, the suite proves internal consistency, not correctness. Real coverage against a design comes from someone trying to break one specific decision, not from running more of the same kind of test.
+
+**Discipline.** AI engineering (a natural-language matching rule) and eval-driven engineering.
+
+**Why it matters for building agents.** Any rule that filters or gates model behavior (a matcher, a validator, a permission check) will be tested first by whoever wrote it, and that person's tests share their blind spot. Before trusting a green suite as a merge signal, ask who wrote the tests and whether an adversary who disagreed with the design would have written different ones.
+Source: docs/decisions.md (2026-07-25, "Query-action steers rejected at /instruct", #527); milestones.md M-50.
+
+## L-44 — A deviation from a reviewed design is the highest-value place to point the next reviewer
+
+**What happened.** Round 1 of PR #24's matcher was demonstrated and reviewed: a backward verb scan with a pronoun list, 14 false positives over 22 steers. Round 2 kept that base but changed one detail, promoting joiners to clause boundaries to catch compound imperatives like "dock and run get_status". That one changed detail was the defect: it bought two true rejects and cost eighteen false positives over 63 steers, because a clause boundary strands negation and subject scope that preceded it.
+
+**The principle.** Everything a design already demonstrated has already been reviewed once. The part that changed between one reviewed version and the next has not. When re-reviewing a revision, the fastest path to a real finding is not re-checking the whole surface again, it is diffing against what the prior round proved and interrogating exactly what moved.
+
+**Discipline.** Team engineering and eval-driven engineering (review process design).
+
+**Why it matters for building agents.** Iterative agent and harness design goes through many revision rounds, and re-reviewing everything from scratch each time wastes reviewer effort on ground already covered while the one new decision, the actual source of risk, gets the same generic pass as everything else. Point review effort at the diff from the last approved state, not just at the artifact as a whole.
+Source: docs/decisions.md (2026-07-25, "Query-action steers rejected at /instruct", #527); milestones.md M-50.
+
+## L-45 — "This cannot be tested" is a claim like any other
+
+**What happened.** Revision 4 of the #240 local-planner plan wrote, of a failure-counting guard: "There is no test and there will not be one," reasoning that a latching class of failure can never fail twice. The revision-5 gate review treated that sentence as a claim to check rather than a fact to accept. The reasoning was false: the counter needs two primary failures of any counted class, not two of the same class, so one transient failure followed by one `SubscriptionLimitError` reaches it. The reviewer built exactly that mixed-class sequence and watched the misplaced version go red.
+
+**The principle.** "Untestable" is a specific, falsifiable claim about a system's state space, not a stopping point for review. It is checked the same way any other claim is checked: by trying to construct the case it says cannot exist. Often it can.
+
+**Discipline.** Eval-driven engineering.
+
+**Why it matters for building agents.** A plan or a design document that declares a path untestable is asking the reader to take that on faith, and faith is exactly what independent review exists to replace with a constructed case. Treat "cannot be tested" as a hypothesis to falsify, not a section to skip.
+Source: plan/240-local-planner-ab branch, `docs/superpowers/plans/2026-07-25-local-planner-ab.md` (revision 5, gate review of revision 4); STATE.md NOW block.
+
+## L-46 — A number in a comment is a trap for whoever trusts it next
+
+**What happened.** PR #22's third and final review round existed solely to correct three figures in comments that did not reproduce when re-measured. One of those wrong figures had itself been introduced by an earlier round that believed it was correcting a number. The #240 plan hit the same shape independently: revision 4 claimed a cost delta of "28 and 31" lines that did not reproduce under any counting method, and its waste-distribution table stated "exactly N-1 in every row" when the real shape is a distribution with N-1 as the worst case, not the typical one.
+
+**The principle.** A number written into a comment or a design document is trusted by every future reader who does not re-derive it. Once wrong, it propagates through subsequent rounds that "correct" it into a different wrong number, because correcting a claim is not the same as re-measuring the thing it describes. The only fix that holds is re-measuring from the current code, every time, rather than editing the prior figure.
+
+**Discipline.** Harness engineering (documentation-as-code hygiene) and eval-driven engineering.
+
+**Why it matters for building agents.** Agent systems accumulate tuning constants, cost receipts, and performance claims in comments and plans, and each one looks authoritative once written down. A reviewer who edits a wrong number instead of re-running the measurement that produced it just moves the error, and it can take multiple rounds before someone finally re-measures from scratch. Treat any number in a comment as a claim to re-verify against current code, not a fact to copy forward.
+Source: docs/decisions.md (2026-07-25, "Recover station geography from dock history", #525); `docs/superpowers/plans/2026-07-25-local-planner-ab.md` (revision 5, correcting revision 4's line-count and waste-distribution claims); milestones.md M-50.
