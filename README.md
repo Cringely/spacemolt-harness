@@ -80,20 +80,20 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-50).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-51).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
 - [x] G3: Pilot can transact (fuel, buy, mission flow working)
 - [x] G4: Verified economic win [in progress] — trend +1,222cr/20h, fuel-chain fixed
 - [ ] G5: Economic awareness — #93 (market parsing) closed; #112 (profitability) + #142 (econ panel) open
-- [ ] G6: Team outlives session — scheduler (#114) remains
+- [ ] G6: Team outlives session — scheduler (#114) remains; a governance-ceremony audit found one ceremony (`core_harvest`) was never wired in and one (council) degraded (M-51)
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: registry grown to 64 actions (wave 2-3 closed); scheduler stages 2-3 shipped, stage 4 (quota) pending; A1 + stage-2 dead-man wired pending operator hands; pilot missions live on dashboard, autonomous income-positive. Improv loop C–E held on G4 verification. Two production defects closed this cluster (cold-start station memory, PR #22; the query-steer that never retired, PR #24; see M-50); the planner now runs on `codex-subscription/gpt-5.6-terra` instead of the Claude subscription; the #240 local-planner plan is on revision 5, still a planning document.
+Current work: PR #27 merged a reversible planner fallback (#240 Task 1); PR #30 fixed the backlog generator to stop regenerating against the wrong repo (#550). PR #28 (agent-harness-core realignment) and PR #29 (ceremony-findings visibility, still under revision after review found its hook never fired from the PM's own clone) are open. A ceremony audit found the largest 72h failure class (`dock`'s "no station" error, #551) had gone unactioned because most ceremony-filed issues carried no priority label; a fix for #551 is in progress. The pilot runs on `codex-subscription/gpt-5.6-terra` (both planner seats): 42 of 42 plans served over a 4h window, which shows the fallback serves reliably but not yet whether it matches the prior Claude-subscription planner economically. See M-51 in [docs/milestones.md](docs/milestones.md).
 
-The major-milestone timeline (M-01..M-50) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-51) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 

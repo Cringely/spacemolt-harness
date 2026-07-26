@@ -555,4 +555,26 @@ Source: plan/240-local-planner-ab branch, `docs/superpowers/plans/2026-07-25-loc
 **Discipline.** Harness engineering (documentation-as-code hygiene) and eval-driven engineering.
 
 **Why it matters for building agents.** Agent systems accumulate tuning constants, cost receipts, and performance claims in comments and plans, and each one looks authoritative once written down. A reviewer who edits a wrong number instead of re-running the measurement that produced it just moves the error, and it can take multiple rounds before someone finally re-measures from scratch. Treat any number in a comment as a claim to re-verify against current code, not a fact to copy forward.
+
+## L-47 — A fix verified only inside the repo can be inert in the seat it targets
+
+**What happened.** PR #29 built a session-start hook meant to surface ceremony-filed issues to the PM at the start of every session. It passed 1548 tests, three ablations, and a live run confirming it would print the right banner. All of that verification ran inside the harness clone. Review found the hook was registered only there, while the actual PM session starts from a separate private clone, so the fix would never have fired in the seat it was built for.
+
+**The principle.** A forcing function's correctness and its placement are two different claims, and passing tests proves only the first. Verifying a guard, hook, or check from inside the repository that holds it can miss that the thing it is supposed to force sits somewhere else entirely.
+
+**Discipline.** Harness (project) engineering.
+
+**Why it matters for building agents.** Any check meant to steer a human or an agent operating from a different vantage point (a different clone, a different working directory, a different session) has to be verified from that vantage point, not just from the code that runs it. A green suite proves the mechanism works; it says nothing about whether it is standing where it needs to stand.
+Source: PR #29 (`ceremony-findings-visibility`), review round 2, finding R1.
+
+## L-48 — "Produced implausibly little, reported success" is one failure class with one fix
+
+**What happened.** Two unrelated defects took the same shape in one merge cluster. `gen-backlog.py` (#550) wrote 3 issues instead of roughly 95 and exited 0. A test suite run under PowerShell (#561) ran 1541 tests instead of 1565 and printed `0 fail`. Neither script compared its output volume against what it should have produced; both just reported the success of the steps they did run.
+
+**The principle.** A script that can silently process less input than it should needs a floor check comparing actual output volume to a plausible expectation, not just a check that the steps it ran succeeded.
+
+**Discipline.** Harness engineering, with an eval-driven angle (a rate needs a matching numerator and denominator, and so does a count).
+
+**Why it matters for building agents.** "Ran clean and exited 0" is not the same claim as "processed everything it should have." The floor check that closed #550 (refuse to write an implausibly small result) is the same fix #562 recommends for #561: name the expected order of magnitude and fail loud when the real count falls far short of it.
+Source: PR #30 (#550, `gen-backlog.py` producer fix); issue #561.
 Source: docs/decisions.md (2026-07-25, "Recover station geography from dock history", #525); `docs/superpowers/plans/2026-07-25-local-planner-ab.md` (revision 5, correcting revision 4's line-count and waste-distribution claims); milestones.md M-50.
