@@ -830,3 +830,19 @@ Source: issue #219 (P1 epic, unblocks #107/#216 and the first rung of five other
 - *(C) Carry both pairs and gate on both [CHOSEN].* Lifetime counts stay as the depth of the evidence; new `windowAttempts`/`windowFailures` say whether it is still true.
 
 **Decision.** (C). An entry now needs the lifetime rate, at least one in-window attempt, and an in-window rate clearing the same bar. Zero recent attempts means not attempted, never 100% failed: a rate with an empty denominator is not a rate. Recent successes are the game telling us the capability works now, and they outvote a dead history. The window is deliberately not held to `BROKEN_CAPABILITY_MIN_ATTEMPTS`, which is what rejected option (A); the lifetime pair carries that floor. `topClass` is window-scoped too, caught in review: the reviewer files `action N/N CLASS` verbatim, so a lifetime class on a window-gated entry names the wrong failure (40 stale `no_scanner` blocks outvoting 3 fresh `not_docked` ones). Ablations: deleting the gate clauses turns the `scan` and `survey_system` fixtures red, reporting `windowAttempts: 0` or a 0.5 window rate beside a 100% lifetime claim; reverting the `topClass` cutoff reports `no_scanner` for a `not_docked` breakage. Paired lesson: L-42.
+
+## 2026-07-25 — Query-action steers rejected at /instruct (private backlog #527)
+
+**Context.** An operator steers the live pilot by POSTing free text to `/api/agents/<id>/instruct`. The planner's vocabulary is mutations only: `digest.ts` and the plan schema both build from `REGISTRY.filter(kind === "mutation")`. A steer naming a query action cannot be planned and nothing marks it done, so it re-raises into every later plan until a human supersedes it or five newer steers evict it (`agent.ts`, `MAX_GOALS = 5`): in practice, all session. Five occurrences, the last from the PM's own seat.
+
+**Options.**
+- *(A) Restate the rule in the charter [rejected].* Already failed five times.
+- *(B) Let the planner reject it downstream [rejected].* Guards the consumer; the operator learns hours later, if at all.
+- *(C) Reject at the HTTP boundary with a teaching 400 [CHOSEN].* The operator is still typing.
+- *(D) Strip the clause and forward the rest [rejected].* Silently changing what a human asked is worse than refusing.
+
+**Decision.** (C). False positives are the expensive failure here, so three matchers were measured before this one was kept. Rule 1 (backward verb scan plus a pronoun list) took 14 false positives over 22 steers, worst of them the operator's own remedy for this bug ("run find_route; that was my mistake, drop it"). Rule 2 rejected only a clause BEGINNING with a base-form verb carrying a gated name within three words, no negation between; an imperative opens its clause, so position replaced the pronoun list. Rule 2 also promoted seven joiners (`and`, `then`) to clause BOUNDARIES, to catch "dock and run get_status".
+
+That half was reversed on evidence. A boundary strands what preceded it: "Do not dock and run get_status" loses its negation, "I handle the routing and run find_route" its subject. Over 63 steers it bought 2 true rejects for 18 false positives. Rule 3 makes the joiners a skipped LEAD-IN: 4 false positives, those 2 compound imperatives accepted knowingly and recorded in KNOWN LIMITS.
+
+Also rejected, each now an accept case: substring search (fires inside `find_routes_v2`), inflected verbs, sentence-wide negation. The gated set excludes by derivation: the empty catalog name, the ordinary-English `view`. Three false positives stay open, named in code. Every guard ablated alone, red alone, with a typecheck. No live steer has hit it.
