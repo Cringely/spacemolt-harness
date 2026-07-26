@@ -1234,6 +1234,10 @@
       return "cyan";
     }
     if (t === "plan" || t === "plan_normalized" || t === "planner_recovered") return "teal";
+    // #240 planner failover: down is a degradation (red), recovered is a return
+    // to the cheap primary (green). Neither matches the generic regex below.
+    if (t === "planner_endpoint_down") return "red";
+    if (t === "planner_endpoint_recovered") return "green";
     if (t === "wake") return "cyan";
     if (t === "reflex") return "violet";
     // ledger: green when the net credit move is a gain, red on a net spend/loss,

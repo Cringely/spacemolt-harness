@@ -20,7 +20,21 @@ export interface OpenAiCompatOptions {
   // per security-baseline.md. Never logged.
   apiKey?: string;
   fetchImpl?: typeof fetch; // injectable for tests
+  timeoutMs?: number; // default OPENAI_COMPAT_TIMEOUT_MS; small values are for tests
 }
+
+// 60s per request. Receipt: the tick carried an UNBOUNDED planner wait, and a
+// fetch with no signal against a silent host waits out the OS TCP connect
+// timeout (~127s on Linux defaults) while an accepted-but-silent socket never
+// settles at all. 60s turns unbounded into bounded, which is the whole claim.
+// It is NOT "far below the tick": the agent loop ticks every 10s
+// (agent.ts start(intervalMs = 10_000)), so a request running its full budget
+// costs skipped ticks -- start()'s `if (running) return` drops them rather
+// than queueing. Worst case per plan() is 2x this, because parse.ts retries
+// once on a validation failure and each invoke() builds its own signal.
+// UNCONFIRMED against a real gemma-4-12b-qat generation; #240 Task 3 Step 7
+// re-derives it from measured seconds-per-plan.
+export const OPENAI_COMPAT_TIMEOUT_MS = 60_000;
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string | null } }>;
@@ -64,6 +78,7 @@ export class OpenAiCompatPlanner implements Planner {
           response_format: { type: "json_schema", json_schema: { name: "plan", schema: PLAN_JSON_SCHEMA } },
           messages: [{ role: "user", content: prompt }],
         }),
+        signal: AbortSignal.timeout(this.opts.timeoutMs ?? OPENAI_COMPAT_TIMEOUT_MS),
       });
     } catch (e) {
       // Same classification stance as Ollama: a self-hosted LAN server has no
@@ -77,6 +92,13 @@ export class OpenAiCompatPlanner implements Planner {
       throw new TransientPlannerError(`openai-compat: request failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (!res.ok) throw new TransientPlannerError(`openai-compat: HTTP ${res.status}`);
+    // No try/catch here: a truncated/malformed body still lands in
+    // handlePlannerFailure's catch-all (plain Error -> "planner_error"), and
+    // agent.ts:2654's endpoint-down counting block runs before the
+    // TransientPlannerError check, so it arms regardless of class. Wrapping
+    // this in TransientPlannerError bought no additional endpoint-down
+    // coverage, just a false receipt (removed per PR #27 review finding F1).
+    // Model QUALITY still fails through tryParsePlan on the CONTENT, untouched.
     const body = (await res.json()) as ChatCompletionResponse;
     return body.choices?.[0]?.message?.content ?? "";
   }

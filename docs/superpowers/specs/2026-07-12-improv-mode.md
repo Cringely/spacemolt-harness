@@ -582,6 +582,11 @@ The model gets the wheel, not the safety switches:
 - **Persisted-state tolerance** (new, from the 2026-07-12 chat-enum incident): stored artifacts
   (plans/goals) that no longer validate under an evolved schema must be DISCARDED gracefully, never
   crash the agent. Applies to plan-then-execute too; see §7.
+- **Planner failover** (#240): two consecutive failures of the primary planner route the next
+  replans to the configured fallback, and a countdown measured in replans probes the primary again.
+  Deterministic in both modes with NO paired §4 briefing rule, deliberately: the improv agent
+  neither observes nor chooses which planner runs it, so it must not be briefed to reason about
+  endpoint health. Infrastructure below the model, like Transport above.
 - Prompt-injection + identity boundary — in the standing briefing, verbatim (the MCP seam gives
   the model raw game text, so the briefing is the only control there).
 
