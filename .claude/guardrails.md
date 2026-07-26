@@ -253,9 +253,9 @@ codifies a rule that warn-prose already failed to hold (#192 for hook 3; three s
   directory for day-to-day work is the private backlog clone, whose settings.json never had the
   entry, so the banner never fired where it mattered. The hook file is self-contained (inlines
   `FILING_REPO`/`MACHINE_LABEL` rather than importing `src/scheduler/filing`, which does not exist
-  in every clone) and a byte-identical copy plus its own settings.json entry now live in the
-  private clone too, cross-referenced in that repo's own test suite (private backlog #557,
-  #564).
+  in every clone) and a copy with the same executable code, plus its own settings.json entry, now
+  lives in the private clone too (the comment headers differ between the two files; the code does
+  not), cross-referenced in that repo's own test suite (private backlog #557, #564).
 - **Why bun, not sh:** parses `gh`'s JSON output and needs `Promise.race` for the hard timeout —
   the sh-convention hooks are pure text-print, this one does real I/O.
 - **Fail-open:** any `gh` failure (missing binary, auth, network, malformed JSON, a hang past

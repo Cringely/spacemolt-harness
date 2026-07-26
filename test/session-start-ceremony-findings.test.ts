@@ -3,7 +3,7 @@
 // CeremonyGhRunner, zero live gh/network. See the hook file's header for the
 // full rationale.
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   CEREMONY_FINDINGS_CAP_DEFAULT,
@@ -196,17 +196,45 @@ describe("hook constants stay in sync with src/scheduler/filing.ts", () => {
 
 // R1: the whole fix is dead unless this hook is actually REGISTERED as a
 // SessionStart hook in THIS repo's own .claude/settings.json — an easy thing
-// for a future settings.json edit to silently drop. Ablate: comment out or
-// delete this hook's SessionStart entry in .claude/settings.json — red.
-// (The companion registration in the private backlog clone's own
-// .claude/settings.json is verified the same way in that repo's own test
-// suite — a cross-repo assertion from here cannot see that file at all,
-// least of all in CI, where the private clone does not exist on disk.)
+// for a future settings.json edit to silently drop. (The companion
+// registration in the private backlog clone's own .claude/settings.json is
+// verified the same way in that repo's own test suite — a cross-repo
+// assertion from here cannot see that file at all, least of all in CI,
+// where the private clone does not exist on disk.)
+//
+// D1 (PR #29 round-2 review): the original version of this test only
+// substring-matched the filename inside the command STRING — it never
+// resolved the path or checked the target exists, and never checked the
+// interpreter. Reviewer's reproduction: repoint the command at
+// `.claude/hooks/OLD/session-start-ceremony-findings.ts` (a file that does
+// not exist) and the old assertion stayed green; running that command
+// actually gives exit 1 and zero stdout — hook registered, fires never,
+// banner gone, nothing red. D6 (bundled here): swapping `bun` for `sh` also
+// stayed green, and `sh` cannot execute a TypeScript file. Fixed below by
+// resolving the quoted path against the repo root and asserting the file
+// exists on disk, plus asserting the command invokes `bun`.
+const ROOT = join(import.meta.dir, "..");
+
+/** Extracts the quoted path argument from a hook command string, resolved
+ * against the repo root ($CLAUDE_PROJECT_DIR is this repo when the hook
+ * actually runs). Returns null if the command has no quoted path at all. */
+function resolveHookPath(command: string): string | null {
+  const m = command.match(/"([^"]+)"/);
+  if (!m) return null;
+  const raw = m[1]!.replace("$CLAUDE_PROJECT_DIR", ROOT);
+  return raw;
+}
+
 describe("registered as a SessionStart hook in this repo's settings.json", () => {
-  test("settings.json's SessionStart hooks include session-start-ceremony-findings.ts", () => {
-    const settings = JSON.parse(readFileSync(join(import.meta.dir, "..", ".claude", "settings.json"), "utf8"));
+  test("settings.json's SessionStart hooks include a bun invocation of session-start-ceremony-findings.ts, and the target file exists", () => {
+    const settings = JSON.parse(readFileSync(join(ROOT, ".claude", "settings.json"), "utf8"));
     const sessionStart: Array<{ hooks: Array<{ command: string }> }> = settings.hooks.SessionStart;
     const commands = sessionStart.flatMap((entry) => entry.hooks.map((h) => h.command));
-    expect(commands.some((c) => c.includes("session-start-ceremony-findings.ts"))).toBe(true);
+    const match = commands.find((c) => c.includes("session-start-ceremony-findings.ts"));
+    expect(match).toBeDefined();
+    expect(match!.trim().startsWith("bun ")).toBe(true); // D6: sh cannot execute this .ts file
+    const resolved = resolveHookPath(match!);
+    expect(resolved).not.toBeNull();
+    expect(existsSync(resolved!)).toBe(true); // D1: the registration must point at a real file
   });
 });
