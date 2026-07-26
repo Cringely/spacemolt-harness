@@ -555,6 +555,7 @@ Source: plan/240-local-planner-ab branch, `docs/superpowers/plans/2026-07-25-loc
 **Discipline.** Harness engineering (documentation-as-code hygiene) and eval-driven engineering.
 
 **Why it matters for building agents.** Agent systems accumulate tuning constants, cost receipts, and performance claims in comments and plans, and each one looks authoritative once written down. A reviewer who edits a wrong number instead of re-running the measurement that produced it just moves the error, and it can take multiple rounds before someone finally re-measures from scratch. Treat any number in a comment as a claim to re-verify against current code, not a fact to copy forward.
+Source: docs/decisions.md (2026-07-25, "Recover station geography from dock history", #525); `docs/superpowers/plans/2026-07-25-local-planner-ab.md` (revision 5, correcting revision 4's line-count and waste-distribution claims); milestones.md M-50.
 
 ## L-47 — A fix verified only inside the repo can be inert in the seat it targets
 
@@ -577,4 +578,3 @@ Source: PR #29 (`ceremony-findings-visibility`), review round 2, finding R1.
 
 **Why it matters for building agents.** "Ran clean and exited 0" is not the same claim as "processed everything it should have." The floor check that closed #550 (refuse to write an implausibly small result) is the same fix #562 recommends for #561: name the expected order of magnitude and fail loud when the real count falls far short of it.
 Source: PR #30 (#550, `gen-backlog.py` producer fix); issue #561.
-Source: docs/decisions.md (2026-07-25, "Recover station geography from dock history", #525); `docs/superpowers/plans/2026-07-25-local-planner-ab.md` (revision 5, correcting revision 4's line-count and waste-distribution claims); milestones.md M-50.
