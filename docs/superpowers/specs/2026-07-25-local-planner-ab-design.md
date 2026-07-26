@@ -58,7 +58,7 @@ Both case sources are therefore used:
 
 ### Getting the cases
 
-The production event DB lives inside the pilot container on TrueNAS at `/app/data/harness.sqlite`, 34 MB as of 2026-07-25. Copy it to the workstation (where LM Studio runs) and harvest locally; the eval makes zero game calls, so a snapshot is as good as the live file and avoids reading a DB the pilot is writing.
+The production event DB lives inside the pilot container on the deployment host at `/app/data/harness.sqlite`, 34 MB as of 2026-07-25. Copy it to the workstation (where LM Studio runs) and harvest locally; the eval makes zero game calls, so a snapshot is as good as the live file and avoids reading a DB the pilot is writing.
 
 ## Design
 
