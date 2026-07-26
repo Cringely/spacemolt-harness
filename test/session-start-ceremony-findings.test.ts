@@ -3,14 +3,19 @@
 // CeremonyGhRunner, zero live gh/network. See the hook file's header for the
 // full rationale.
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   CEREMONY_FINDINGS_CAP_DEFAULT,
+  FILING_REPO as HOOK_FILING_REPO,
+  MACHINE_LABEL as HOOK_MACHINE_LABEL,
   fetchOpenCeremonyFindings,
   formatAge,
   formatCeremonyBanner,
   type CeremonyGhRunner,
   type CeremonyIssue,
 } from "../.claude/hooks/session-start-ceremony-findings";
+import { FILING_REPO, MACHINE_LABEL } from "../src/scheduler/filing";
 
 const HOUR = 3_600_000;
 const issue = (n: number, ageMs: number, title = `Finding ${n}`): CeremonyIssue => ({
@@ -26,6 +31,19 @@ describe("fetchOpenCeremonyFindings (degrade-gracefully contract)", () => {
   // — both must degrade to null here so the caller never prints garbage.
   test("nonzero exit ⇒ null", async () => {
     const runner: CeremonyGhRunner = async () => ({ exitCode: 1, stdout: "error: not authenticated" });
+    expect(await fetchOpenCeremonyFindings(runner, 1000)).toBeNull();
+  });
+
+  // Catches (R3, PR #29 review): the case above pairs a nonzero exit with
+  // stdout that is ALSO invalid JSON, so it passes even if the exit-code
+  // check is deleted — JSON.parse's own throw covers for it. This pins the
+  // exit-code guard on its own: nonzero exit + WELL-FORMED JSON must still
+  // be null. Ablate: remove `result.exitCode !== 0` from the `||` check in
+  // fetchOpenCeremonyFindings — this test goes red (the valid array would
+  // otherwise parse and return through the filter).
+  test("nonzero exit with well-formed JSON body ⇒ still null (exit code checked, not just JSON validity)", async () => {
+    const stdout = JSON.stringify([{ number: 9, title: "should not surface", createdAt: new Date().toISOString() }]);
+    const runner: CeremonyGhRunner = async () => ({ exitCode: 1, stdout });
     expect(await fetchOpenCeremonyFindings(runner, 1000)).toBeNull();
   });
 
@@ -55,13 +73,30 @@ describe("fetchOpenCeremonyFindings (degrade-gracefully contract)", () => {
   // itself (Promise.race), independent of whatever the runner does with its
   // own timeoutMs argument, so even a runner whose promise never settles
   // must not hang the hook past the deadline.
+  //
+  // R4 (PR #29 review): the original version just `await`ed the call
+  // directly. If the internal Promise.race is removed, `fetchOpenCeremonyFindings`
+  // awaits the never-settling runner forever — the test HANGS rather than
+  // failing (confirmed: it outran `bun test` past 60s even with
+  // `--timeout 8000`, so the assertions below never ran). Racing the call
+  // against the test's OWN bound turns that hang into a fast, red assertion:
+  // if the internal timeout is gone, `bounded` resolves via the EXTERNAL
+  // race to `TIMED_OUT_SENTINEL` well before the call itself would ever
+  // settle, and the `not.toBe` assertion fails immediately instead of the
+  // test process hanging.
   test("a runner that never resolves ⇒ null within the timeout, not a hang", async () => {
     const runner: CeremonyGhRunner = () => new Promise(() => {}); // never settles
+    const TEST_BOUND_MS = 500; // well above the 50ms timeoutMs given to the function
+    const TIMED_OUT_SENTINEL = Symbol("test-bound-exceeded");
     const start = Date.now();
-    const result = await fetchOpenCeremonyFindings(runner, 50);
+    const bounded = await Promise.race([
+      fetchOpenCeremonyFindings(runner, 50),
+      new Promise<typeof TIMED_OUT_SENTINEL>((resolve) => setTimeout(() => resolve(TIMED_OUT_SENTINEL), TEST_BOUND_MS)),
+    ]);
     const elapsed = Date.now() - start;
-    expect(result).toBeNull();
-    expect(elapsed).toBeLessThan(1000); // bounded, not hung
+    expect(bounded).not.toBe(TIMED_OUT_SENTINEL); // must resolve via the function's OWN timeout, not ours
+    expect(bounded).toBeNull();
+    expect(elapsed).toBeLessThan(TEST_BOUND_MS);
   });
 
   // Catches: the success path silently dropping malformed individual
@@ -140,5 +175,38 @@ describe("formatCeremonyBanner", () => {
   test("at or under the cap: no truncation line", () => {
     const out = formatCeremonyBanner([issue(1, HOUR), issue(2, 2 * HOUR)], 12, Date.now());
     expect(out).not.toContain("more");
+  });
+});
+
+// R1 (PR #29 review): this hook's FILING_REPO/MACHINE_LABEL are INLINED, not
+// imported from src/scheduler/filing, because the hook must run standalone
+// in the private backlog clone too (no src/scheduler there). That inlining
+// creates a second copy of two literals that can silently drift from the
+// canonical ones. Ablate: edit either inlined constant in
+// .claude/hooks/session-start-ceremony-findings.ts to a different value —
+// this goes red immediately, without touching filing.ts.
+describe("hook constants stay in sync with src/scheduler/filing.ts", () => {
+  test("FILING_REPO matches", () => {
+    expect(HOOK_FILING_REPO).toBe(FILING_REPO);
+  });
+  test("MACHINE_LABEL matches", () => {
+    expect(HOOK_MACHINE_LABEL).toBe(MACHINE_LABEL);
+  });
+});
+
+// R1: the whole fix is dead unless this hook is actually REGISTERED as a
+// SessionStart hook in THIS repo's own .claude/settings.json — an easy thing
+// for a future settings.json edit to silently drop. Ablate: comment out or
+// delete this hook's SessionStart entry in .claude/settings.json — red.
+// (The companion registration in the private backlog clone's own
+// .claude/settings.json is verified the same way in that repo's own test
+// suite — a cross-repo assertion from here cannot see that file at all,
+// least of all in CI, where the private clone does not exist on disk.)
+describe("registered as a SessionStart hook in this repo's settings.json", () => {
+  test("settings.json's SessionStart hooks include session-start-ceremony-findings.ts", () => {
+    const settings = JSON.parse(readFileSync(join(import.meta.dir, "..", ".claude", "settings.json"), "utf8"));
+    const sessionStart: Array<{ hooks: Array<{ command: string }> }> = settings.hooks.SessionStart;
+    const commands = sessionStart.flatMap((entry) => entry.hooks.map((h) => h.command));
+    expect(commands.some((c) => c.includes("session-start-ceremony-findings.ts"))).toBe(true);
   });
 });

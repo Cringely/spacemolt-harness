@@ -72,9 +72,9 @@ harness (#125). `ongoing` = a standing practice enforced by convention/review, n
 ## The committed hooks (see `.claude/settings.json`)
 
 These are repo-level, side-effect-free except printing, and fast. The operator reviews every hook
-script personally, since they run on the operator's machine. Hooks 1, 2, and 4 are WARN-only (never
-block a tool); hooks 3 and 5 are the deliberate exceptions — they DENY, because each codifies a
-rule that warn-prose already failed to hold (#192 for hook 3; three seams for hook 5).
+script personally, since they run on the operator's machine. Hooks 1, 2, 4, and 6 are WARN-only
+(never block a tool); hooks 3 and 5 are the deliberate exceptions — they DENY, because each
+codifies a rule that warn-prose already failed to hold (#192 for hook 3; three seams for hook 5).
 
 ### 1. `SessionStart` → `.claude/hooks/session-start-guardrails.sh`
 
@@ -235,7 +235,39 @@ rule that warn-prose already failed to hold (#192 for hook 3; three seams for ho
   cases, the word-boundary guard, and the override paths. Spawn tests pin the stdin→stdout deny
   contract and fail-open. Runs as part of the normal `bun test` suite.
 
-## Why only these five hooks
+### 6. `SessionStart` → `.claude/hooks/session-start-ceremony-findings.ts`
+
+- **Fires on:** every session start (startup, resume, clear), sibling to hook 1.
+- **Does:** queries `gh issue list --repo Cringely/spacemolt --label machine-filed --state open`
+  and prints a banner of the open results, newest first, capped at 12 with a truncation line
+  beyond that. Prints nothing on an empty list, any `gh` failure, a timeout, or malformed JSON —
+  degrade-gracefully, same posture as every other SessionStart hook.
+- **Why:** the operator escalated twice on ceremony findings going unread ("you cannot overlook
+  the output"; "the feedback loop is crucial", 2026-07-26). Root cause: every ceremony-filed issue
+  carried only the `machine-filed` label, no priority label, so it sat outside the PM's
+  priority-ordered backlog read. `src/scheduler/filing.ts` now applies a fixed default priority
+  label to every NEW filing (the producer fix); this hook is the JIT re-injection covering issues
+  filed before that fix too.
+- **Registered in BOTH clones (the R1 fix, PR #29 review):** the first version of this hook was
+  registered only here, in the harness clone's settings.json — but the PM's actual project
+  directory for day-to-day work is the private backlog clone, whose settings.json never had the
+  entry, so the banner never fired where it mattered. The hook file is self-contained (inlines
+  `FILING_REPO`/`MACHINE_LABEL` rather than importing `src/scheduler/filing`, which does not exist
+  in every clone) and a byte-identical copy plus its own settings.json entry now live in the
+  private clone too, cross-referenced in that repo's own test suite (private backlog #557,
+  #564).
+- **Why bun, not sh:** parses `gh`'s JSON output and needs `Promise.race` for the hard timeout —
+  the sh-convention hooks are pure text-print, this one does real I/O.
+- **Fail-open:** any `gh` failure (missing binary, auth, network, malformed JSON, a hang past
+  `CEREMONY_FINDINGS_TIMEOUT_MS`) is silent exit 0 — never worse than no hook.
+- **Tests:** `bun test test/session-start-ceremony-findings.test.ts` — the degrade-gracefully
+  contract (bad exit, throw, malformed JSON, non-array JSON, a hung runner bounded by an external
+  race so the test fails fast rather than hanging), the formatter's newest-first ordering and cap
+  truncation, a pin that the inlined `FILING_REPO`/`MACHINE_LABEL` match `src/scheduler/filing.ts`,
+  and a pin that this repo's own `settings.json` still registers the hook. Runs as part of the
+  normal `bun test` suite.
+
+## Why not more hooks
 
 The candidates that were considered and **dropped**, so the reasoning is on record:
 

@@ -36,7 +36,21 @@
 // All I/O (the gh call) is behind an injectable CeremonyGhRunner so the
 // formatting/timeout/degradation logic is unit-tested offline — no live gh
 // call in `bun test` (test/session-start-ceremony-findings.test.ts).
-import { FILING_REPO, MACHINE_LABEL } from "../../src/scheduler/filing";
+//
+// FILING_REPO/MACHINE_LABEL are INLINED, not imported from
+// ../../src/scheduler/filing (R1, PR #29 review): this file must run
+// standalone as a SessionStart hook in ANY spacemolt clone, including the
+// private backlog repo, which has no src/scheduler directory at all — a
+// cross-package import only resolves in the harness checkout, so the
+// registration silently no-ops everywhere else (that WAS the bug: the PM's
+// actual project directory is the private clone, and the hook never fired
+// there). Cost of inlining: two literals that can drift from the canonical
+// ones in filing.ts. Guarded by a pinning test
+// (test/session-start-ceremony-findings.test.ts, "stays in sync with
+// src/scheduler/filing.ts") that fails the moment either copy changes
+// without the other.
+export const FILING_REPO = "Cringely/spacemolt";
+export const MACHINE_LABEL = "machine-filed";
 
 export interface CeremonyIssue {
   number: number;

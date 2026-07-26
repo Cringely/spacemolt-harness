@@ -5,12 +5,14 @@
 // provenance, bump-not-refile, per-cycle cap) are enforced mechanically, not
 // by prose the agent might drift from.
 //
-//   bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64> [--priority priority:P0|P1|P2|P3]
+//   bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>
 //
-// --priority is an OPTIONAL escalation on top of a deterministic default
-// (src/scheduler/filing.ts DEFAULT_TRIAGE_LABEL) — every created issue gets a
-// priority label whether or not the caller passes this flag or gets it
-// right; an omitted/unrecognized value silently falls back, never rejected.
+// Every created issue gets a fixed priority label (src/scheduler/filing.ts
+// DEFAULT_TRIAGE_LABEL) with no caller input — an earlier draft let the
+// caller escalate via `--priority`, but review (R7, PR #29) cut it: every
+// filed issue already got the label with or without the flag, so it served
+// no invariant and only reintroduced the exact failure class this filer
+// exists to remove (correctness depending on an LLM volunteering a field).
 //
 // The finding body is a base64 token on argv — a SINGLE, newline-free argument
 // (src/scheduler/body-arg.ts explains why): headless Claude Code's permission
@@ -52,7 +54,6 @@ for (let i = 0; i < args.length; i += 2) {
 const { title } = opts;
 const dedupKey = opts["dedup-key"];
 const bodyB64 = opts["body-b64"];
-const priority = opts["priority"]; // optional; filing.ts falls back to a default if omitted/unrecognized
 if (!dedupKey || !title || !bodyB64) usage("missing required argument");
 
 const stateDir = process.env.SCHEDULER_STATE_DIR;
@@ -92,7 +93,6 @@ try {
     dedupKey,
     title,
     body,
-    priority,
   });
   console.log(JSON.stringify(outcome));
 } catch (e) {
