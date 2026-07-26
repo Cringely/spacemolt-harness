@@ -2621,7 +2621,7 @@ export class Agent {
     return estimates.length ? estimates : undefined;
   }
 
-  private handlePlannerFailure(e: unknown, served?: Planner): void {
+  private handlePlannerFailure(e: unknown, served: Planner): void {
     if (e instanceof TokenInvalidError) {
       this.claudeDisabled = true;
       this.emit("operator_alert", { class: "token_invalid", message: e.message, fallback: !!this.fallbackPlanner });

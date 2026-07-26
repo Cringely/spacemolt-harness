@@ -92,18 +92,14 @@ export class OpenAiCompatPlanner implements Planner {
       throw new TransientPlannerError(`openai-compat: request failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (!res.ok) throw new TransientPlannerError(`openai-compat: HTTP ${res.status}`);
-    let body: ChatCompletionResponse;
-    try {
-      // The timeout signal above also aborts a body read, and a truncated body
-      // is the same class of infrastructure failure as a failed connect. Left
-      // outside the classification this would escape as a plain Error and land
-      // in handlePlannerFailure's catch-all, which never arms the endpoint-down
-      // state -- the very stall this timeout exists to prevent. Model QUALITY
-      // still fails through tryParsePlan on the CONTENT, which is untouched.
-      body = (await res.json()) as ChatCompletionResponse;
-    } catch (e) {
-      throw new TransientPlannerError(`openai-compat: response body failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    // No try/catch here: a truncated/malformed body still lands in
+    // handlePlannerFailure's catch-all (plain Error -> "planner_error"), and
+    // agent.ts:2654's endpoint-down counting block runs before the
+    // TransientPlannerError check, so it arms regardless of class. Wrapping
+    // this in TransientPlannerError bought no additional endpoint-down
+    // coverage, just a false receipt (removed per PR #27 review finding F1).
+    // Model QUALITY still fails through tryParsePlan on the CONTENT, untouched.
+    const body = (await res.json()) as ChatCompletionResponse;
     return body.choices?.[0]?.message?.content ?? "";
   }
 }
