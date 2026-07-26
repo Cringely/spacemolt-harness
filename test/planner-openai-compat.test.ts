@@ -95,4 +95,36 @@ describe("OpenAiCompatPlanner", () => {
     await new OpenAiCompatPlanner({ model: "m", baseUrl: server.url, apiKey: "sk-test" }).plan(ctx);
     expect(server.requests[1]!.authorization).toBe("Bearer sk-test");
   });
+
+  // Breakage caught: dropping the abort signal. A fetch with no signal against
+  // a sleeping workstation waits out the OS TCP connect timeout, so runOnce()
+  // executes no plan step for that whole tick -- the stall #240 exists to
+  // prevent.
+  test("a hung endpoint aborts at timeoutMs and classifies as transient", async () => {
+    // A real socket to a real server that accepts the connection and never
+    // answers -- the sleeping-workstation shape, offline. Not an injected
+    // fetch: only a real request proves AbortSignal.timeout actually fires on
+    // this path (Bun's timeout signal does not fire when the sole pending work
+    // is a promise waiting on it, so an injected-fetch version of this test
+    // would hang whether or not the code is correct).
+    const hung = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const planner = new OpenAiCompatPlanner({
+        model: "m", baseUrl: `http://localhost:${hung.port}`, timeoutMs: 50,
+      });
+      const pending = planner.plan(ctx);
+      pending.catch(() => {}); // no unhandled rejection if the watchdog wins
+      // An accepted-but-silent connection has NO OS timeout, so without the
+      // signal nothing ever settles this request and the runner hangs instead
+      // of reporting. The watchdog turns that into a clean red.
+      const bark = new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(() => reject(new Error("no abort within 1s: the request carried no timeout signal")), 1_000);
+      });
+      await expect(Promise.race([pending, bark])).rejects.toBeInstanceOf(TransientPlannerError);
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
+      hung.stop(true);
+    }
+  });
 });

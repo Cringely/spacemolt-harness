@@ -144,7 +144,13 @@ describe("deterministic A/B exit (experiment revert)", () => {
     now += 1.9 * HOUR; // t=2.9h total, but only 1.9h since the last advance
     await agent.runOnce();
     expect(reverts(store).length).toBe(0);
-    expect(fallback.calls).toBe(0);
+    // #240: the endpoint-down countdown also routes replans to the fallback
+    // now, so "the fallback was never called" no longer distinguishes an
+    // untripped experiment from a primary that keeps declining. Both exact
+    // counts are pinned instead: two primary failures arm the countdown, and
+    // the third replan is the first the fallback serves.
+    expect(primary.calls).toBe(2);
+    expect(fallback.calls).toBe(1);
 
     now += 0.1 * HOUR; // 2h flat since the advance: NOW it trips
     await agent.runOnce();
@@ -190,7 +196,11 @@ describe("deterministic A/B exit (experiment revert)", () => {
 
     for (let i = 0; i < 6; i++) { now += 2 * HOUR; await agent.runOnce(); }
     expect(reverts(store).length).toBe(0);
-    expect(fallback.calls).toBe(0);
+    // #240: see the note above -- the fallback serving is no longer proof the
+    // experiment tripped. A tripped latch pins activePlanner() to the fallback
+    // forever, so the primary would stop being probed; it is still probed here.
+    expect(primary.calls).toBe(3);
+    expect(fallback.calls).toBe(2);
   });
 
   // Breakage caught: a harness restart silently granting the failed planner a
@@ -310,7 +320,9 @@ describe("deterministic A/B exit (experiment revert)", () => {
       await agent.runOnce();
     }
     expect(reverts(store).length).toBe(0);
-    expect(fallback.calls).toBe(0);
+    // #240: see the note above.
+    expect(primary.calls).toBe(3);
+    expect(fallback.calls).toBe(2);
 
     // And once mining ALSO stops, the window runs dry and it trips -- the
     // hold-open above was the advance, not a dead code path.

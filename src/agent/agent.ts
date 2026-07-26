@@ -134,6 +134,27 @@ export interface AgentConfig {
 const TRANSIENT_BACKOFF_BASE_MS = 30_000;
 const TRANSIENT_BACKOFF_MAX_MS = 10 * 60_000;
 
+// #240. Two consecutive PRIMARY failures against a LAN endpoint on a
+// multi-minute replan cadence means the listener is gone or the model is
+// unusable, not that either is busy; one failure is a blip the exponential
+// backoff above already absorbs. Counted per-planner (consecutivePrimaryFailures
+// below), so this really does mean two primary failures.
+const ENDPOINT_DOWN_THRESHOLD = 2;
+// How many REPLANS the fallback serves before the primary is probed again.
+// Counted in replans, not milliseconds: a wall-clock window has to be longer
+// than the largest inter-replan gap to survive one replan, and heartbeat_minutes
+// is config the constant cannot see. 3 = two fallback-served replans plus a
+// probe. This is a POLICY DIAL, not an optimum: measured over 24 replans
+// against a dead primary, every paid fallback call is exactly one plan, so
+// plan-rate and spend move together (N=2: 45.8%/0.458, N=3: 62.5%/0.625,
+// N=5: 75%/0.750). 3 is chosen for the PROBE COUNT -- 9 blocking probes per
+// 24 replans against N=2's 13. The cost is post-recovery waste, which is a
+// DISTRIBUTION, not a fixed number: whatever phase of the countdown the
+// recovery falls on, waste is uniform over 0..N-1, mean (N-1)/2. So N=3
+// averages 1.0 wasted paid replan against N=2's 0.5, worst case 2 against 1.
+// Move it if Stage 2 says quota matters more.
+const ENDPOINT_RETRY_REPLANS = 3;
+
 // Invariant: 3 consecutive wakes sharing the same "reason:detail" identity
 // (blocked-reason repetition, or plan_done repeating the identical goal) arm
 // a plan-call cooldown -- tolerates one exploratory recovery step, catches a
@@ -373,6 +394,20 @@ export class Agent {
   // failure-classification state (Plan 2 Task 4)
   private consecutiveTransientFailures = 0;
   private plannerBackoffUntil = 0;
+  // #240. Countdown in REPLANS, not a timestamp and not a boolean. Cleared
+  // ONLY by a primary success. 0 means the state is not armed -- NOT that the
+  // primary is known healthy (a TokenInvalid/SubscriptionLimit latch drives it
+  // to 0 with no probe), which is why activePlanner() also consults
+  // claudeDisabled and usingFallback.
+  private endpointDownReplans = 0;
+  // #240. Consecutive failures of the PRIMARY, every class it can recover
+  // from. Separate from consecutiveTransientFailures, which is shared across
+  // both planners AND reset by any success including a fallback's -- deriving
+  // "the endpoint is down" from that one would flap the pilot back to a dead
+  // endpoint every cycle, and would miss a primary that answers 200 with plans
+  // that never validate (measured: 25 replans, 0 plans, fallback never
+  // reached).
+  private consecutivePrimaryFailures = 0;
   private stalled = false;
   private usingFallback = false;
   private claudeDisabled = false;
@@ -1639,6 +1674,10 @@ export class Agent {
     // exists, so this branch always has a planner to serve.
     if (this.experimentReverted && this.fallbackPlanner) return this.fallbackPlanner;
     if (this.claudeDisabled) return this.fallbackPlanner;
+    // #240. Endpoint unreachable: serve the fallback until the countdown
+    // reaches its last replan, then probe the primary (the replan IS the
+    // health check -- no probe endpoint, no watchdog).
+    if (this.fallbackPlanner && this.endpointDownReplans > 1) return this.fallbackPlanner;
     if (this.usingFallback) return this.fallbackPlanner ?? this.planner;
     return this.planner;
   }
@@ -1692,6 +1731,11 @@ export class Agent {
       this.emit("planner_error", { message: "no planner available (claude disabled, no fallback configured)" });
       return;
     }
+
+    // #240. One decrement per REPLAN the fallback actually serves. Placed here
+    // because this is the only site that commits a replan to a planner: ticks
+    // that never reach a replan must not consume the countdown.
+    if (this.endpointDownReplans > 0 && planner === this.fallbackPlanner) this.endpointDownReplans--;
 
     // SM-6 fix: read before anything below touches this.plan (the reassignment
     // happens only after a successful plan/normalize, further down this
@@ -1946,11 +1990,24 @@ export class Agent {
       if (this.consecutiveTransientFailures > 0 || this.stalled) {
         this.emit("planner_recovered", { afterFailures: this.consecutiveTransientFailures });
       }
+      // #240. Only a PRIMARY success ends the endpoint-down state. `planner` is
+      // the local captured above, so identity says which planner served this
+      // plan; a fallback success must not clear either field or the pilot would
+      // flap back to a dead endpoint every cycle. The failure count is reset
+      // here too: leaving it stale would let ONE blip after a recovery re-arm
+      // the countdown instead of two.
+      if (planner === this.planner) {
+        this.consecutivePrimaryFailures = 0;
+        if (this.endpointDownReplans > 0) {
+          this.endpointDownReplans = 0;
+          this.emit("planner_endpoint_recovered", {});
+        }
+      }
       this.consecutiveTransientFailures = 0;
       this.plannerBackoffUntil = 0;
       this.stalled = false;
     } catch (e) {
-      this.handlePlannerFailure(e);
+      this.handlePlannerFailure(e, planner);
     }
   }
 
@@ -2564,7 +2621,7 @@ export class Agent {
     return estimates.length ? estimates : undefined;
   }
 
-  private handlePlannerFailure(e: unknown): void {
+  private handlePlannerFailure(e: unknown, served?: Planner): void {
     if (e instanceof TokenInvalidError) {
       this.claudeDisabled = true;
       this.emit("operator_alert", { class: "token_invalid", message: e.message, fallback: !!this.fallbackPlanner });
@@ -2581,6 +2638,30 @@ export class Agent {
         });
       }
       return;
+    }
+    // #240. Everything reaching here is a failure the PRIMARY can recover
+    // from: a transient infrastructure error, or the catch-all class a plan
+    // that fails validation twice lands in. Counting both is the point --
+    // arming off consecutiveTransientFailures alone left a primary that
+    // answers 200 with unusable plans serving every replan and producing
+    // nothing, with the fallback configured and never reached. The two latching
+    // classes above return before this block on purpose: TokenInvalid and
+    // SubscriptionLimit are verdicts on the subscription, not evidence an
+    // endpoint is unreachable, and each pins activePlanner() to the fallback
+    // anyway. `served === this.planner` keeps a fallback-ONLY blip from arming
+    // anything. The emit is gated on `=== 0`, so re-arming on a failed probe
+    // never re-announces.
+    if (served === this.planner) {
+      this.consecutivePrimaryFailures++;
+      if (this.fallbackPlanner && this.consecutivePrimaryFailures >= ENDPOINT_DOWN_THRESHOLD) {
+        if (this.endpointDownReplans === 0) {
+          this.emit("planner_endpoint_down", {
+            consecutiveFailures: this.consecutivePrimaryFailures,
+            retryReplans: ENDPOINT_RETRY_REPLANS,
+          });
+        }
+        this.endpointDownReplans = ENDPOINT_RETRY_REPLANS;
+      }
     }
     if (e instanceof TransientPlannerError) {
       this.consecutiveTransientFailures++;

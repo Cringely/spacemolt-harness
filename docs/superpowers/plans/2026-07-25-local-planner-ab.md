@@ -815,7 +815,7 @@ Results observed on the finished implementation. Every row was run: ablation app
 | 8 | Add `&& e instanceof TransientPlannerError` to the counting block, reproducing revision 3 (Step 6) | 5: agent tests 8, 9 and all three `experiment-revert` tests |
 | 9 | Delete `this.consecutivePrimaryFailures = 0;` from the recovery clear (Step 9) | 1: agent test 10 |
 | 10 | Delete the `signal:` line (Step 3) | 1: the planner timeout test, on the watchdog at 1s |
-| 11 | HOIST the counting block above the `TokenInvalidError`/`SubscriptionLimitError` branches (Step 6) | 1: agent test 11, on `planner_endpoint_down` appearing before `planner_subscription_limit` |
+| 11 | HOIST the counting block above the `TokenInvalidError`/`SubscriptionLimitError` branches (Step 6) | 1: agent test 11, on `expect(types).not.toContain("planner_endpoint_down")` — the assertion tests PRESENCE, not order: hoisted, the latching failure is counted and the event is emitted at all |
 
 Agent tests are numbered in the order they appear in Step 1: 1 two-consecutive-failures, 2 down-emitted-once, 3 dual-outage, 4 probe-recovers, 5 fallback-success-does-not-clear, 6 fallback-failure-does-not-arm, 7 no-fallback-configured, 8 pure-catch-all, 9 unreachable-to-unusable, 10 one-failure-after-recovery, 11 mixed-class-latch.
 
@@ -961,7 +961,7 @@ Expect roughly 34 MB. `./tmp/` must be gitignored; verify with `git check-ignore
 bun run src/eval/run.ts --help
 ```
 
-The invocations below were re-read against `src/eval/run.ts:166-223` at `ac7705b` for revision 5 and are correct as of that commit (PR #22 did not touch `src/eval/`). Re-read the USAGE block anyway and reconcile: the flag is `--provider`, not `--planner`; the accepted set is `mock | claude-subscription | codex-subscription | ollama | openai-compat`; there is no `--db` and no `--limit`; and harvesting is a SEPARATE invocation (`run.ts:189-200`) that writes a JSON file and returns before any planner is built.
+The invocations below were re-read against `src/eval/run.ts:166-223` at `ac7705b` for revision 5 and are correct as of that commit (PR #22 did not touch `src/eval/`). Re-read the USAGE block anyway and reconcile: the flag is `--provider`, not `--planner`; the accepted set is `mock | claude-subscription | codex-subscription | ollama | openai-compat`; there is no `--db` and no `--limit`; and harvesting is a SEPARATE invocation (`run.ts:189-198`) that writes a JSON file and returns before any planner is built.
 
 - [ ] **Step 3: Find the pilot's agent id**
 
@@ -1202,7 +1202,7 @@ Separate KNOWN from UNPROVEN. "Removes the pilot's quota draw" stays a hypothesi
 
 ## Self-Review
 
-**Base commit.** This revision was written and measured against `ac7705b`, which is `main` at the time of writing. The plan branch was merged with `ac7705b` before any of it was re-measured, so the anchors, the suite totals and the ablation results all describe the same tree. PR #22 touches none of Task 1's four edit sites.
+**Base commit.** This revision was written and measured against `ac7705b`, which was `main` at the time of writing. The plan branch has since merged `fa795de` (PR #24) and `b0f25e5` (PR #26, the spec), so it is NO LONGER the same tree the numbers were taken on — a claim earlier in this section, now corrected. Neither merge touches Task 1's four edit sites: PR #24 changed `src/agent/instruct.ts` and its test, PR #26 is docs-only. So every anchor and every ablation result still holds; only the absolute suite total moves, which is why the DELTA is the load-bearing number at Step 13. Confirmed at implementation time: the seven strings the edits key on each occur exactly once, all eleven ablations reproduce their listed RED sets, and the delta is +12 (1554 -> 1566).
 
 **Spec coverage.** Every spec section maps to a task: "the one real code change" to Task 1; Stage 0 to Task 2; Stage 1 including both case sources and all four pass conditions to Task 3; Stage 2 including the config block and the rejected-second-pilot rationale to Task 4; the prerequisites to Task 4 Step 1; the testing section's behaviors to Task 1 Step 1 with the ablations at Step 12. The spec's "interaction to verify, not assume" is resolved in Task 1's design notes with a stated answer (do not touch the backoff gate).
 
@@ -1214,7 +1214,7 @@ Separate KNOWN from UNPROVEN. "Removes the pilot's quota draw" stays a hypothesi
 
 **Type consistency.** `endpointDownReplans` and `consecutivePrimaryFailures` are spelled identically in Steps 5, 6, 8, 9 and in the ablation table. Neither appears in an interface or a test file, because both are private. `ENDPOINT_DOWN_THRESHOLD` matches the spec's committed value and now genuinely counts primary failures; `ENDPOINT_RETRY_REPLANS` is the replacement named above. `planner_endpoint_down` and `planner_endpoint_recovered` match the spec's event names and are used consistently in the tests, the implementation steps, the dashboard mapping, and the ablation table. The `retryMs` payload key becomes `retryReplans`, matching the unit change; nothing reads the old key.
 
-**Persisted-state schema tolerance does not apply.** The project's binding rule covers artifacts that outlive the schema that wrote them. `snapshot()` is computed live at `src/server/server.ts:298` and never persisted, and neither new field is in it.
+**Persisted-state schema tolerance does not apply.** The project's binding rule covers artifacts that outlive the schema that wrote them. `snapshot()` is computed live at `src/server/server.ts:299` and never persisted, and neither new field is in it.
 
 **Verification status of this plan.** Task 1 was applied verbatim in a throwaway worktree cut from `ac7705b` and re-measured from scratch for THIS revision. Every number below was observed in revision 5, not copied from revision 4 or from the gate's report.
 
@@ -1233,7 +1233,7 @@ KNOWN, with the evidence:
 - The decrement's placement: 16 ticks against a dead primary with a three-step fallback plan gave 14 replans and 2 step-executing ticks, the countdown holding at `3 -> 3` on tick 5 and `1 -> 1` on tick 11 while walking `3 -> 2 -> 1 -> 3` on the replan ticks.
 - N=2 leaves a fallback-served window: 2 fallback-served replans during the outage and exactly one `planner_endpoint_recovered`.
 - Branch order in `activePlanner()` is unobservable: the endpoint-down branch was moved above `experimentReverted` and the full suite stayed green at 1476 total, 0 fail.
-- Source anchors re-read at `ac7705b`: `agent.ts` 135, 375, 1007, 1635, 1690, 1947, 1950, 1953, 2567, 2585, 2752; `openai-compat.ts` 14-23, 46-67, 80; `parse.ts` 53-72; `usage-poll.ts:38` (15s against the 10-minute cron noted at `:32`); `run.ts` 3, 108-110, 155-160, 189-200, 221-222; `harvest.ts:20`; `store.ts:118-125`; `usage.ts` 69-87; `dashboard.html` 684, 708, 1228; `agent-snapshot.test.ts:107-109`; the nine `SCORERS` entries; `no-progress-detector.ts:78-79`; spec line 29 and line 132.
+- Source anchors re-read at `ac7705b`: `agent.ts` 135, 375, 1007, 1635, 1690, 1947, 1950, 1953, 2567, 2585, 2752; `openai-compat.ts` 14-23, 46-67, 80; `parse.ts` 53-72; `usage-poll.ts:38` (15s against the 10-minute cron noted at `:32`); `run.ts` 3, 108-110, 157-160, 189-198, 221-222; `harvest.ts:20`; `store.ts:118-125`; `usage.ts` 69-87; `dashboard.html` 684, 708, 1228; `agent-snapshot.test.ts:107-109`; the nine `SCORERS` entries; `no-progress-detector.ts:78-79`; spec line 29 and line 132.
 - Each of the seven strings the four edit sites key on occurs exactly once in `agent.ts` at `ac7705b`.
 
 UNPROVEN, and what would settle each:

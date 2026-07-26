@@ -20,7 +20,21 @@ export interface OpenAiCompatOptions {
   // per security-baseline.md. Never logged.
   apiKey?: string;
   fetchImpl?: typeof fetch; // injectable for tests
+  timeoutMs?: number; // default OPENAI_COMPAT_TIMEOUT_MS; small values are for tests
 }
+
+// 60s per request. Receipt: the tick carried an UNBOUNDED planner wait, and a
+// fetch with no signal against a silent host waits out the OS TCP connect
+// timeout (~127s on Linux defaults) while an accepted-but-silent socket never
+// settles at all. 60s turns unbounded into bounded, which is the whole claim.
+// It is NOT "far below the tick": the agent loop ticks every 10s
+// (agent.ts start(intervalMs = 10_000)), so a request running its full budget
+// costs skipped ticks -- start()'s `if (running) return` drops them rather
+// than queueing. Worst case per plan() is 2x this, because parse.ts retries
+// once on a validation failure and each invoke() builds its own signal.
+// UNCONFIRMED against a real gemma-4-12b-qat generation; #240 Task 3 Step 7
+// re-derives it from measured seconds-per-plan.
+export const OPENAI_COMPAT_TIMEOUT_MS = 60_000;
 
 interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string | null } }>;
@@ -64,6 +78,7 @@ export class OpenAiCompatPlanner implements Planner {
           response_format: { type: "json_schema", json_schema: { name: "plan", schema: PLAN_JSON_SCHEMA } },
           messages: [{ role: "user", content: prompt }],
         }),
+        signal: AbortSignal.timeout(this.opts.timeoutMs ?? OPENAI_COMPAT_TIMEOUT_MS),
       });
     } catch (e) {
       // Same classification stance as Ollama: a self-hosted LAN server has no
@@ -77,7 +92,18 @@ export class OpenAiCompatPlanner implements Planner {
       throw new TransientPlannerError(`openai-compat: request failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (!res.ok) throw new TransientPlannerError(`openai-compat: HTTP ${res.status}`);
-    const body = (await res.json()) as ChatCompletionResponse;
+    let body: ChatCompletionResponse;
+    try {
+      // The timeout signal above also aborts a body read, and a truncated body
+      // is the same class of infrastructure failure as a failed connect. Left
+      // outside the classification this would escape as a plain Error and land
+      // in handlePlannerFailure's catch-all, which never arms the endpoint-down
+      // state -- the very stall this timeout exists to prevent. Model QUALITY
+      // still fails through tryParsePlan on the CONTENT, which is untouched.
+      body = (await res.json()) as ChatCompletionResponse;
+    } catch (e) {
+      throw new TransientPlannerError(`openai-compat: response body failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
     return body.choices?.[0]?.message?.content ?? "";
   }
 }

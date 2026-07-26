@@ -846,3 +846,18 @@ Source: issue #219 (P1 epic, unblocks #107/#216 and the first rung of five other
 That half was reversed on evidence. A boundary strands what preceded it: "Do not dock and run get_status" loses its negation, "I handle the routing and run find_route" its subject. Over 63 steers it bought 2 true rejects for 18 false positives. Rule 3 makes the joiners a skipped LEAD-IN: 4 false positives, those 2 compound imperatives accepted knowingly and recorded in KNOWN LIMITS.
 
 Also rejected, each now an accept case: substring search (fires inside `find_routes_v2`), inflected verbs, sentence-wide negation. The gated set excludes by derivation: the empty catalog name, the ordinary-English `view`. Three false positives stay open, named in code. Every guard ablated alone, red alone, with a typecheck. No live steer has hit it.
+
+## 2026-07-25 — Falling back when the primary planner stops producing plans (#240)
+
+**Context.** The pilot has a primary planner and a paid backup. Every trigger that moves it to the backup is subscription-shaped: bad token, exhausted quota, or the 12-hour no-progress latch. None describes an endpoint that is not answering. #240 puts a local model on a workstation that sleeps, so the pilot could sit those 12 hours planning nothing, backup never reached. A likelier shape is worse: a model that answers everything but returns unusable plans. Measured over 30 replans: 25 calls, 0 plans, backup untouched.
+
+**Options.**
+- *(A) Reuse `usingFallback` [rejected].* A one-way latch, never reset: the first overnight sleep moves the pilot to the paid planner for good.
+- *(B) A boolean, not a counter [rejected].* Built and measured: a dual outage locked the primary out permanently.
+- *(C) A health-probe endpoint [rejected].* An extra call per cycle when the replan is itself the probe.
+- *(D) A watchdog task [rejected].* A new lifecycle for what a failure count already expresses.
+- *(E) Arm off the shared transient-failure counter [rejected].* Any success resets it, the backup's included, so the pilot flaps back to a dead endpoint every cycle; and only the transient branch maintains it, so the answers-but-unusable shape arms nothing.
+- *(F) A wall-clock retry window [rejected].* Shorter than the replan gap, it expires before the next replan reads it; longer, it couples to config nobody re-derives.
+- *(G) A per-planner failure count plus a countdown in replans [CHOSEN].*
+
+**Decision.** (G). Two failures in a row of the primary hand the next three replans to the backup; the third probes, because the replan is the health check. Replans rather than milliseconds keeps this independent of tick rate and heartbeat config. 3 is a policy dial and no N is optimal: every paid backup call is exactly one plan, so plan rate and spend are one number. It is chosen on probe count, 9 blocking probes per 24 replans against 2's 13; its cost is post-recovery waste, spread evenly over 0 to N-1, averaging 1.0 against 0.5. The request also gained a 60s timeout, having had none: probing a silent host blocked the tick. Unbounded becomes bounded, which is the whole claim: 60s is not cheap against a 10-second tick, and the parse layer's one retry doubles the worst case. Eleven ablations, each alone, typechecked, red.
