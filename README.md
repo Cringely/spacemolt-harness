@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-47).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-50).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -91,9 +91,9 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: registry grown to 64 actions (wave 2-3 closed); scheduler stages 2-3 shipped, stage 4 (quota) pending; A1 + stage-2 dead-man wired pending operator hands; pilot missions live on dashboard, autonomous income-positive. Improv loop C–E held on G4 verification.
+Current work: registry grown to 64 actions (wave 2-3 closed); scheduler stages 2-3 shipped, stage 4 (quota) pending; A1 + stage-2 dead-man wired pending operator hands; pilot missions live on dashboard, autonomous income-positive. Improv loop C–E held on G4 verification. Two production defects closed this cluster (cold-start station memory, PR #22; the query-steer that never retired, PR #24; see M-50); the planner now runs on `codex-subscription/gpt-5.6-terra` instead of the Claude subscription; the #240 local-planner plan is on revision 5, still a planning document.
 
-The major-milestone timeline (M-01..M-47) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-50) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 
