@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import type { StatusSnapshot } from "../src/client/client";
 import {
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
+  isDockDeadEnd,
 } from "../src/agent/stall-monitor";
 
 // These unit-pin the branches of the pure stall-watcher substrate that the
@@ -95,6 +96,21 @@ describe("isStranded", () => {
   });
   test("a base at the current POI cancels the strand", () => {
     expect(isStranded({ ...base, currentPoiHasBase: true })).toBe(false);
+  });
+});
+
+describe("isDockDeadEnd", () => {
+  test("below threshold: not a dead end", () => {
+    expect(isDockDeadEnd({ streak: 2, threshold: 3 })).toBe(false);
+  });
+  test("exactly at threshold: dead end", () => {
+    expect(isDockDeadEnd({ streak: 3, threshold: 3 })).toBe(true);
+  });
+  test("past threshold: still a dead end (the latch, not this predicate, bounds re-firing)", () => {
+    expect(isDockDeadEnd({ streak: 9, threshold: 3 })).toBe(true);
+  });
+  test("zero streak: never a dead end", () => {
+    expect(isDockDeadEnd({ streak: 0, threshold: 3 })).toBe(false);
   });
 });
 

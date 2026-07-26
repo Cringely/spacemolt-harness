@@ -531,6 +531,21 @@ The model gets the wheel, not the safety switches:
   because the failure it fixes is a memory failure, not a judgment one: the knowledge was in the
   event store the whole time and no amount of reasoning could recover it from a prompt that never
   carried it.
+- **Dock dead-end guard** (#551, live 2026-07-25): 3 consecutive `dock` refusals for "no station
+  at this location" force this.plan/cursor/planState DIRECTLY to `[travel_to{last confirmed
+  station system}, dock]`, bypassing the planner entirely, when the station-geography memory
+  above (#517) already holds a candidate; with no candidate it alerts loudly and stands down
+  rather than inventing a destination. The producer is a streak counter in executeOne, reset by
+  any non-matching outcome, so it is guaranteed to fire for a COMPLIANT pilot (unlike the strand
+  detector's fuelBlockedMoves, which needs a refused move the pilot may never attempt). The live
+  incident it closes: an 8h, zero-delta stall retrying `dock` at a station-less POI, ending in an
+  operator-authorized `self_destruct`. This is plan-then-execute-only machinery (there is no
+  planner call to bypass under improv); the paired instruction for a self-driving agent: after 2-3
+  failed `dock` attempts with the SAME "no station at this location" result at one POI, stop
+  retrying it. Check your compiled station shortlist (the §4/#517 rule above) and `travel_to` the
+  most recent confirmed station system instead. If you have no confirmed station in memory, say so
+  explicitly in your plan and pick a different productive goal (mine/trade in place, or check
+  nearby POIs) rather than looping the same failing `dock`.
 - **Catalog-gated jettison guard** (#94, operator mandate 2026-07-13): a `jettison` of an item
   whose catalog `base_value` clears the value floor (`JETTISON_VALUE_FLOOR`, 50cr — see
   `src/agent/executor.ts`) is short-circuited to a blocked wake naming the value and the

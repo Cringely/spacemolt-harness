@@ -450,6 +450,124 @@ describe("strand guard", () => {
   });
 });
 
+describe("dock dead-end guard (#551)", () => {
+  // Reproduces the 2026-07-25 incident shape: a plan that only ever tries
+  // `dock` at a station-less system, cargo full, fuel non-trivial (the point
+  // is this must fire BEFORE fuel gets critical, not after). `find_route` +
+  // `jump` succeed so a forced reroute can actually move the ship; `dock`
+  // fails at "duskmere" (no station) and succeeds once the ship reaches
+  // "gold_run" (the known station system) -- live capture text, test/fixtures/
+  // market-capture-2026-07-13.json ("No station at this location", 108x).
+  function deadEndApi(): { api: GameApi; system: () => string } {
+    let system = "duskmere";
+    let docked = false;
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        if (name === "find_route") {
+          return { structuredContent: { found: true, route: [{ system_id: "duskmere", jumps: 0 }, { system_id: "gold_run", jumps: 1 }] } };
+        }
+        if (name === "jump") { system = "gold_run"; docked = false; return { result: "ok" }; }
+        if (name === "dock") {
+          if (system === "duskmere") throw new SpacemoltError("command_error", "No station at this location");
+          docked = true;
+          return { result: "Docked at Gold Run Extraction Hub." };
+        }
+        return { result: "ok" };
+      },
+      async status(): Promise<StatusSnapshot> {
+        return {
+          credits: 5_000, fuel: 80, maxFuel: 130, hull: 100, maxHull: 100,
+          cargoUsed: 100, cargoCapacity: 100, docked, inTransit: false, systemId: system,
+        };
+      },
+      async notifications() { return []; },
+    };
+    return { api, system: () => system };
+  }
+
+  const dockOnlyPlan: Plan = { goal: "find somewhere to sell", steps: [{ action: "dock", params: {} }] };
+
+  const dockDeadEndAlerts = (store: Store) =>
+    store.recentEvents("a1", 100_000).filter(
+      (e) => e.type === "operator_alert" && (e.payload as { class?: string }).class === "dock_dead_end");
+  const reroutes = (store: Store) =>
+    store.recentEvents("a1", 100_000).filter((e) => e.type === "steward_reroute");
+
+  test("INCIDENT SHAPE: repeated dock-refusal at a station-less system with a known station on record -> forced reroute, no operator self_destruct needed", async () => {
+    const { api, system } = deadEndApi();
+    const store = new Store(":memory:");
+    // Seed the station-geography memory (#517/#525) with a prior confirmed
+    // dock, exactly what the constructor reload reads (agent.ts).
+    store.appendEvent({
+      agentId: "a1", ts: 0, type: "station_observed",
+      payload: { systemId: "gold_run", stationPoiId: "gold_run_hub", station: "Gold Run Extraction Hub", services: ["market"] },
+    });
+    store.savePlan("a1", dockOnlyPlan, []);
+    const planner = new MockPlanner([dockOnlyPlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 30; i++) { now += 2_000; await agent.runOnce(); }
+
+    expect(dockDeadEndAlerts(store).length).toBeGreaterThanOrEqual(1);
+    const rr = reroutes(store);
+    expect(rr.length).toBeGreaterThanOrEqual(1);
+    expect((rr[0]!.payload as { toSystem: string }).toSystem).toBe("gold_run");
+    // The forced plan actually ran: the ship reached the known station system
+    // and eventually docked there -- the incident's own resolution, achieved
+    // WITHOUT an operator-authorized self_destruct.
+    expect(system()).toBe("gold_run");
+    expect(agent.snapshot().status?.docked).toBe(true);
+  });
+
+  test("NO KNOWN ROUTE: same dead-end with an empty station memory -> loud alert, no invented destination, no crash", async () => {
+    const { api } = deadEndApi();
+    const store = new Store(":memory:"); // no station_observed events seeded
+    store.savePlan("a1", dockOnlyPlan, []);
+    const planner = new MockPlanner([dockOnlyPlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 20; i++) { now += 2_000; await agent.runOnce(); }
+
+    const fired = dockDeadEndAlerts(store);
+    expect(fired.length).toBeGreaterThanOrEqual(1);
+    expect((fired[0]!.payload as { reroutedTo: string | null }).reroutedTo).toBeNull();
+    expect(reroutes(store).length).toBe(0); // no game call invented from nothing
+  });
+
+  test("TRANSIENT: two dock refusals then a different outcome resets the streak -- no forced reroute", async () => {
+    let attempts = 0;
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        if (name === "dock") {
+          attempts++;
+          if (attempts <= 2) throw new SpacemoltError("command_error", "No station at this location");
+          return { result: "Docked at Duskmere Outpost." }; // a station appears (e.g. the plan changed target)
+        }
+        return { result: "ok" };
+      },
+      async status(): Promise<StatusSnapshot> {
+        return {
+          credits: 5_000, fuel: 80, maxFuel: 130, hull: 100, maxHull: 100,
+          cargoUsed: 100, cargoCapacity: 100, docked: false, inTransit: false, systemId: "duskmere",
+        };
+      },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    store.savePlan("a1", dockOnlyPlan, []);
+    const planner = new MockPlanner([dockOnlyPlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 12; i++) { now += 2_000; await agent.runOnce(); }
+
+    expect(dockDeadEndAlerts(store).length).toBe(0);
+    expect(reroutes(store).length).toBe(0);
+  });
+});
+
 describe("fuel-reserve floor (strand prevention)", () => {
   const base = {
     planState: "running" as const, notifications: [], lastPlanAt: 0, now: 1,

@@ -21,6 +21,7 @@ import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./s
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
 import {
   NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
+  DOCK_NO_STATION_STREAK_THRESHOLD, isDockDeadEnd,
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
 } from "./stall-monitor";
 import type { EnvelopeNotification } from "../client/http";
@@ -284,6 +285,16 @@ const SPARSE_RULE_TTL_HOURS = 6;
 // never disagree about what counts as this class.
 const TOO_SPARSE_CLASS = "too_sparse";
 
+// Dock dead-end (issue #551): the SAME classifier the failure taxonomy uses
+// (failureClass, src/server/failures.ts) resolves the game's verbatim "No
+// station at this location" (live capture, test/fixtures/market-capture-
+// 2026-07-13.json, 108 occurrences; no code prefix, no PROSE_RULES match, so
+// it falls to the tier-3 normalized-prose class) to this exact token --
+// test/stall-watcher.test.ts's dock-dead-end suite drives that literal
+// string through the real pipeline and pins the resulting classification, so
+// a failures.ts wording change that desyncs the two goes red there.
+const DOCK_NO_STATION_CLASS = "no station at this location";
+
 // POI-extraction backstop (issue #253): the game's extraction-refusal shape,
 // VERIFIED live 2026-07-14 (events store, deploy dev-2026-07-14T15:51:47Z):
 // `mine` at a gas POI with only a mining laser blocks with "You need a gas
@@ -468,6 +479,16 @@ export class Agent {
   // branch, so the count survives even when the thrash damper would otherwise
   // arm and return first.
   private fuelBlockedMoves = 0;
+  // Dock dead-end streak (issue #551): consecutive `dock` -> blocked -> "no
+  // station at this location" outcomes, counted in executeOne the same way as
+  // fuelBlockedMoves above but INDEPENDENT of it -- see stall-monitor.ts's
+  // isDockDeadEnd for why this is the compliant-pilot signal the strand
+  // detector isn't. dockDeadEndHandled latches the forced reroute (see
+  // maybeForceDockReroute) to once per streak, cleared the moment the streak
+  // drops back under threshold -- the same shape as strandedSince/
+  // selfDestructFired below.
+  private dockNoStationStreak = 0;
+  private dockDeadEndHandled = false;
   // Whether the CURRENT POI has a refuelling base (cached from gatherSurroundings'
   // get_system). A base here means the docked reflex can refuel, so it is NOT a
   // strand; false (incl. unknown) leaves the behavioral signal to decide.
@@ -951,6 +972,12 @@ export class Agent {
     // can return early), so the exit fires on schedule even while the planner
     // under test is failing -- exactly the scenario the exit exists for.
     if (status) this.maybeRevertExperiment(status);
+
+    // Dock dead-end guard (#551): forced reroute on a `dock`-refusal streak.
+    // Same always-runs footing as the three checks above -- see
+    // maybeForceDockReroute for why it must run ahead of the reflex/backoff/
+    // wake gates below rather than inside runSteward.
+    if (status) this.maybeForceDockReroute(status);
 
     // Reflex check first, before wake evaluation: zero-token, declarative
     // rules (auto-refuel/repair while docked) that don't need the planner at
@@ -1511,6 +1538,84 @@ export class Agent {
         stalledMs: this.now() - this.experimentLastAdvanceAt,
       });
     }
+  }
+
+  /**
+   * Dock dead-end guard (issue #551, producer-side fix). A pilot repeatedly
+   * refused `dock` for "no station at this location" is not a fuel strand
+   * (isStranded needs a refused MOVE, which this pilot never attempts) and
+   * not reliably a Layer-4 freeze either (a plan that gets a fresh replan
+   * each cycle can keep re-issuing `dock` while the rest of its state stays
+   * frozen). Left alone it is exactly the 2026-07-25 incident: an 8h,
+   * zero-delta stall that ended in an operator-authorized self_destruct
+   * (200cr fee, full cargo hold lost).
+   *
+   * Evaluated on the same always-runs footing as maybeEmitLedger /
+   * maybeEmitProgressHeartbeat / maybeRevertExperiment above it -- BEFORE the
+   * reflex/backoff/wake gates runOnce applies below -- because those gates
+   * are themselves implicated: a `dock` refusal sets planState to "blocked",
+   * a blocked plan is only re-evaluated through the wake path, and the
+   * Layer-4/thrash backoff on that path can suppress replanning for a full
+   * heartbeat window at a stretch. runSteward (the strand/no-progress
+   * escalation ladder) sits BEHIND that same backoff gate -- which is why
+   * this fix does not live there.
+   *
+   * The producer-side action, when the data exists: set this.plan/cursor/
+   * planState DIRECTLY to [travel_to{known station}, dock], bypassing the
+   * planner entirely. A re-steer instruction is prose (the undesired outcome
+   * must be structurally impossible, not discouraged), and the digest's
+   * existing knownStations line is exactly that prose and already failed to
+   * prevent this incident (issue #517). Setting planState back to "running"
+   * is itself part of the fix: it moves execution off the wake/backoff path
+   * and onto runOnce's unconditional bottom-of-loop executeOne call, so the
+   * forced plan actually runs even while a backoff would otherwise be active.
+   *
+   * Without a known station (this.stationSightings empty -- never docked
+   * anywhere yet, or every sighting aged out) there is no deterministic
+   * destination to inject, and the vendored reference has no "nearest
+   * station" query this harness can call blind. Fails safe: alert loudly so
+   * a human sees the specific cause fast, and stand down -- the existing
+   * strand/no-progress escalation this sits ahead of is unchanged and still
+   * runs on its own conditions afterward.
+   *
+   * Latched (dockDeadEndHandled) to act once per streak, the same shape as
+   * runSteward's strandedSince/selfDestructFired: cleared the instant the
+   * streak drops back under threshold (a differing outcome broke it), so a
+   * pilot that recovers and later re-wedges gets a fresh forced reroute
+   * rather than waiting out a stale latch.
+   */
+  private maybeForceDockReroute(status: StatusSnapshot): void {
+    if (!isDockDeadEnd({ streak: this.dockNoStationStreak, threshold: DOCK_NO_STATION_STREAK_THRESHOLD })) {
+      this.dockDeadEndHandled = false;
+      return;
+    }
+    if (this.dockDeadEndHandled) return;
+    this.dockDeadEndHandled = true;
+
+    const target = knownStationSystems(this.stationSightings, status.systemId)[0];
+    this.emit("operator_alert", {
+      class: "dock_dead_end",
+      system: status.systemId ?? null,
+      streak: this.dockNoStationStreak,
+      reroutedTo: target?.systemId ?? null,
+    });
+    if (!target) return; // no known destination to route to -- alert only, fail safe
+
+    const plan: Plan = {
+      goal: `Forced reroute (#551): ${this.dockNoStationStreak} consecutive dock refusals at ` +
+        `${status.systemId ?? "current position"} -- routing to the last confirmed station system.`,
+      steps: [
+        { action: "travel_to", params: { system_id: target.systemId } },
+        { action: "dock", params: {} },
+      ],
+    };
+    this.plan = plan;
+    this.cursor = { step: 0, iteration: 0 };
+    this.store.saveCursor(this.id, this.cursor);
+    this.planState = "running";
+    this.blockedReason = undefined;
+    this.store.savePlan(this.id, plan, this.goals);
+    this.emit("steward_reroute", { toSystem: target.systemId, streak: this.dockNoStationStreak });
   }
 
   // Thin wrapper over stall-monitor.ts's fuelBelowReserve: supplies the agent's
@@ -2796,6 +2901,14 @@ export class Agent {
       const fuelBlockedMove =
         result.kind === "blocked" && MOVEMENT_ACTIONS.has(step.action) && /fuel/i.test(result.reason);
       this.fuelBlockedMoves = fuelBlockedMove ? this.fuelBlockedMoves + 1 : 0;
+
+      // Dock dead-end streak (#551): same contract as fuelBlockedMoves above --
+      // reset on ANY outcome that isn't this exact block, so the count only
+      // ever means "N in a row with nothing else in between." See
+      // stall-monitor.ts's isDockDeadEnd and agent.ts's maybeForceDockReroute.
+      const dockNoStation =
+        result.kind === "blocked" && step.action === "dock" && failureClass(result.reason) === DOCK_NO_STATION_CLASS;
+      this.dockNoStationStreak = dockNoStation ? this.dockNoStationStreak + 1 : 0;
     }
 
     if (result.kind === "continue") {

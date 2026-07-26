@@ -43,6 +43,33 @@ export const STRAND_FUEL_BLOCK_THRESHOLD = 3;
 // destructive last resort.
 export const STRAND_SELF_DESTRUCT_WINDOW_MULT = 2;
 
+// Dock dead-end (issue #551): the pilot keeps retrying `dock` at a POI with no
+// station -- 68 occurrences in the single worst 72h window on record, more
+// than double the next failure class, and the immediate cause of an 8h,
+// zero-delta stall that ended in an operator-authorized self_destruct. The
+// signal is deliberately NOT isStranded's fuelBlockedMoves: that counter only
+// increments on a REFUSED MOVE, and a pilot retrying `dock` in place never
+// attempts one -- fuelBlockedMoves stayed 0 for the entire incident
+// (operator_alert class=stranded: 0 for all time, confirmed live). The streak
+// this gates is counted the same way in agent.ts's executeOne (every `dock`
+// -> blocked -> "no station at this location" outcome, reset by any other
+// outcome), but a COMPLIANT pilot generates it just by doing what it was
+// told: every failed dock attempt increments it, no refused move required.
+// 3 matches STRAND_FUEL_BLOCK_THRESHOLD/BLOCKED_THRASH_THRESHOLD's own
+// convention -- enough to rule out a one-off blip, few enough to act before
+// the hunt burns the fuel tank.
+export const DOCK_NO_STATION_STREAK_THRESHOLD = 3;
+
+/**
+ * True once `streak` consecutive dock refusals for "no station at this
+ * location" have piled up in a row. Pure so the threshold boundary is
+ * testable without an Agent -- see agent.ts's maybeForceDockReroute for the
+ * producer-side action this predicate gates.
+ */
+export function isDockDeadEnd(input: { streak: number; threshold: number }): boolean {
+  return input.streak >= input.threshold;
+}
+
 // Layer 4 fingerprint: the salient GAME state plus plan position at a replan
 // boundary. Inputs ENUMERATED (simplicity rule 5) -- every field whose change
 // means real progress: from StatusSnapshot, fuel/credits/hull (vitals move as
