@@ -2897,8 +2897,16 @@ export class Agent {
     // Invariant: result.resultText is stored on every action event, not just
     // blocked ones -- a future silent-failure class won't necessarily surface
     // as "blocked". See executor.ts's StepResult doc comment for why.
+    // `guard: true` rides along ONLY on a pre-call guard refusal (executor.ts
+    // guardBlock) so failureTaxonomy can tell "we refused ourselves" from "the
+    // game refused us" -- both are outcome:"blocked" and were counted as game
+    // failures, which pinned working guards at 100% and got them filed as
+    // broken capabilities (#571, #581). Written by spread, not as an explicit
+    // `undefined`, so a game/legacy block's payload is byte-identical to today's
+    // and the absent field keeps meaning "the game refused us".
     this.emit("action", {
       action: step?.action, params: step?.params, outcome: result.kind, result: result.resultText,
+      ...(result.kind === "blocked" && result.guard ? { guard: true } : {}),
     });
 
     // Station geography (issue #517): learn here, at the one seam where the

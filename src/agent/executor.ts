@@ -36,13 +36,47 @@ export type StepResult =
   // double-spend class -- see the gate in executeOne).
   | { kind: "server_retry"; code: string; resultText?: string }
   | { kind: "plan_done"; resultText?: string }
-  | { kind: "blocked"; reason: string; resultText?: string };
+  // `guard` marks a block THIS FILE decided BEFORE the call went out -- our own
+  // precondition refusal, not the game's. See guardBlock below.
+  | { kind: "blocked"; reason: string; resultText?: string; guard?: true };
 
 const RESULT_SNIPPET_LEN = 120;
 
 function snippet(text: string | undefined): string | undefined {
   if (!text) return undefined;
   return text.length > RESULT_SNIPPET_LEN ? text.slice(0, RESULT_SNIPPET_LEN) : text;
+}
+
+// Pre-call guard refusal (issue #571/#581). Invariant: an action event's failure
+// counts must attribute the refusal to whoever made it -- established here, at
+// the only place a refusal is authored. Our pre-step guards and the game's
+// rejections both surface as `outcome: "blocked"` action events, and
+// failureTaxonomy (src/server/failures.ts) counted BOTH as game failures. So a
+// guard doing exactly its job pinned its own action at 100%, and the 6h
+// strategy reviewer filed it as a broken capability: private #571 quoted this
+// file's own complete_mission text as "sample text from the game" across 21
+// calls the game never saw, and #581 filed scan 28/28 on the #368
+// nearby-membership guard. The taxonomy could not tell the two apart because
+// the tier-3 normalizer (failures.ts) lowercases any uncoded prose into
+// something shaped exactly like a game error class.
+//
+// One boolean on the result, carried onto the action event by agent.ts. Absence
+// means game-or-legacy, deliberately: every event already in a store predates
+// this field, and unflagged must keep meaning "the game refused us".
+//
+// Receipt (simplicity rule 3): the smaller alternative was matching our own
+// guard wording inside failures.ts -- zero producer change, but it couples the
+// taxonomy to guard prose, which is the thing that drifts (the wording is
+// tuned for the planner's digest and rewritten whenever a guard is retuned).
+// Rejected: the fact "we refused this, not the game" is known for free at the
+// return, and is guesswork anywhere downstream.
+//
+// SCOPE: PRE-call sites only. classifyGameError, the sell-effect verification,
+// travelToTick's no-route verdict (find_route already answered) and the buy-id
+// correction (a rewrite of the game's own invalid_item rejection) are real game
+// outcomes and stay unflagged.
+function guardBlock(reason: string): StepResult {
+  return { kind: "blocked", reason, resultText: reason, guard: true };
 }
 
 // Invariant: a transient, self-resolving block must WAIT, never replan -- see
@@ -340,7 +374,7 @@ async function mineDepositBlock(
       `mine blocked: deposits too sparse for your mining array -- relocate to a denser field or refit smaller ` +
       `mining modules; do not retry mine here with this fit. Your total mining_power ${power} exceeds ` +
       `${SPARSE_LOCK_MULTIPLIER}x every deposit's supported_power here (richest ${richest}; ${list}), so no lock is possible.`;
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   // Live data could not decide -- fall back to the learned rule for exactly
@@ -354,7 +388,7 @@ async function mineDepositBlock(
     `mine blocked (learned): a mine at ${poiId} with your current mining fit was already refused as too sparse -- ` +
     `relocate to a denser field or refit smaller mining modules; repeating it here fails identically. ` +
     `The game said: ${snippet(rule.detail)}`;
-  return { kind: "blocked", reason, resultText: reason };
+  return guardBlock(reason);
 }
 
 /**
@@ -460,7 +494,7 @@ async function installModBlock(
     const reason =
       `install_mod blocked: you must be DOCKED at a station to fit a module. ` +
       `Plan dock first, then install_mod{id=${id}}.`;
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   const fit = preStatus?.fit;
@@ -515,7 +549,7 @@ async function installModBlock(
       `install_mod of ${id} blocked: it is not in your cargo, and install fits a module you are HOLDING. ` +
       `Buy it first -- dock where the market sells it, buy{id=${id}, quantity=1} (it lands in your cargo), ` +
       `then install_mod{id=${id}} while still docked.`;
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   // The pilot's Engineering level, needed for the cost floor. A free, unlimited
@@ -543,7 +577,7 @@ async function installModBlock(
       `install_mod of ${id} does not fit: uninstall_mod a fitted module to free grid, or pick a smaller module. ` +
       `It needs cpu ${cpuMin} / power ${powerMin}${discounted}; you have cpu ${cpuFree} / power ${powerFree} free ` +
       `(cpu ${fit.cpuUsed}/${fit.cpuCapacity}, power ${fit.powerUsed}/${fit.powerCapacity} in use).`;
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   // Slot occupancy: counted from the fitted modules' own `slot` field (the
@@ -558,7 +592,7 @@ async function installModBlock(
       const reason =
         `install_mod of ${id} has nowhere to go: uninstall_mod one of your fitted ${slot} modules first, ` +
         `or buy a hull with more ${slot} slots. All ${capacity} ${slot} slot(s) on this ship are full.`;
-      return { kind: "blocked", reason, resultText: reason };
+      return guardBlock(reason);
     }
   }
 
@@ -725,7 +759,7 @@ async function targetLocalityBlock(api: GameApi, step: PlanStep): Promise<StepRe
       `travel{id} only reaches POIs HERE: ${[...poiIds].join(", ")}. ` +
       `A plan's ids resolve when the step RUNS, not when it was written: never leave a POI of the system you started in ` +
       `sitting after a travel_to/jump step.`;
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   if (step.action === "scan") {
@@ -734,7 +768,7 @@ async function targetLocalityBlock(api: GameApi, step: PlanStep): Promise<StepRe
         `scan blocked: scan targets an ENTITY at your current location -- a ship, wreck or object from the Nearby list ` +
         `in your briefing -- never a POI id and never a system id. '${id}' is a POI in ${here}: a PLACE. ` +
         `Travel to a POI, don't scan it. If your briefing shows no Nearby list, there is nothing to scan here.`;
-      return { kind: "blocked", reason, resultText: reason };
+      return guardBlock(reason);
     }
 
     // Nearby-membership extension (issue #368). The POI check above knows only
@@ -776,7 +810,7 @@ async function targetLocalityBlock(api: GameApi, step: PlanStep): Promise<StepRe
           `AT your current location, and '${id}' is not on that list here in ${here}. A POI of another system is a ` +
           `PLACE: travel_to that system first, then scan what its Nearby list shows. ` +
           `If your briefing shows no Nearby list, there is nothing to scan here.`;
-        return { kind: "blocked", reason, resultText: reason };
+        return guardBlock(reason);
       }
     }
   }
@@ -830,7 +864,7 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
   const reason =
     `complete_mission blocked: objective not met -- ${shortfalls.join("; ")}. ` +
     `Gather the shortfall first; complete_mission returns mission_incomplete until every objective's count is met.`;
-  return { kind: "blocked", reason, resultText: reason };
+  return guardBlock(reason);
 }
 
 /**
@@ -915,7 +949,7 @@ export async function executeTick(
     const hasTemplate = typeof p.template_id === "string" && p.template_id.length > 0;
     if (!hasId && !hasTemplate) {
       const reason = "accept_mission needs a template_id (or id) copied from the mission listing in your briefing";
-      return { kind: "blocked", reason, resultText: reason };
+      return guardBlock(reason);
     }
   }
 
@@ -948,7 +982,7 @@ export async function executeTick(
   // that #291/PR #302 landed.
   if (step.action === "mine" && preStatus?.modules !== undefined && !hasMiningModule(preStatus)) {
     const reason = "no mining equipment fitted; a mine action needs a mining laser module";
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   // Mine deposit precondition (issue #188) -- see mineDepositBlock above.
@@ -975,7 +1009,7 @@ export async function executeTick(
         `jettison of ${id} refused (catalog base_value ${value}cr >= ${JETTISON_VALUE_FLOOR}cr floor): ` +
         `HOLD it and re-check markets when docked, or list it with create_sell_order -- ` +
         `valuable cargo is never destroyed.`;
-      return { kind: "blocked", reason, resultText: reason };
+      return guardBlock(reason);
     }
   }
 
@@ -997,7 +1031,7 @@ export async function executeTick(
     const reason =
       `withdraw blocked: you must be DOCKED at a station with storage service. ` +
       `Plan dock first, then withdraw{item_id=...}.`;
-    return { kind: "blocked", reason, resultText: reason };
+    return guardBlock(reason);
   }
 
   // Target-locality guard (issue #176) -- see targetLocalityBlock above. Sits
@@ -1029,7 +1063,7 @@ export async function executeTick(
       const reason =
         `${step.action} for ${itemId} needs an explicit price_each -- ` +
         `the catalog has no base_value to default from. Plan it again with price_each set.`;
-      return { kind: "blocked", reason, resultText: reason };
+      return guardBlock(reason);
     }
     sendParams = { ...sendParams, price_each: value };
   }
@@ -1052,6 +1086,9 @@ export async function executeTick(
           const reason =
             `invalid_item: '${attempted}' is not a catalog item id -- did you mean '${suggestion}'? ` +
             `Plan the buy again with id ${suggestion} exactly. Game said: ${e.message}`;
+          // NOT guardBlock: the game already rejected this buy: our text only
+          // annotates its invalid_item with the nearest catalog id. A real
+          // failure that stays a real failure in the taxonomy.
           return { kind: "blocked", reason, resultText: reason };
         }
       }

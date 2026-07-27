@@ -121,9 +121,16 @@ export interface BrokenCapability {
 export interface FailureTaxonomy {
   agentId: string;
   windowHours: number;
-  classes: FailureClassRow[]; // window frequency table, count desc
+  classes: FailureClassRow[]; // window frequency table, count desc -- GAME refusals only
   newClasses: string[]; // classes whose FIRST lifetime occurrence is inside the window
   brokenCapabilities: BrokenCapability[];
+  // Blocks OUR OWN pre-call guards authored, never sent to the game (#571/#581).
+  // Same row shape and same window as `classes`, kept in a separate list
+  // because it answers a different question: not "what does the game refuse"
+  // but "what doomed steps does the planner keep proposing". A guard firing is
+  // the harness working, so these rows must never reach a broken-capability
+  // finding. Empty for any store written before executor.ts's guardBlock.
+  prevented: FailureClassRow[];
 }
 
 // The subset of the `action` event payload this aggregation reads. All fields
@@ -133,12 +140,19 @@ interface ActionPayload {
   action?: unknown;
   outcome?: unknown;
   result?: unknown;
+  // `true` only when the block came from a pre-call guard (agent.ts writes it
+  // from executor.ts's guardBlock). ABSENT means game-or-legacy, and that
+  // asymmetry is the whole design: every event already persisted predates this
+  // field, so unflagged has to keep classifying exactly as it did before.
+  guard?: unknown;
 }
 
 /**
- * One pass over an agent's LIFETIME `action` events (ascending), three
- * signals out: window class frequencies, never-seen-before classes, and
- * broken capabilities. Lifetime input is deliberate -- newness and lifetime
+ * One pass over an agent's LIFETIME `action` events (ascending), four
+ * signals out: window class frequencies, never-seen-before classes, broken
+ * capabilities, and (#571/#581) the blocks our own pre-call guards authored, split
+ * off from the first three so a working guard is never read as a game refusal.
+ * Lifetime input is deliberate -- newness and lifetime
  * failure rates are unanswerable from a window alone (the 86/86 buy history
  * predates any dashboard window). Only `blocked` outcomes count as failures;
  * `continue`/`plan_done` count as successes for the capability denominator;
@@ -158,13 +172,29 @@ export function failureTaxonomy(
 ): FailureTaxonomy {
   const cutoff = now - windowHours * 60 * 60 * 1000;
 
+  type Row = { count: number; actions: Set<string>; lastSeenTs: number; sample: string };
   const firstSeen = new Map<string, number>(); // class -> earliest blocked ts (lifetime)
-  const windowRows = new Map<string, { count: number; actions: Set<string>; lastSeenTs: number; sample: string }>();
+  const windowRows = new Map<string, Row>();
+  const preventedRows = new Map<string, Row>(); // #571/#581: our own pre-call guard refusals
   const byAction = new Map<
     string,
     { failures: number; successes: number; winFailures: number; winSuccesses: number; classCounts: Map<string, number> }
   >();
   const newCap = () => ({ failures: 0, successes: 0, winFailures: 0, winSuccesses: 0, classCounts: new Map<string, number>() });
+
+  // One in-window frequency row, shared by the two tables so a guard row and a
+  // game row are shaped and sampled identically (a reader comparing them is
+  // comparing like with like).
+  const tally = (rows: Map<string, Row>, cls: string, action: string | undefined, ts: number, result: unknown) => {
+    const row = rows.get(cls) ?? { count: 0, actions: new Set<string>(), lastSeenTs: 0, sample: "" };
+    row.count++;
+    if (action !== undefined) row.actions.add(action);
+    if (ts >= row.lastSeenTs) {
+      row.lastSeenTs = ts;
+      if (typeof result === "string") row.sample = result;
+    }
+    rows.set(cls, row);
+  };
 
   for (const e of events) {
     const p = (e.payload && typeof e.payload === "object" ? e.payload : {}) as ActionPayload;
@@ -174,6 +204,20 @@ export function failureTaxonomy(
 
     if (outcome === "blocked") {
       const cls = failureClass(typeof p.result === "string" ? p.result : undefined);
+      // #571/#581: a PRE-CALL guard refused this step -- the game never saw it, so it
+      // is not evidence about the game and cannot make a capability broken. It
+      // leaves the failure side entirely: no firstSeen (a guard's wording is not
+      // "the game teaching us a rule"), no class row, and no per-action counter,
+      // which keeps `attempts` meaning attempts THE GAME ANSWERED. Live cost of
+      // not doing this: private #571 quoted our own complete_mission guard text
+      // as the game's across 21 calls, and #581 filed scan 28/28 straight off
+      // the #368 nearby-membership guard. Strict `=== true`, so a legacy event
+      // (no field) or a foreign payload falls through to the game path below --
+      // the pre-#571/#581 classification, unchanged.
+      if (p.guard === true) {
+        if (e.ts >= cutoff) tally(preventedRows, cls, action, e.ts, p.result);
+        continue;
+      }
       if (!firstSeen.has(cls)) firstSeen.set(cls, e.ts);
       if (action !== undefined) {
         const cap = byAction.get(action) ?? newCap();
@@ -193,16 +237,7 @@ export function failureTaxonomy(
         }
         byAction.set(action, cap);
       }
-      if (e.ts >= cutoff) {
-        const row = windowRows.get(cls) ?? { count: 0, actions: new Set<string>(), lastSeenTs: 0, sample: "" };
-        row.count++;
-        if (action !== undefined) row.actions.add(action);
-        if (e.ts >= row.lastSeenTs) {
-          row.lastSeenTs = e.ts;
-          if (typeof p.result === "string") row.sample = p.result;
-        }
-        windowRows.set(cls, row);
-      }
+      if (e.ts >= cutoff) tally(windowRows, cls, action, e.ts, p.result);
     } else if (outcome === "continue" || outcome === "plan_done") {
       if (action !== undefined) {
         const cap = byAction.get(action) ?? newCap();
@@ -214,11 +249,14 @@ export function failureTaxonomy(
     // `wait` and any unknown outcome: ignored -- pacing/holds are not attempts.
   }
 
-  const classes: FailureClassRow[] = [...windowRows.entries()]
+  const toRows = (rows: Map<string, Row>): FailureClassRow[] => [...rows.entries()]
     .map(([cls, r]) => ({
       class: cls, count: r.count, actions: [...r.actions].sort(), lastSeenTs: r.lastSeenTs, sample: r.sample,
     }))
     .sort((a, b) => b.count - a.count || a.class.localeCompare(b.class));
+
+  const classes = toRows(windowRows);
+  const prevented = toRows(preventedRows);
 
   const newClasses = classes
     .map((r) => r.class)
@@ -275,5 +313,5 @@ export function failureTaxonomy(
       && c.windowFailures / c.windowAttempts >= BROKEN_CAPABILITY_FAILURE_RATE)
     .sort((a, b) => b.attempts - a.attempts || a.action.localeCompare(b.action));
 
-  return { agentId, windowHours, classes, newClasses, brokenCapabilities };
+  return { agentId, windowHours, classes, newClasses, brokenCapabilities, prevented };
 }
