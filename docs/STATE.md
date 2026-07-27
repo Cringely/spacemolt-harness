@@ -8,7 +8,7 @@
 
 ## NOW, live status
 
-_Refreshed 2026-07-27 early. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. Capped at 500 words by `test/doc-size.test.ts`._
+_Refreshed 2026-07-27 early. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
 **RETRACTION: the council was never degraded (#582).** A stand-up finding reported it "timed out at 45 minutes (`durationMs: 2700087`)". That figure appears in no retained log; `anchors.json` records `council: {lastResult: "ok", failStreak: 0}`. The stand-up holds no general `Bash` grant, so its freshness lookups were denied and it reported the denial as absence with a plausible number attached. Report-sink half: #508, since `write-report.ts` is jailed to the state dir and the council's PAT cannot push. `core_harvest` does not exist at all (`jobs.ts:22`), #577, P0.
 
@@ -18,7 +18,7 @@ _Refreshed 2026-07-27 early. Boot from this block + `docs/backlog.md` (GitHub Is
 
 **BACKLOG TRIAGED.** 44 machine-filed findings: 11 closed against cited evidence, 27 labelled. Priority-ordered for the first time.
 
-**MERGED: PR #32 (#551 dock dead-end), 02:31Z, `81ee4d36`.** BLOCK then REVISE first. Round 1's guard was measurably inert: its streak reset on any non-matching outcome, so a `[travel_to X, dock]` plan (the shape our own digest asks for) zeroed it every cycle. 5000 ticks gave 13.9 simulated hours, 107 refusals, 0 reroutes, reproducing #580's real episode against the fix meant to stop it. Round 2 derives the streak from the durable event log, verified firing after exactly 3 refusals. #551/#580 closed; #583 carries the deferred floor-durability and keying gaps. NOT PROVEN LIVE: image published, pilot redeploy unconfirmed.
+**MERGED: PR #32 (#551 dock dead-end), 02:31Z, `81ee4d36`.** BLOCK then REVISE first. Round 1's guard was measurably inert: its streak reset on any non-matching outcome, so a `[travel_to X, dock]` plan (the shape our own digest asks for) zeroed it every cycle. 5000 ticks: 13.9 simulated hours, 107 refusals, 0 reroutes, reproducing #580's episode against the fix meant to stop it. Round 2 derives the streak from the durable event log, verified firing after exactly 3 refusals. #551/#580 closed; #583 carries the deferred floor-durability and keying gaps. NOT PROVEN LIVE: image published, pilot redeploy unconfirmed.
 
 **GUARD BLOCKS WERE COUNTED AS GAME FAILURES.** Verified in code: #571's 21 `complete_mission` "game failures" quote text our own `executor.ts:826`/`:830-832` emits, and #581's `scan` 28/28 was the #368 guard at `executor.ts:766-780`. Neither reached the wire. `failureTaxonomy` counts every `outcome: "blocked"` as a game failure, and guard prose carries no leading `code:` token, so it normalizes into something indistinguishable from a real error class. A working guard pins its own action at 100% failure and gets filed P1. PR #36 flags them at the emitter into a `prevented` bucket. #581 closed against #368; #571 retitled.
 
