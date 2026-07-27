@@ -5,16 +5,22 @@ node_modules/
 .git/
 docs/
 spike/
-# .claude/ is excluded EXCEPT the three test inputs (the complete set — grep
+# .claude/ is excluded EXCEPT the four test inputs (the complete set — grep
 # test/ for ".claude/" when changing this): agent-worktree-gate.test.ts imports
 # hooks/ and reads agents/*.md tool grants; guardrails-slice.test.ts reads
 # guardrails.md + hooks/session-start-guardrails.sh (its skip-gate checks the
-# .claude DIR, so a partial tree makes it fail loudly by design). The
-# L-20/#130 vendored-file-outside-copy-path class.
+# .claude DIR, so a partial tree makes it fail loudly by design);
+# session-start-ceremony-findings.test.ts reads settings.json to prove the
+# hook is still REGISTERED. The L-20/#130 vendored-file-outside-copy-path
+# class. Note the corollary of the partial tree: a `.claude` DIR presence gate
+# does NOT skip inside the image, so a test whose input is a .claude FILE must
+# have that file carved out here — gating it on the file itself would go inert
+# exactly when the file's contents regress.
 .claude/*
 !.claude/hooks/
 !.claude/agents/
 !.claude/guardrails.md
+!.claude/settings.json
 *.md
 .env
 agents.yaml

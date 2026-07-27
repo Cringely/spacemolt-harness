@@ -41,14 +41,19 @@ COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY src ./src
 COPY test ./test
-# The three .claude test inputs (see .dockerignore's carve-outs): the
+# The four .claude test inputs (see .dockerignore's carve-outs): the
 # worktree-isolation hook is imported by its test, the derivation tests read
-# the real agents/*.md tool grants, and the guardrails-slice test reads
+# the real agents/*.md tool grants, the guardrails-slice test reads
 # guardrails.md + the session-start hook (so the build gate also enforces the
-# always-on safety-prompt slice). Test-stage only, never copied to runtime.
+# always-on safety-prompt slice), and settings.json carries the hook
+# REGISTRATIONS that session-start-ceremony-findings.test.ts asserts — copied
+# rather than presence-gated so the build gate enforces registration too, and
+# so no gate can go inert when a registration is dropped. Test-stage only,
+# never copied to runtime.
 COPY .claude/hooks ./.claude/hooks
 COPY .claude/agents ./.claude/agents
 COPY .claude/guardrails.md ./.claude/guardrails.md
+COPY .claude/settings.json ./.claude/settings.json
 COPY agents.example.yaml ./
 RUN bun run scripts/preflight.ts && touch /app/.preflight-ok
 

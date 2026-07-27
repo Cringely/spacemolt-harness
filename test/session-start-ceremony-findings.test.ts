@@ -213,6 +213,19 @@ describe("hook constants stay in sync with src/scheduler/filing.ts", () => {
 // stayed green, and `sh` cannot execute a TypeScript file. Fixed below by
 // resolving the quoted path against the repo root and asserting the file
 // exists on disk, plus asserting the command invokes `bun`.
+// Container context (PR #29, `verify` red 2026-07-26): this read is
+// DELIBERATELY ungated. `.claude/settings.json` is carved out in
+// .dockerignore and COPYed into the Dockerfile's test stage, exactly as
+// guardrails.md already was, so the assertion runs identically on a host and
+// inside the image — and the container build gate enforces registration too.
+//
+// Do NOT "fix" a future red here by adding a presence gate. Both available
+// gates are wrong in opposite ways: gating on the FILE
+// (`skipIf(!existsSync(".claude/settings.json"))`) goes inert in precisely
+// the one case this test exists to catch, and gating on the DIRECTORY
+// (`skipIf(!existsSync(".claude"))`) never fires at all, because the image
+// carries a PARTIAL .claude tree (hooks/, agents/, guardrails.md). The only
+// correct fix is to keep the input in the image's copy path.
 const ROOT = join(import.meta.dir, "..");
 
 /** Extracts the quoted path argument from a hook command string, resolved
