@@ -159,6 +159,18 @@ const SEAMS: Seam[] = [
     anchors: [/same-error-repeat/i, /interleaved/i, "(action, target)", /hours apart/i],
   },
   {
+    guard: "dock dead-end forced reroute (#551: N dock refusals for 'no station at this location' -> plan forced to [travel_to{confirmed station system}, dock]; the streak is derived from the action stream, interleave-tolerant like #95's breaker)",
+    // The guard's only entry point. Deleting the reroute removes this method,
+    // so the marker vanishing is the guard vanishing.
+    code: { file: "src/agent/agent.ts", marker: "maybeForceDockReroute" },
+    // Anchors sit on the §4 dock-retry bullet, not the §5 backstop paragraph
+    // (§5 is sliced out by design). Each is chosen to be absent from the rest
+    // of §4, so deleting that bullet fails here rather than passing on the
+    // neighbouring station-shortlist rule's vocabulary.
+    anchors: [/map fact, not bad luck/i, /Stop retrying that `dock`/i,
+      /confirmed station system from your shortlist/i, /back-to-back/i],
+  },
+  {
     guard: "market-intelligence injection (#269: harness runs analyze_market; the planner cannot plan a query)",
     code: { file: "src/agent/agent.ts", marker: "gatherAnalyzeMarket(" },
     anchors: ["analyze_market", /market intelligence/i],
