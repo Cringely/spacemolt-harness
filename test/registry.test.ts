@@ -166,10 +166,11 @@ describe("registry", () => {
   // the vendored OpenAPI (docs/game-reference/upstream/openapi-v2.json) and
   // test/fixtures/openapi-slim.json:1387-1451 -- see the registry comments
   // for exact line anchors. Breakage caught: a wrong kind on espionage/
-  // scan_poi/submit_intel/submit_trade_intel would make a rate-limited
-  // mutation look like a free query (or vice versa), and a permissive schema
-  // on scan_poi/submit_intel/submit_trade_intel would let a malformed
-  // (missing poi_id, empty systems/stations) call burn a tick on a 400.
+  // submit_intel/submit_trade_intel would make a rate-limited mutation look
+  // like a free query (or vice versa), and a permissive schema on
+  // submit_intel/submit_trade_intel would let a malformed (empty
+  // systems/stations) call burn a tick on a 400. (scan_poi was in this group;
+  // deregistered by #552 -- see "scan_poi stays unregistered" below.)
   test("espionage, intel_status, trade_intel_status take no params and have the right kind", () => {
     for (const [name, kind] of [
       ["espionage", "mutation"],
@@ -197,14 +198,18 @@ describe("registry", () => {
     expect(a.params.safeParse({ system_id: "s", bogus: true }).success).toBe(false); // strict
   });
 
-  test("scan_poi is a mutation requiring a non-empty poi_id", () => {
-    const a = getAction("scan_poi");
-    expect(a.tool).toBe("spacemolt_intel");
-    expect(a.kind).toBe("mutation");
-    expect(a.params.safeParse({ poi_id: "sol_central" }).success).toBe(true);
-    expect(a.params.safeParse({}).success).toBe(false); // spec requires poi_id
-    expect(a.params.safeParse({ poi_id: "" }).success).toBe(false);
-    expect(a.params.safeParse({ poi_id: "sol_central", extra: 1 }).success).toBe(false); // strict
+  // scan_poi stays unregistered (issue #552): every recorded attempt failed
+  // `not_in_faction` (9/9 lifetime, 4/4 windowed -- #552 issue body), the
+  // harness has no join-faction action and no faction-membership data to
+  // gate on, so it was deleted from REGISTRY rather than left plannable for
+  // a precondition that can never be satisfied (see the registry comment).
+  // getAction on a REMOVED name throws (matches "getAction returns def and
+  // throws on unknown" above), which is the blind spot toEqual/toContain
+  // would miss on a REGISTRY array diff -- asserting the throw pins the
+  // actual planner-facing behavior (unplannable), not just "array shrank".
+  test("scan_poi stays unregistered (#552: unmet not_in_faction precondition, no gating data available)", () => {
+    expect(() => getAction("scan_poi")).toThrow();
+    expect(REGISTRY.some((a) => a.name === "scan_poi")).toBe(false);
   });
 
   test("submit_intel and submit_trade_intel are mutations requiring a non-empty array", () => {
@@ -411,20 +416,20 @@ describe("plan schema", () => {
     expect(plan.steps[0]).toEqual({ action: "cloak", params: { enable: true } });
   });
 
-  // Intel & espionage mutations (issue #229): the plannable half of the
-  // group -- a plan using each must validate and admit into PlanSchema,
-  // matching cancel_order's admission below.
-  test("espionage, scan_poi, submit_intel, submit_trade_intel are usable plan steps", () => {
+  // Intel & espionage mutations (issue #229; scan_poi removed by #552 -- it
+  // is no longer plannable, see "scan_poi stays unregistered" above): the
+  // plannable half of the group -- a plan using each must validate and admit
+  // into PlanSchema, matching cancel_order's admission below.
+  test("espionage, submit_intel, submit_trade_intel are usable plan steps", () => {
     const plan = PlanSchema.parse({
       goal: "run the faction's intel loop",
       steps: [
-        { action: "scan_poi", params: { poi_id: "sol_central" } },
         { action: "espionage", params: {} },
         { action: "submit_intel", params: { systems: [{ system_id: "sys_xxx", name: "Alpha Centauri" }] } },
         { action: "submit_trade_intel", params: { stations: [{ base_id: "confederacy_central_command" }] } },
       ],
     });
-    expect(plan.steps.length).toBe(4);
+    expect(plan.steps.length).toBe(3);
   });
 
   // cancel_order (capability audit, Workflow A 2026-07-19): the no-buyer

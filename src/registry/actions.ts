@@ -617,9 +617,10 @@ export const REGISTRY: ActionDef[] = [
       station_name: z.string().optional(),
     }).strict() },
   // Intel & espionage, the rest of the group (issue #229; query_trade_intel
-  // above landed separately and is NOT duplicated here). All 7 shapes VERIFIED
+  // above landed separately and is NOT duplicated here). All 6 shapes VERIFIED
   // against the vendored OpenAPI (docs/game-reference/upstream/openapi-v2.json)
   // and cross-checked against test/fixtures/openapi-slim.json:1387-1451.
+  // (scan_poi was a 7th shape here; deregistered by #552, see below.)
   //
   // espionage (openapi-v2.json:96888-97279): requestBody schema properties {}
   // (no fields at all) -> params none. x-is-mutation at line 97273, inside
@@ -648,12 +649,28 @@ export const REGISTRY: ActionDef[] = [
       system_id: z.string().optional(),
       system_name: z.string().optional(),
     }).strict() },
-  // scan_poi (openapi-v2.json:97790-98227): properties [poi_id], required
-  // [poi_id]. x-is-mutation at line 98224, inside this block and before the
-  // next path (submit_intel, 98227) -> mutation, matching the description's
-  // "Rate limited: This is a mutation command."
-  { tool: "spacemolt_intel", name: "scan_poi", kind: "mutation", eventLabel: "Scan POI",
-    params: z.object({ poi_id: z.string().min(1) }).strict() },
+  // scan_poi DELIBERATELY UNREGISTERED (issue #552, 5th duplicate filing of the
+  // same finding -- #491/#498/#511/#515/#552). The action needs a faction
+  // sensor facility (openapi-v2.json:97792: "Requires a faction sensor
+  // facility (build sensor_dome via faction_build)"), which itself needs the
+  // caller to BE in a faction. Production evidence (not a guess): every
+  // recorded attempt has failed with the same error class, `not_in_faction`
+  // -- 9/9 lifetime, 4/4 in the most recent 72h window (#552 issue body).
+  // `spacemolt_faction` has no registered join/create action anywhere in this
+  // REGISTRY, so the harness has no path to ever satisfy the precondition and
+  // no data source to gate on -- there is no faction-membership field in any
+  // response this codebase parses. A conditional gate (offer scan_poi to the
+  // planner only when in a faction) would need a new query action AND new
+  // digest wiring to carry membership state, all to guard a precondition that
+  // has never once been true; that is new machinery for a single action with
+  // no evidence it will ever fire (simplicity rule: complexity needs a
+  // receipt). Deletion is the smaller, correct fix -- it was in ACTION_VOCAB
+  // (digest.ts) on every planner call, so the planner picked it, burned a
+  // tick, and failed, 100% of the time. Was: { tool: "spacemolt_intel",
+  // name: "scan_poi", kind: "mutation", eventLabel: "Scan POI", params:
+  // z.object({ poi_id: z.string().min(1) }).strict() }. Re-add once
+  // spacemolt_faction gains a join/create action AND the harness can read
+  // faction membership -- until then this stays commands.md's ⬜, on purpose.
   // submit_intel (openapi-v2.json:98227-98666): properties [systems],
   // required [systems]; systems is `{type: "array", items: {type: "object"}}`
   // with no nested schema in the spec itself (the description prose lists the
