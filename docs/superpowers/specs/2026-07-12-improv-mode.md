@@ -78,6 +78,14 @@ Resources / survival:
   `travel gold_run_extraction_hub` → `dock` worked. That failure class ran 23x in 24h. Your briefing
   names the station POI id for systems where it is known; where it is not, read it off the POI list
   when you arrive — it is the POI marked `[station]`.
+- Three failed `dock` attempts with the same "No station at this location" result mean this system
+  has no station for you. That is a map fact, not bad luck. A fourth attempt returns the same
+  answer, and this class ran 68x in the worst 72h window on record before an 8h dead stall.
+  Stop retrying that `dock` and `travel_to` a confirmed station system from your shortlist
+  instead. Count those refusals across the whole run, not just back-to-back ones: the retries
+  usually arrive with a travel or a mining step in between, and every one of them still counts.
+  With an empty shortlist, say so in your plan and pick a different productive goal rather than
+  looping the same `dock`.
 
 Verify effects (never trust a success envelope):
 - Before selling, note the item's cargo quantity; after, re-query and confirm it dropped. A
@@ -535,9 +543,14 @@ The model gets the wheel, not the safety switches:
   at this location" force this.plan/cursor/planState DIRECTLY to `[travel_to{last confirmed
   station system}, dock]`, bypassing the planner entirely, when the station-geography memory
   above (#517) already holds a candidate; with no candidate it alerts loudly and stands down
-  rather than inventing a destination. The producer is a streak counter in executeOne, reset by
-  any non-matching outcome, so it is guaranteed to fire for a COMPLIANT pilot (unlike the strand
-  detector's fuelBlockedMoves, which needs a refused move the pilot may never attempt). The live
+  rather than inventing a destination. The streak is DERIVED from the persisted action stream
+  (stall-monitor.ts's dockNoStationStreak), counting refusals since the last dock that WORKED and
+  ignoring whatever else the pilot did in between — the same interleave-tolerant read #95's
+  repeat-breaker uses. It counts a COMPLIANT pilot's own retries, needing no refused move (unlike
+  the strand detector's fuelBlockedMoves, which the pilot may never trigger). PR #32's review
+  killed the first cut, an in-memory counter reset by any other outcome: the production
+  `[travel_to X, dock]` shape zeroed it every cycle, so it measured 107 refusals and 0 reroutes.
+  The live
   incident it closes: an 8h, zero-delta stall retrying `dock` at a station-less POI, ending in an
   operator-authorized `self_destruct`. This is plan-then-execute-only machinery (there is no
   planner call to bypass under improv); the paired instruction for a self-driving agent: after 2-3

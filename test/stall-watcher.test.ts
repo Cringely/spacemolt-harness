@@ -536,35 +536,172 @@ describe("dock dead-end guard (#551)", () => {
     expect(reroutes(store).length).toBe(0); // no game call invented from nothing
   });
 
-  test("TRANSIENT: two dock refusals then a different outcome resets the streak -- no forced reroute", async () => {
+  // A dock API driven by an explicit outcome script, so each test states the
+  // exact refusal/success sequence it is about. `fail` throws the live-capture
+  // refusal text; anything else docks successfully.
+  function scriptedDockApi(script: ReadonlyArray<"fail" | "ok">): GameApi {
     let attempts = 0;
-    const api: GameApi = {
+    return {
       async action(name): Promise<V2Result> {
         if (name === "dock") {
+          const outcome = script[attempts] ?? script[script.length - 1];
           attempts++;
-          if (attempts <= 2) throw new SpacemoltError("command_error", "No station at this location");
-          return { result: "Docked at Duskmere Outpost." }; // a station appears (e.g. the plan changed target)
+          if (outcome === "fail") throw new SpacemoltError("command_error", "No station at this location");
+          return { result: "Docked at Duskmere Outpost." };
         }
         return { result: "ok" };
       },
       async status(): Promise<StatusSnapshot> {
         return {
           credits: 5_000, fuel: 80, maxFuel: 130, hull: 100, maxHull: 100,
-          cargoUsed: 100, cargoCapacity: 100, docked: false, inTransit: false, systemId: "duskmere",
+          cargoUsed: 0, cargoCapacity: 100, docked: false, inTransit: false, systemId: "duskmere",
         };
       },
       async notifications() { return []; },
     };
+  }
+
+  // Retitled (PR #32 review). The old title claimed this covered the streak
+  // RESET, which it could not: with only two refusals before the success the
+  // count never reaches 3 either way, so ablating the reset left it green. What
+  // it actually pins is the BELOW-THRESHOLD boundary. The reset itself is the
+  // test below this one.
+  test("BELOW THRESHOLD: two dock refusals then a successful dock -- no forced reroute", async () => {
     const store = new Store(":memory:");
     store.savePlan("a1", dockOnlyPlan, []);
     const planner = new MockPlanner([dockOnlyPlan]);
     let now = 0;
-    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+    const agent = new Agent({
+      id: "a1", persona: "p", api: scriptedDockApi(["fail", "fail", "ok"]), store, planner, config: cfg, now: () => now,
+    });
 
     for (let i = 0; i < 12; i++) { now += 2_000; await agent.runOnce(); }
 
     expect(dockDeadEndAlerts(store).length).toBe(0);
     expect(reroutes(store).length).toBe(0);
+  });
+
+  test("RESET: 2 refusals, a dock that SUCCEEDS, then 2 more refusals -- no forced reroute (4 refusals total)", async () => {
+    const store = new Store(":memory:");
+    store.savePlan("a1", dockOnlyPlan, []);
+    const planner = new MockPlanner([dockOnlyPlan]);
+    let now = 0;
+    const agent = new Agent({
+      id: "a1", persona: "p",
+      api: scriptedDockApi(["fail", "fail", "ok", "fail", "fail", "ok"]),
+      store, planner, config: cfg, now: () => now,
+    });
+
+    for (let i = 0; i < 20; i++) { now += 2_000; await agent.runOnce(); }
+
+    // Four refusals happened, but never 3 with no successful dock between them.
+    // A dock that WORKS is positive proof a station is reachable here, and it is
+    // the one outcome that falsifies "this system has no station" -- so it, and
+    // only it, clears the count. Ablate dockNoStationStreak's `count = 0` branch
+    // and the run reaches 4 and fires.
+    const refusals = store.recentEvents("a1", 100_000).filter((e) => {
+      const p = e.payload as { action?: string; outcome?: string };
+      return e.type === "action" && p.action === "dock" && p.outcome === "blocked";
+    });
+    expect(refusals.length).toBeGreaterThanOrEqual(4);
+    expect(dockDeadEndAlerts(store).length).toBe(0);
+    expect(reroutes(store).length).toBe(0);
+  });
+
+  // --- the shapes that defeated the first cut of this guard (PR #32 review) ---
+  //
+  // The original counter lived in executeOne and reset on ANY non-matching
+  // outcome. Because a blocked step ends the plan, the next executed step is
+  // always step 0 of the next plan -- so any step AHEAD of `dock` zeroed the
+  // count every cycle and the guard could only ever fire when `dock` was step 0
+  // of three consecutive replans. Both shapes below are production shapes
+  // (src/agent/stations.ts:186 names the first one, and the station digest
+  // instructs the planner to emit exactly it), and both measured ZERO reroutes
+  // against the pre-fix code.
+
+  test("DEFEATING SHAPE [travel_to X, dock]: a no-op leading travel_to no longer hides the streak", async () => {
+    const { api, system } = deadEndApi();
+    const store = new Store(":memory:");
+    store.appendEvent({
+      agentId: "a1", ts: 0, type: "station_observed",
+      payload: { systemId: "gold_run", stationPoiId: "gold_run_hub", station: "Gold Run Extraction Hub", services: ["market"] },
+    });
+    // travel_to the system the ship is ALREADY in: travelToTick short-circuits
+    // to `continue` without a game call (executor.ts), which is what reset the
+    // old counter on every single pass.
+    const travelDockPlan: Plan = {
+      goal: "go dock and sell",
+      steps: [{ action: "travel_to", params: { system_id: "duskmere" } }, { action: "dock", params: {} }],
+    };
+    store.savePlan("a1", travelDockPlan, []);
+    const planner = new MockPlanner([travelDockPlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 30; i++) { now += 2_000; await agent.runOnce(); }
+
+    expect(dockDeadEndAlerts(store).length).toBeGreaterThanOrEqual(1);
+    const rr = reroutes(store);
+    expect(rr.length).toBeGreaterThanOrEqual(1);
+    expect((rr[0]!.payload as { toSystem: string }).toSystem).toBe("gold_run");
+    expect(system()).toBe("gold_run"); // the ship actually left the dead end
+  });
+
+  test("DEFEATING SHAPE [mine, dock]: an interleaved productive step no longer hides the streak", async () => {
+    const { api, system } = deadEndApi();
+    const store = new Store(":memory:");
+    store.appendEvent({
+      agentId: "a1", ts: 0, type: "station_observed",
+      payload: { systemId: "gold_run", stationPoiId: "gold_run_hub", station: "Gold Run Extraction Hub", services: ["market"] },
+    });
+    const mineDockPlan: Plan = {
+      goal: "mine then sell",
+      steps: [{ action: "mine", params: {} }, { action: "dock", params: {} }],
+    };
+    store.savePlan("a1", mineDockPlan, []);
+    const planner = new MockPlanner([mineDockPlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 30; i++) { now += 2_000; await agent.runOnce(); }
+
+    expect(dockDeadEndAlerts(store).length).toBeGreaterThanOrEqual(1);
+    expect(reroutes(store).length).toBeGreaterThanOrEqual(1);
+    expect(system()).toBe("gold_run");
+  });
+
+  test("LONG RUN: the [travel_to X, dock] loop reroutes within a handful of refusals, not thousands of ticks", async () => {
+    const { api } = deadEndApi();
+    const store = new Store(":memory:");
+    store.appendEvent({
+      agentId: "a1", ts: 0, type: "station_observed",
+      payload: { systemId: "gold_run", stationPoiId: "gold_run_hub", station: "Gold Run Extraction Hub", services: ["market"] },
+    });
+    const travelDockPlan: Plan = {
+      goal: "go dock and sell",
+      steps: [{ action: "travel_to", params: { system_id: "duskmere" } }, { action: "dock", params: {} }],
+    };
+    store.savePlan("a1", travelDockPlan, []);
+    const planner = new MockPlanner([travelDockPlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 1_000; i++) { now += 2_000; await agent.runOnce(); }
+
+    // The measured pre-fix behaviour on this exact shape: 5000 ticks, 107 dock
+    // refusals, 0 reroutes, ship never leaving duskmere -- which reproduced the
+    // 13.4h live recurrence (#580) against the fix meant to prevent it. The
+    // count-before-first-reroute is the assertion that actually pins that: a
+    // bare "at least one reroute fired" would still pass if the guard needed a
+    // hundred refusals to get there.
+    const events = store.recentEvents("a1", 200_000);
+    const firstReroute = events.find((e) => e.type === "steward_reroute");
+    expect(firstReroute).toBeDefined();
+    const refusalsBefore = events.filter((e) => {
+      const p = e.payload as { action?: string; outcome?: string };
+      return e.type === "action" && p.action === "dock" && p.outcome === "blocked" && e.id < firstReroute!.id;
+    });
+    expect(refusalsBefore.length).toBeLessThanOrEqual(6);
   });
 });
 

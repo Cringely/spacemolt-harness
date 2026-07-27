@@ -15,6 +15,7 @@
 
 import type { StatusSnapshot } from "../client/client";
 import { progressCountersTotal } from "./no-progress-detector";
+import { failureClass } from "../server/failures";
 
 // Layer 4 (no-progress detector). Consecutive replan boundaries carrying an
 // IDENTICAL game-state fingerprint before the detector arms backoff and flags
@@ -50,21 +51,82 @@ export const STRAND_SELF_DESTRUCT_WINDOW_MULT = 2;
 // signal is deliberately NOT isStranded's fuelBlockedMoves: that counter only
 // increments on a REFUSED MOVE, and a pilot retrying `dock` in place never
 // attempts one -- fuelBlockedMoves stayed 0 for the entire incident
-// (operator_alert class=stranded: 0 for all time, confirmed live). The streak
-// this gates is counted the same way in agent.ts's executeOne (every `dock`
-// -> blocked -> "no station at this location" outcome, reset by any other
-// outcome), but a COMPLIANT pilot generates it just by doing what it was
-// told: every failed dock attempt increments it, no refused move required.
+// (operator_alert class=stranded: 0 for all time, confirmed live). A COMPLIANT
+// pilot generates this streak just by doing what it was told, with no refused
+// move anywhere in it.
 // 3 matches STRAND_FUEL_BLOCK_THRESHOLD/BLOCKED_THRASH_THRESHOLD's own
 // convention -- enough to rule out a one-off blip, few enough to act before
 // the hunt burns the fuel tank.
 export const DOCK_NO_STATION_STREAK_THRESHOLD = 3;
 
+// The classifier token for the refusal itself. The SAME classifier the failure
+// taxonomy uses (failureClass, src/server/failures.ts) resolves the game's
+// verbatim "No station at this location" (live capture, test/fixtures/
+// market-capture-2026-07-13.json, 108 occurrences; no code prefix, no
+// PROSE_RULES match, so it falls to the tier-3 normalized-prose class) to this
+// exact token -- test/stall-watcher.test.ts's dock-dead-end suite drives that
+// literal string through the real pipeline and pins the resulting
+// classification, so a failures.ts wording change that desyncs the two goes red
+// there. Lives here rather than in agent.ts because it is a stall-INTERNAL
+// constant, like the thresholds above.
+export const DOCK_NO_STATION_CLASS = "no station at this location";
+
+/** The fields of a persisted `action` event payload this counter reads. */
+export interface ActionOutcomeRecord {
+  action?: string;
+  outcome?: string;
+  result?: string;
+}
+
 /**
- * True once `streak` consecutive dock refusals for "no station at this
- * location" have piled up in a row. Pure so the threshold boundary is
- * testable without an Agent -- see agent.ts's maybeForceDockReroute for the
- * producer-side action this predicate gates.
+ * How many `dock` -> blocked -> "no station here" refusals stand since the last
+ * dock that WORKED, over the persisted action stream in chronological order.
+ *
+ * INTERLEAVE-TOLERANT, and that is the whole point (PR #32 review). The first
+ * cut of this guard was an in-memory counter incremented in executeOne and
+ * reset by ANY other outcome. A blocked step ends the plan, so the next executed
+ * step is always step 0 of the next plan -- meaning any leading step zeroed the
+ * counter every cycle and the streak only ever advanced when `dock` was step 0
+ * of three consecutive replans. The shape the system itself asks for defeated
+ * it: the station digest (stations.ts) instructs the planner to emit
+ * `travel_to{system_id}`, so the production plan is `[travel_to X, dock]`, whose
+ * leading no-op travel short-circuits to a `continue` and reset the count on
+ * every pass. Measured on the fake API: 5000 ticks, 107 refusals, ZERO
+ * reroutes.
+ *
+ * So this counts the way issue #95's same-error repeat-breaker counts (see
+ * agent.ts's repeat-block gate): read the durable event stream and IGNORE other
+ * keys' events entirely rather than treating them as a reset. The repo has now
+ * learned this three times -- SM-4 abandoned cursor-consecutiveness for exactly
+ * this reason (agent.ts executeOne), #95 built the repeat-breaker
+ * interleave-tolerant on purpose, and stations.ts names the defeating shape.
+ *
+ * Only a dock that SUCCEEDED resets: it is positive proof a station is reachable
+ * here, which is the one observation that falsifies "this system has no
+ * station." A `wait` (transient hold) neither counts nor resets, matching #95. A
+ * dock blocked for some OTHER reason does neither: it is not a no-station
+ * refusal, and it is not proof of a station either.
+ */
+export function dockNoStationStreak(
+  payloads: ReadonlyArray<ActionOutcomeRecord | null | undefined>,
+): number {
+  let count = 0;
+  for (const p of payloads) {
+    if (!p || p.action !== "dock") continue; // other actions are INVISIBLE, never a reset
+    if (p.outcome === "blocked") {
+      if (failureClass(p.result) === DOCK_NO_STATION_CLASS) count++;
+    } else if (p.outcome === "continue" || p.outcome === "plan_done") {
+      count = 0;
+    }
+  }
+  return count;
+}
+
+/**
+ * True once `streak` dock refusals for "no station at this location" stand
+ * unresolved. Pure so the threshold boundary is testable without an Agent --
+ * see agent.ts's maybeForceDockReroute for the producer-side action this
+ * predicate gates.
  */
 export function isDockDeadEnd(input: { streak: number; threshold: number }): boolean {
   return input.streak >= input.threshold;
