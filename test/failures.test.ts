@@ -98,6 +98,11 @@ const success = (ts: number, action: string) =>
   actionEvent(ts, { action, params: {}, outcome: "continue", result: "ok" });
 const waiting = (ts: number, action: string) =>
   actionEvent(ts, { action, params: {}, outcome: "wait", result: "pending action resolving; pacing to tick" });
+// #571/#581: the shape agent.ts writes for a PRE-CALL guard refusal (executor.ts
+// guardBlock). Same event type and same `outcome` as `blocked` above -- the
+// single `guard` field is the only thing separating them, which is the point.
+const prevented = (ts: number, action: string, result: string) =>
+  actionEvent(ts, { action, params: {}, outcome: "blocked", result, guard: true });
 
 describe("failureTaxonomy: window class frequency table", () => {
   test("counts only blocked outcomes in-window, sorted desc, with actions/lastSeen/latest sample", () => {
@@ -268,6 +273,78 @@ describe("failureTaxonomy: a broken-capability finding is bounded by its window 
         windowAttempts: 1, windowFailures: 1, topClass: "invalid_item",
       },
     ]);
+  });
+});
+
+// The VERBATIM text src/agent/executor.ts:774-778 emits for the #368
+// nearby-membership guard -- the string private #581 filed as 28/28 lifetime
+// `scan` failures "from the game". The game never received those calls. Held as
+// one constant so both tests below run the SAME wording through the taxonomy
+// and the only difference between them is the `guard` field.
+const SCAN_GUARD_TEXT =
+  `scan blocked: pick a target id straight OFF the Nearby list in your briefing -- scan reaches only entities ` +
+  `AT your current location, and 'factory_belt_haze' is not on that list here in market_prime. A POI of another ` +
+  `system is a PLACE: travel_to that system first, then scan what its Nearby list shows. ` +
+  `If your briefing shows no Nearby list, there is nothing to scan here.`;
+
+describe("failureTaxonomy: a guard refusing us is not the game refusing us (#571/#581)", () => {
+  test("a mixed stream splits by the guard flag; every blocked event lands in exactly one bucket", () => {
+    const events = [
+      // Five guard refusals: enough to clear BROKEN_CAPABILITY_MIN_ATTEMPTS at
+      // a 100% rate, which is exactly how #581 became a P1 finding.
+      prevented(NOW - 6 * HOUR, "scan", SCAN_GUARD_TEXT),
+      prevented(NOW - 5 * HOUR, "scan", SCAN_GUARD_TEXT),
+      prevented(NOW - 4 * HOUR, "scan", SCAN_GUARD_TEXT),
+      prevented(NOW - 3 * HOUR, "scan", SCAN_GUARD_TEXT),
+      prevented(NOW - 2 * HOUR, "scan", SCAN_GUARD_TEXT),
+      // One real game refusal alongside it (live 2026-07-13, #146).
+      blocked(NOW - 1 * HOUR, "sell", "Sold 0 Gold Ore for 0cr, 33 unsold (no buyers)"),
+    ];
+    const t = failureTaxonomy("a1", events, NOW, 24);
+
+    // The game table carries the game's refusal and NOTHING else. toStrictEqual
+    // on the whole mapped array, not toContain: toContain is count-blind and
+    // would pass while the five guard rows sat in this table beside it.
+    expect(t.classes.map((r) => [r.class, r.count, r.actions])).toStrictEqual([
+      [NO_BUYERS_CLASS, 1, ["sell"]],
+    ]);
+    // ...and the guard rows are all in the other table, sampled with the raw
+    // guard text so a reader can see whose sentence it is.
+    expect(t.prevented.map((r) => [r.count, r.actions, r.sample])).toStrictEqual([
+      [5, ["scan"], SCAN_GUARD_TEXT],
+    ]);
+    // Conservation: 6 blocked events in, 6 counted across the two tables. This
+    // is what makes "exactly one bucket" a real claim -- the two assertions
+    // above are each satisfiable by a double-count.
+    const counted = [...t.classes, ...t.prevented].reduce((n, r) => n + r.count, 0);
+    expect(counted).toBe(6);
+
+    // The finding the split exists to stop. 5/5 at 100% lifetime AND in-window
+    // clears every broken-capability gate; only the guard flag keeps `scan` out.
+    expect(t.brokenCapabilities).toStrictEqual([]);
+    // A guard's own wording is our sentence, never "the game teaching us a rule".
+    expect(t.newClasses).toStrictEqual([NO_BUYERS_CLASS]);
+  });
+
+  test("the SAME text without the flag is still a game failure (stores predate the field)", () => {
+    // Byte-identical prose to the test above, written by the pre-#571/#581 emitter.
+    // Absence of `guard` has to keep meaning game-or-legacy: a store full of
+    // history would otherwise silently reclassify the day this shipped. This is
+    // also what pins the fix to the FLAG rather than to the wording -- the
+    // rejected alternative (regexing our guard prose inside failures.ts) would
+    // pass the test above and fail this one.
+    const events = [
+      blocked(NOW - 6 * HOUR, "scan", SCAN_GUARD_TEXT),
+      blocked(NOW - 5 * HOUR, "scan", SCAN_GUARD_TEXT),
+      blocked(NOW - 4 * HOUR, "scan", SCAN_GUARD_TEXT),
+      blocked(NOW - 3 * HOUR, "scan", SCAN_GUARD_TEXT),
+      blocked(NOW - 2 * HOUR, "scan", SCAN_GUARD_TEXT),
+    ];
+    const t = failureTaxonomy("a1", events, NOW, 24);
+    expect(t.prevented).toStrictEqual([]);
+    expect(t.classes.map((r) => [r.count, r.actions])).toStrictEqual([[5, ["scan"]]]);
+    expect(t.brokenCapabilities.map((b) => [b.action, b.attempts, b.failures, b.windowAttempts]))
+      .toStrictEqual([["scan", 5, 5, 5]]);
   });
 });
 

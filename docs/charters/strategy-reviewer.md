@@ -75,6 +75,9 @@ must not swallow its window.
      as a 72h rate for an action with zero attempts in that window, and six duplicate issues
      followed (#518). An action absent from this list is not attempted or not broken; it is
      never a finding.
+   - PREVENTED classes (`prevented`, #571/#581): blocks our own pre-call guards raised, so the game
+     never saw the call — a planner-quality signal (the planner proposed a doomed step, and the
+     guard did its job), never a broken capability and never a game refusal to quote.
 
 ## Adapt-lever ladder (smallest lever that fits the finding)
 

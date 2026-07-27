@@ -163,6 +163,42 @@ describe("Agent.runOnce", () => {
     expect((actionEvent.payload as { result?: string }).result).toBe("ok"); // stubApi's action() returns {result:"ok"}
   });
 
+  // #571/#581: the flag executor.ts sets on a PRE-CALL guard refusal has to survive
+  // onto the persisted action event, because that event is the only thing
+  // src/server/failures.ts ever sees. Without this the two halves can be right
+  // and the seam between them silently dropped -- which is precisely how a
+  // working guard got filed as a broken capability (#571, #581).
+  test("a guard refusal's action event is flagged; a real game outcome's is not", async () => {
+    const { api } = stubApi(); // docked: false, so withdraw is guard-refused
+    const store = new Store(":memory:");
+    const agent = new Agent({
+      id: "a1", persona: "p", api, store,
+      planner: new MockPlanner([{ goal: "g", steps: [
+        { action: "mine", params: {} },                                  // reaches the game
+        { action: "withdraw", params: { item_id: "iron_ore", quantity: 1 } }, // never does
+      ]}]),
+      config, now: () => 1_000_000,
+    });
+    await agent.runOnce(); // plan
+    await agent.runOnce(); // mine  -> continue
+    await agent.runOnce(); // withdraw -> guard refusal
+
+    const payloads = store.recentEvents("a1", 50)
+      .filter((e) => e.type === "action")
+      .map((e) => e.payload as { action?: string; outcome?: string; guard?: unknown });
+    const mine = payloads.find((p) => p.action === "mine")!;
+    const withdraw = payloads.find((p) => p.action === "withdraw")!;
+
+    expect(withdraw.outcome).toBe("blocked");
+    expect(withdraw.guard).toBe(true);
+    // The negative half matters as much: `toBe(undefined)` would also pass on a
+    // key written as an explicit undefined, so assert the key is genuinely
+    // ABSENT. Absence is what failures.ts reads as "the game refused us", and
+    // every event already in a production store is exactly this shape.
+    expect(Object.hasOwn(mine, "guard")).toBe(false);
+    expect(mine.outcome).toBe("continue");
+  });
+
   test("statusSummary passed to the planner is a compact summary, not a JSON dump", async () => {
     const { agent, planner } = makeAgent([miningPlan]);
     await agent.runOnce();

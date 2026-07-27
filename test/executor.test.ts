@@ -128,6 +128,7 @@ describe("executeTick", () => {
       kind: "blocked",
       reason: "withdraw blocked: you must be DOCKED at a station with storage service. Plan dock first, then withdraw{item_id=...}.",
       resultText: "withdraw blocked: you must be DOCKED at a station with storage service. Plan dock first, then withdraw{item_id=...}.",
+      guard: true, // #571/#581: WE refused this, the game never saw it
     });
     expect(calls.length).toBe(0); // no withdraw request was made
   });
@@ -162,6 +163,7 @@ describe("executeTick", () => {
       kind: "blocked",
       reason: "no mining equipment fitted; a mine action needs a mining laser module",
       resultText: "no mining equipment fitted; a mine action needs a mining laser module",
+      guard: true, // #571/#581: WE refused this, the game never saw it
     });
     expect(calls.length).toBe(0); // no mine request was made
   });
@@ -214,6 +216,7 @@ describe("executeTick", () => {
       kind: "blocked",
       reason: "accept_mission needs a template_id (or id) copied from the mission listing in your briefing",
       resultText: "accept_mission needs a template_id (or id) copied from the mission listing in your briefing",
+      guard: true, // #571/#581: WE refused this, the game never saw it
     });
     expect(calls.length).toBe(0); // the doomed call was never sent
   });

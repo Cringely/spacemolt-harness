@@ -47,7 +47,13 @@ export interface StrategyReviewDump {
   generatedAt: number; // epoch ms this dataset was assembled
   windowHours: number;
   heartbeats: HeartbeatPoint[]; // progress_heartbeat inside the window, ascending
-  failures: FailureTaxonomy; // deterministic taxonomy (window applied inside)
+  // Deterministic taxonomy, window applied inside. Carried WHOLE and typed by
+  // FailureTaxonomy rather than field-picked, so a new signal reaches the
+  // reviewer without a second shape to keep in sync -- that is how #571/#581's
+  // `failures.prevented` (blocks OUR pre-call guards authored, never sent to
+  // the game) arrives here. The charter's Failure-mining section says what to
+  // do with it: a planner-quality signal, never a broken capability.
+  failures: FailureTaxonomy;
 }
 
 type Row = { id: number; agent_id: string; ts: number; type: string; payload: string };
