@@ -87,11 +87,11 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [x] G3: Pilot can transact (fuel, buy, mission flow working)
 - [x] G4: Verified economic win [in progress] — trend +1,222cr/20h, fuel-chain fixed
 - [ ] G5: Economic awareness — #93 (market parsing) closed; #112 (profitability) + #142 (econ panel) open
-- [ ] G6: Team outlives session — scheduler (#114) remains; a governance-ceremony audit found one ceremony (`core_harvest`) was never wired in and one (council) degraded (M-51)
+- [ ] G6: Team outlives session — scheduler (#114) deployed and live; stages 2–4 remain (dead-man, dispatch enable, charter amend gate)
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: PR #27 merged a reversible planner fallback (#240 Task 1); PR #30 fixed the backlog generator to stop regenerating against the wrong repo (#550). PR #28 (agent-harness-core realignment) and PR #29 (ceremony-findings visibility, still under revision after review found its hook never fired from the PM's own clone) are open. A ceremony audit found the largest 72h failure class (`dock`'s "no station" error, #551) had gone unactioned because most ceremony-filed issues carried no priority label; a fix for #551 is in progress. The pilot runs on `codex-subscription/gpt-5.6-terra` (both planner seats): 42 of 42 plans served over a 4h window, which shows the fallback serves reliably but not yet whether it matches the prior Claude-subscription planner economically. See M-51 in [docs/milestones.md](docs/milestones.md).
+Current work: batch cluster merged 2026-07-27. PR #29 surfaced machine-filed ceremony issues at session start (finding P2 default label now automatic, hook in both code and private repos); PR #32 closed #551/#580 (dock reroute on 3 refusals, verified off live evidence 5000 ticks with 107 refusals and 0 reroutes pre-fix → 3 refusals → reroute post-fix); PR #36 split guard refusals from game failures in telemetry, closing #368/#581 as false findings (both were guard-only, not real game failures). G6 status: scheduler stage 1 live on production host (tick poller, health gates, three finding-filing jobs jailed, charter tamper-fenced), stages 2–4 (dead-man, dispatch enable, amend gate) deferred. G4 still unmoved since 2026-07-14; wasted planner calls on doomed mission steps remain the metric (49/72h toward 0). See the NOW block in [docs/STATE.md](docs/STATE.md) and M-51+ in [docs/milestones.md](docs/milestones.md).
 
 The major-milestone timeline (M-01..M-51) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
