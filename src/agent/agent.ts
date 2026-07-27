@@ -1579,9 +1579,12 @@ export class Agent {
    * sits behind the plannerBackoffUntil check and a backed-off pilot is exactly
    * the one that needs this reroute.
    *
-   * The plan-state gate below is a cost guard, not a detection rule: the read
-   * only happens on a tick whose plan is already blocked on this exact class,
-   * which is every tick that follows a refusal and almost none of the others.
+   * The plan-state gate below does two jobs, not one: it is a cost guard (the
+   * read only happens on a tick whose plan is already blocked on this exact
+   * class, which is every tick that follows a refusal and almost none of the
+   * others), and it is also what stops a stale streak from hijacking a plan
+   * that is currently running for an unrelated reason -- removing the gate
+   * leaves the suite green precisely because nothing else blocks that case.
    *
    * Bounded by the floor timestamp rather than a boolean latch: on firing, the
    * floor moves past the refusals this reroute consumed, so the derived count
@@ -1594,9 +1597,12 @@ export class Agent {
     const events = this.store.eventsByTypeSince(this.id, "action", this.dockDeadEndFloorTs);
     const streak = dockNoStationStreak(events.map((e) => e.payload as ActionEventPayload | null));
     if (!isDockDeadEnd({ streak, threshold: DOCK_NO_STATION_STREAK_THRESHOLD })) return;
-    // eventsByTypeSince is inclusive (ts >= cutoff), so +1ms is what actually
-    // excludes the refusals this fire consumed -- load-bearing when the clock is
-    // coarse or injected, where several events can share one millisecond.
+    // eventsByTypeSince is inclusive (ts >= cutoff). +1ms is meant to exclude
+    // the refusals this fire just consumed when the clock is coarse or
+    // injected and several events can share one millisecond -- ASSUMED, not
+    // verified: ablating this to plain this.now() leaves the suite green, so
+    // no test here currently exercises the same-millisecond collision (PR #32
+    // review, finding 4).
     this.dockDeadEndFloorTs = this.now() + 1;
 
     const target = knownStationSystems(this.stationSightings, status.systemId)[0];
@@ -1609,8 +1615,12 @@ export class Agent {
     if (!target) return; // no known destination to route to -- alert only, fail safe
 
     const plan: Plan = {
-      goal: `Forced reroute (#551): ${streak} dock refusals at ` +
-        `${status.systemId ?? "current position"} -- routing to the last confirmed station system.`,
+      // No location claim here (PR #32 review, finding 2): dockNoStationStreak
+      // has no location key or time bound, so "N refusals AT this system"
+      // would assert something the computation never establishes -- a probe
+      // with 2 injected historical refusals plus 1 fresh one still fired.
+      goal: `Forced reroute (#551): ${streak} dock refusals -- ` +
+        `routing to the last confirmed station system.`,
       steps: [
         { action: "travel_to", params: { system_id: target.systemId } },
         { action: "dock", params: {} },

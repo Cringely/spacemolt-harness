@@ -531,7 +531,12 @@ describe("dock dead-end guard (#551)", () => {
     for (let i = 0; i < 20; i++) { now += 2_000; await agent.runOnce(); }
 
     const fired = dockDeadEndAlerts(store);
-    expect(fired.length).toBeGreaterThanOrEqual(1);
+    // Pins the COUNT, not just presence (PR #32 review, finding 1). The floor
+    // timestamp at agent.ts's maybeForceDockReroute is what keeps this at
+    // exactly one alert per 3-refusal wedge; ablating it to a no-op left the
+    // streak un-reset so every subsequent tick re-fired (195 alerts over 200
+    // ticks, measured) and toBeGreaterThanOrEqual(1) stayed green throughout.
+    expect(fired.length).toBe(1);
     expect((fired[0]!.payload as { reroutedTo: string | null }).reroutedTo).toBeNull();
     expect(reroutes(store).length).toBe(0); // no game call invented from nothing
   });
