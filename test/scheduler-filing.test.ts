@@ -50,6 +50,11 @@ const finding = (n = 1) => ({
   body: `finding body ${n}`,
 });
 
+// A `gh issue create`/`create` call carries repeated `--label X` pairs; this
+// pulls every label value out in argument order (indexOf alone only finds
+// the first, which would blind-spot a missing SECOND label).
+const labelsOf = (args: string[]) => args.reduce<string[]>((acc, a, i) => (a === "--label" ? [...acc, args[i + 1]!] : acc), []);
+
 describe("finding filer (C2)", () => {
   // Catches: the 2026-07-22 silent-break — the filer's dedup/create/comment
   // calls resolved against the checkout's default remote (public repo after
@@ -128,6 +133,22 @@ describe("finding filer (C2)", () => {
     expect(args.body).toContain("filed-by: scheduler/standup cycle standup-1752800000000");
   });
 
+  // Catches: the 2026-07-26 invisibility bug — a `machine-filed`-only issue
+  // is outside the PM's priority-ordered backlog read (#551-554, sole label
+  // `machine-filed`). Every CREATED issue must ALSO carry a priority label,
+  // with no caller input at all. LITERAL "priority:P2" on purpose (R2, PR
+  // #29 review): asserting against the DEFAULT_TRIAGE_LABEL constant itself
+  // would pass no matter what that constant's value is set to — "", a
+  // nonexistent "priority:P9", or "machine-filed" (a dup label) all made the
+  // whole suite green before this pin existed. A literal fails on all three.
+  test("created issue carries the fixed priority:P2 label with no caller input", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    fileFinding(gh, dir, finding());
+    const create = calls.find((c) => c.args[1] === "create")!;
+    expect(labelsOf(create.args)).toEqual(["machine-filed", "priority:P2"]);
+  });
+
   // Catches: the ON-ARRIVAL filing defect (#114) — a job that produced the
   // finding body as a STRING (there is no outbox file-jail to write to) must
   // file successfully. The whole capability was dead when the only file-CREATING
@@ -165,6 +186,10 @@ describe("finding filer (C2)", () => {
     expect(creates.length).toBe(FINDINGS_PER_CYCLE_CAP + 1); // 5 findings + 1 summary
     const summary = creates[creates.length - 1]!;
     expect(summary.args[summary.args.indexOf("--title") + 1]).toContain("over cap");
+    // The cap-summary issue is also outside the priority-ordered read unless
+    // it carries a priority label — same visibility bug as the per-finding
+    // path. Literal for the same reason as the pin above (R2).
+    expect(labelsOf(summary.args)).toEqual(["machine-filed", "priority:P2"]);
     // Seventh: appends to the SAME summary issue — no second summary.
     const seventh = fileFinding(gh, dir, finding(7));
     expect(seventh.outcome).toBe("capped");
