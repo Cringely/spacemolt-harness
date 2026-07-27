@@ -1,14 +1,15 @@
 // Batch C / Task C3 (#114): spawn composer + runner. Offline: injected
 // spawner/clock/fs, zero live `claude -p` spawns, zero tokens.
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readActiveCycle } from "../src/scheduler/filing";
+import type { GitRunner } from "../src/scheduler/git";
 import { JOBS, type JobDef } from "../src/scheduler/jobs";
 import { POLICY_PATHS } from "../src/scheduler/policy-paths";
-import { loadAnchors } from "../src/scheduler/state";
 import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
+import { loadAnchors } from "../src/scheduler/state";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
@@ -27,6 +28,29 @@ const SENTINELS = {
 
 const CHARTER_TEXT = "# Charter: test\r\n\ttabs — em dash, `backticks`\nNEVER merge.\n";
 
+const TEST_PINNED_SHA = "test-pinned-sha";
+
+// #585: runJob now creates an ephemeral worktree per run via deps.gitRunner
+// instead of reading the shared checkout directly. These tests care about
+// runJob's OWN contract (charter composition, secrets, timeout, logging),
+// not real git worktree semantics (covered separately in
+// test/scheduler-worktree.test.ts against a real repo), so this fake
+// simulates "git worktree add" with a real `cpSync` of the fixture checkout
+// into the target path — enough for runJob's real fs.readFileSync calls to
+// find the charter/STATE.md fixtures created below. Remove/prune are no-ops
+// here: runJob's own removeJobWorktree always backstops with a real rmSync
+// regardless of what the git call returns, so cleanup still happens for real.
+function fakeWorktreeGit(checkoutDir: string): GitRunner {
+  return (args) => {
+    if (args[0] === "worktree" && args[1] === "add") {
+      const path = args[args.length - 2]!;
+      cpSync(checkoutDir, path, { recursive: true });
+      return { stdout: "", exitCode: 0 };
+    }
+    return { stdout: "", exitCode: 0 }; // remove/prune — no-op, fs backstop does the real work
+  };
+}
+
 function makeDirs(stateNowBody = "now-block-content-marker") {
   const checkoutDir = tmp("sched-checkout-");
   const secretsDir = tmp("sched-secrets-");
@@ -43,7 +67,7 @@ function makeDirs(stateNowBody = "now-block-content-marker") {
   for (const [name, value] of Object.entries(SENTINELS)) {
     writeFileSync(join(secretsDir, name), `${value}\n`); // trailing newline like a real secret file
   }
-  return { checkoutDir, secretsDir, stateDir };
+  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), pinnedSha: TEST_PINNED_SHA };
 }
 
 interface SpawnCall {
@@ -123,6 +147,22 @@ describe("spawn composer + runner (C3)", () => {
     expect(outcome.result).toBe("ok");
     expect(calls.length).toBe(1);
     expect(calls[0]!.opts.stdin).toContain("STATE NOW MISSING — flag this in your report");
+  });
+
+  // Catches (#585): a job's cwd regressing back to the shared control clone
+  // instead of a disposable per-run worktree — the whole point of the fix.
+  // Also proves the worktree is actually removed once the job finishes: a
+  // leaked ephemeral directory per run is exactly the unbounded-disk-growth
+  // failure the reap/removal contract exists to prevent.
+  test("job runs in a fresh per-run worktree under stateDir/worktrees, removed after it finishes", async () => {
+    const dirs = makeDirs();
+    const { spawner, calls } = fakeSpawner(0);
+    const outcome = await runJob(job("standup"), { spawner, clock: () => 1_000_000, ...dirs });
+    expect(outcome.result).toBe("ok");
+    const cwd = calls[0]!.opts.cwd;
+    expect(cwd).toContain(join(dirs.stateDir, "worktrees"));
+    expect(cwd).not.toBe(dirs.checkoutDir); // never the shared control clone
+    expect(existsSync(cwd)).toBe(false); // removed once the run completed
   });
 
   // Catches: a secret on a command line (security-baseline: env-only; argv is
