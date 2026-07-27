@@ -18,7 +18,7 @@ _Refreshed 2026-07-27 early. Boot from this block + `docs/backlog.md` (GitHub Is
 
 **BACKLOG TRIAGED.** 44 machine-filed findings: 11 closed against cited evidence, 27 labelled. Priority-ordered for the first time.
 
-**IN FLIGHT.** PR #32 (#551 dock dead-end) under independent review, testing `N=3` against #580, a 13.4h recurrence longer than #551's 8.5h.
+**BLOCKED: PR #32 (#551 dock dead-end).** Review measured the guard inert in real plan shapes. `dockNoStationStreak` resets on any non-matching outcome, and a blocked step ends the plan, so the counter only advances when `dock` is step 0 of three consecutive replans. A `[travel_to X, dock]` plan, which the station digest instructs the planner to emit, zeroes it every cycle: 5000 ticks, 13.9 simulated hours, 107 dock refusals, 0 reroutes. `N=3` is not the defect. Smallest fix is to hang the reroute off the existing interleave-tolerant repeat-breaker at `agent.ts:1228-1268` instead of adding a second counter.
 
 **PILOT, verified 2026-07-26T01:54Z.** Both planner seats on `codex-subscription/gpt-5.6-terra`: 42 of 42 plans over 4h. Credits 98,105→98,557; missions 84→95. Proves codex serves; does NOT prove it matches sonnet economically (no clean baseline, since the prior window's pilot was stranded). #240 Task 3 answers that.
 
