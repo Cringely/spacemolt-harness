@@ -92,7 +92,8 @@ export const JOBS: JobDef[] = [
     timeoutMs: 30 * MIN,
     // Store access is the ONE thin caller (#114 A1): the scheduler runs on a
     // separate host, the store lives in a container on another host, so the
-    // three fixed ops (gate/mark/dump) cross an HTTP boundary as authenticated routes on
+    // four fixed ops (gate/mark/dump, plus steer since #495) cross an HTTP
+    // boundary as authenticated routes on
     // the harness's own server (scripts/strategy-store.ts). NO
     // `Bash(ssh *)`/`Bash(docker exec *)` and NO local gate/mark grants:
     // nothing here can run an arbitrary command on any host -- that surface is
@@ -106,8 +107,15 @@ export const JOBS: JobDef[] = [
     // #490: dropped the `Bash(gh *)` wildcard — neither the charter nor this
     // job's work order (spawn.ts) ever calls gh directly. The issue-bump
     // lever routes through file-finding.ts's own dedup (bump-not-refile), and
-    // the steer lever is a store-side note, not a gh call. No gh grant at all
-    // is the correct-and-smallest fix here, not a narrowed read list.
+    // the steer lever (#495) is a FOURTH op on the strategy-store grant right
+    // above — an authenticated POST to /api/store/:agentId/steer carrying the
+    // instruction text as a single base64 argv token, never a gh call. (The
+    // comment here previously called the steer "a store-side note"; it was
+    // written while the lever had no transport at all, and a note is ladder
+    // step 3, a different lever entirely.) No gh grant at all is still the
+    // correct-and-smallest fix here, not a narrowed read list — and the steer
+    // op needs no allowedTools change, since `Bash(bun scripts/strategy-store.ts *)`
+    // already matches the whole single-line command (L-39).
     allowedTools: [
       "Read",
       "Grep",

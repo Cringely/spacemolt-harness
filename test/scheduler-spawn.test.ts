@@ -347,6 +347,39 @@ describe("spawn composer + runner (C3)", () => {
     expect(prompt).not.toContain("forced-command key");
   });
 
+  // Catches (#495) the same seam one lever over: the work order telling the
+  // strategy job the steer lever is UNAVAILABLE after the transport shipped.
+  // That text stood from the A1 pivot (2026-07-19) to #495 and was correct
+  // then; left in place afterwards it silently disables the sharpest lever
+  // the job holds, with every offline test still green. Two files with no
+  // shared schema forcing agreement: this prose, and the route in
+  // src/server/server.ts + scripts/strategy-store.ts.
+  test("strategy work order advertises the steer lever as USABLE and names the real command", () => {
+    const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
+    expect(prompt).toContain("bun scripts/strategy-store.ts steer");
+    expect(prompt).toContain("--text-b64");
+    expect(prompt).toContain("500 characters"); // the bound the server enforces
+    expect(prompt).toContain("#527"); // the query-action content rule
+    // The dead advisories, gone. Both are exact strings from the pre-#495
+    // work order, so this fails the moment either is restored.
+    expect(prompt).not.toContain("UNAVAILABLE");
+    expect(prompt).not.toContain("Do NOT attempt a steer");
+  });
+
+  // Catches the L-39 failure the whole base64/one-line convention exists to
+  // prevent: a work order teaching a command form the closed allowedTools
+  // list does not match, which the headless permission layer DENIES at run
+  // time while every offline test stays green. Derives the granted prefix
+  // from the grant string itself rather than hardcoding it, so renaming the
+  // script in one file and not the other turns this red.
+  test("the steer command the work order teaches is covered by the strategy job's existing grant", () => {
+    const grant = "Bash(bun scripts/strategy-store.ts *)";
+    expect(job("strategy").allowedTools).toContain(grant);
+    const grantedPrefix = grant.slice("Bash(".length, -" *)".length); // "bun scripts/strategy-store.ts"
+    const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
+    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --text-b64`);
+  });
+
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
   // Steward keeps bare Edit for its docs remit, and an on-disk charter edit
   // bypasses the commit-time D3 fence — the deny (deny wins over allow;
