@@ -70,6 +70,14 @@ COPY .claude/hooks ./.claude/hooks
 COPY .claude/agents ./.claude/agents
 COPY .claude/guardrails.md ./.claude/guardrails.md
 COPY .claude/settings.json ./.claude/settings.json
+# The D3 policy-path fence's pre-commit shim: test/policy-path-gate.test.ts
+# copies it into a temp git repo and drives the real hook. Its describe block
+# is gated on git being present, so before the install above it never ran here
+# and the missing file never showed — the same L-20/#130 class the
+# .dockerignore comment names, and it answers the same way: COPY the input in
+# rather than presence-gate the test, or the gate goes inert exactly when the
+# fence regresses. Test-stage only, never copied to runtime.
+COPY .githooks ./.githooks
 COPY agents.example.yaml ./
 RUN bun run scripts/preflight.ts && touch /app/.preflight-ok
 
