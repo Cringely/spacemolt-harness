@@ -4,11 +4,11 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-07-26 (PR #27/#30 merged; PR #28/#29 open; ceremony audit found council degraded and `core_harvest` never implemented; pilot on `codex-subscription/gpt-5.6-terra`, 42/42 plans over 4h). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-07-28 (PR #32/#33/#36/#37/#40 merged; per-job worktree isolation complete, scheduler corruption-proof; backlog now 108 open issues). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-07-27 early. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
+_Refreshed 2026-07-28. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
 **RETRACTION: the council was never degraded (#582).** A stand-up finding reported it "timed out at 45 minutes (`durationMs: 2700087`)". That figure appears in no retained log; `anchors.json` records `council: {lastResult: "ok", failStreak: 0}`. The stand-up holds no general `Bash` grant, so its freshness lookups were denied and it reported the denial as absence with a plausible number attached. Report-sink half: #508, since `write-report.ts` is jailed to the state dir and the council's PAT cannot push. `core_harvest` does not exist at all (`jobs.ts:22`), #577, P0.
 
@@ -26,7 +26,9 @@ _Refreshed 2026-07-27 early. Boot from this block + `docs/backlog.md` (GitHub Is
 
 **DIRECTION (#567).** G4 unmoved since 2026-07-14 while 7 of the last 12 decisions were scheduler/ceremony work. Scoping killed the "one precondition class" theory: two of the five candidates were guard artifacts. What remains is #553 (the one real pre-call-knowable precondition, already fetched then failed open at `executor.ts:820`), #571's shortfall line, and deleting `scan_poi` from the registry (#552 needs faction plus a 600k Sensor Dome; filed five times). Metric is wasted planner calls on doomed mission steps, 49/72h toward 0, rather than any credit figure.
 
-**THEN.** #534, #535, #537, #538, #529 and the rest are tracked in `docs/backlog.md`.
+**MERGED: PR #40 (#585 shared-checkout corruption), 00:33Z, `53c6d85`.** The shared scheduler checkout is now read-only from a ceremony job's perspective — every job runs in its own ephemeral `git worktree` pinned to a commit, so no job's git mistakes (branch/commit/push failure) can leave it stranded or diverged. Three prior incidents (#413 #459 and a 2026-07-27 recurrence filed as #585) traced to the shared checkout becoming corrupted by a job that committed without isolation; every prior fix hardened a consumer of that broken state. The operator chose to remove the shared mutable state instead of adding a fourth guard. G6 advances: per-job worktree isolation complete, scheduler self-hardened at the infrastructure level.
+
+**THEN.** #534, #535, #537, #538, #529 and 103 more are tracked in `docs/backlog.md` (108 open issues).
 
 ## Standing operational facts
 
