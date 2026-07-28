@@ -63,6 +63,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The bun slim image ships no git, and several tests drive a real git
+      # against a real temp repo (test/scheduler-worktree.test.ts for #585,
+      # the #413/#459 scheduler script tests). Without it the #585 five die on
+      # a spawn ENOENT — the reason main went red from PR #40 (2026-07-28).
+      # AFTER checkout on purpose: actions/checkout falls back to the REST
+      # tarball when git is absent, so this adds the binary without also
+      # turning the workspace into a git repo, which would change what the
+      # repo-shaped tests see. Same install as the Dockerfile's test stage.
+      - name: Install git (real-git tests need it; absent from oven/bun slim)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git
+          rm -rf /var/lib/apt/lists/*
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
