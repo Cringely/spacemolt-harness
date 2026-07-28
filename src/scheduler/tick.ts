@@ -192,10 +192,12 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
     writeFileSync(join(deps.stateDir, LAST_TICK_FILE), String(now));
 
     // #585: reap any ephemeral worktree left behind by a tick that crashed or
-    // was killed mid-job, BEFORE evaluating or firing anything this tick. Safe
-    // here specifically because acquireLock above already guarantees single-
-    // tick concurrency — anything under worktreesRoot at this point cannot be
-    // a live sibling tick's in-progress worktree.
+    // was killed mid-job, BEFORE evaluating or firing anything this NEXT
+    // SUCCESSFULLY-ACQUIRED tick. Safe because acquireLock above already
+    // guarantees single-tick concurrency. On a hard crash (SIGKILL) this
+    // wrapper's own finally{releaseLock} never runs, so reap waits out the
+    // existing LOCK_STALE_MS (3h) stale-lock window like every other crash
+    // recovery here — not a new risk, just this comment's old claim was wrong.
     const worktreesReaped = reapStaleWorktrees(deps.gitRunner, deps.stateDir);
 
     // Stage-4 usage capture (#183): one low-frequency poll from the tick path,
