@@ -179,12 +179,20 @@ describe("spawn composer + runner (C3)", () => {
     expect(call.opts.stdin.includes(SENTINELS.claude_oauth_token)).toBe(false); // nor in the prompt
   });
 
-  // Catches: the instruct bearer regressing back into ANY job's env. #114 A1
-  // removed its only transport (the docker-exec steer), so a secret with no
-  // use-path is pure exfil risk (a prompt-injected run with `Bash(gh *)` could
-  // leak an env-held token via a gh comment). No job may hold it until the
-  // steer-transport follow-up restores a real use-path.
-  test("no job's env carries INSTRUCT_BEARER (A1 removed the strategy steer transport, #114)", async () => {
+  // Catches: the instruct bearer regressing back into ANY job's env. A secret
+  // with no use-path is pure exfil risk (a prompt-injected run with `Bash(gh *)`
+  // could leak an env-held token via a gh comment).
+  //
+  // No job may hold it, PERMANENTLY -- there is no longer an expiry condition
+  // on this rule. #114 A1 removed the docker-exec steer, and the earlier version
+  // of this comment said "until the steer-transport follow-up restores a real
+  // use-path". That follow-up is #495, and it deliberately did NOT restore
+  // INSTRUCT_BEARER: the steer rides the store bearer the strategy job already
+  // holds (STORE_BEARER, `POST /api/store/:agentId/steer`), so INSTRUCT_BEARER
+  // has no use-path on any job and never gets one by this route. Left as
+  // written, that sentence read as pre-granted permission for the next agent to
+  // put the token back, which is the exact regression the assertion prevents.
+  test("no job's env carries INSTRUCT_BEARER (the #495 steer rides STORE_BEARER, so this never expires)", async () => {
     for (const j of JOBS) {
       const dirs = makeDirs();
       const { spawner, calls } = fakeSpawner(0);
