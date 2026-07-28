@@ -37,6 +37,22 @@ RUN bun install --frozen-lockfile
 
 # ---- test: build gate. No path to the runtime stage skips this. ----
 FROM deps AS test
+# git: several tests drive a REAL git against a REAL temp repo, because the
+# thing under test is a git-semantics claim a string-matching fake cannot
+# prove — test/scheduler-worktree.test.ts (#585 ephemeral worktrees), plus the
+# #413/#459 scheduler shell-script tests. The bun slim base ships no git, so
+# those five #585 tests died on a spawn ENOENT (main red from PR #40 onward,
+# 2026-07-28) and the older ones silently skipped. Installed HERE, in the
+# build gate only: `runtime` is a separate FROM ${NODE_IMAGE} and takes just
+# /app/.preflight-ok from this stage, so git cannot reach the shipped image
+# (test/image-contents.test.ts pins what runtime holds). Version deliberately
+# unpinned, matching the runtime stage's ca-certificates install below —
+# Debian's archive keeps only the current point release, so a pinned
+# `git=<version>` breaks the build on the next security update; the pinned
+# base-image digest is what fixes the package set.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY src ./src

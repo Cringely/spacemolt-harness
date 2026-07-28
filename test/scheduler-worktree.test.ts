@@ -27,7 +27,18 @@ function realGit(cwd: string): GitRunner {
 
 function run(cwd: string, args: string[]): void {
   const res = spawnSync("git", args, { cwd, encoding: "utf8" });
-  if (res.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${res.stderr}`);
+  // Two different failures wear the same exit code here. `res.error` is set
+  // when the process never STARTED (git missing from PATH → ENOENT), and then
+  // `stderr` is null — which the old one-liner rendered as "failed: null",
+  // reading like a git error and sending diagnosis after the git command
+  // instead of after the environment. That cost real time when CI turned out
+  // to have no git at all (main red from PR #40, 2026-07-28).
+  if (res.error) {
+    throw new Error(`git ${args.join(" ")} could not be started (is git on PATH?): ${res.error.message}`);
+  }
+  if (res.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed (exit ${res.status}): ${res.stderr || "<no stderr>"}`);
+  }
 }
 
 /** A real one-commit repo on `main`, with a file the tests can diff. */
