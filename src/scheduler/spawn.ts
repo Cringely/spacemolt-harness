@@ -15,9 +15,11 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeActiveCycle } from "./filing";
+import type { GitRunner } from "./git";
 import type { JobDef } from "./jobs";
 import { POLICY_PATHS } from "./policy-paths";
 import { loadAnchors, saveAnchors } from "./state";
+import { createJobWorktree, removeJobWorktree } from "./worktree";
 
 export interface SpawnHandle {
   // stdout is the child's captured output — the `claude -p --output-format json`
@@ -99,7 +101,10 @@ export interface RunDeps {
   spawner: Spawner;
   clock: () => number;
   stateDir: string;
-  checkoutDir: string;
+  /** The one seam runJob uses to create/destroy its ephemeral worktree (#585) — no direct filesystem git calls here. */
+  gitRunner: GitRunner;
+  /** Commit every job this tick is pinned to (tick.ts reads it once per tick from origin/main). */
+  pinnedSha: string;
   secretsDir: string;
   /** Injectable timeout waiter so tests fire the per-job timeout without waiting minutes. */
   waitTimeout?: (ms: number) => Promise<"timeout">;
@@ -278,14 +283,20 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
   let result: "ok" | "fail" = "fail";
   let error: string | undefined;
   let usage: SpawnUsage = { ...EMPTY_USAGE };
+  let worktreePath: string | null = null;
 
   try {
+    // Ephemeral worktree (#585): the job's cwd is a disposable checkout
+    // pinned to deps.pinnedSha, never the shared control clone — a worktree
+    // creation failure is caught below exactly like a charter-read failure
+    // (never a throw out of runJob), so no separate error path is needed.
+    worktreePath = createJobWorktree(deps.gitRunner, deps.stateDir, cycleId, deps.pinnedSha);
     // Charter read failure is a job failure, recorded, never a throw — a
     // charterless spawn would run an unarmed identity at full cadence.
-    const charterText = readFileSync(join(deps.checkoutDir, job.charterPath), "utf8");
+    const charterText = readFileSync(join(worktreePath, job.charterPath), "utf8");
     let stateNow = "";
     try {
-      stateNow = extractStateNow(readFileSync(join(deps.checkoutDir, "docs", "STATE.md"), "utf8"));
+      stateNow = extractStateNow(readFileSync(join(worktreePath, "docs", "STATE.md"), "utf8"));
     } catch {
       stateNow = ""; // missing STATE.md → MISSING marker; the ceremony still runs
     }
@@ -295,7 +306,7 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     // instead of trusting caller-supplied --job/--cycle flags, so a spawned
     // agent cannot mint fresh cycle ids past the (a)(4) flood cap.
     writeActiveCycle(deps.stateDir, { jobId: job.id, cycleId });
-    const handle = deps.spawner(buildArgv(job), { cwd: deps.checkoutDir, env, stdin: prompt });
+    const handle = deps.spawner(buildArgv(job), { cwd: worktreePath, env, stdin: prompt });
     const raced = await raceTimeout(handle.exited, job.timeoutMs, deps.waitTimeout);
     if (raced === "timeout") {
       handle.kill(); // one hung `claude -p` must never outlive its budget (plan decision 2)
@@ -310,6 +321,10 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     }
   } catch (e) {
     error = e instanceof Error ? e.message : String(e); // file/spawn failure — no secret values in messages
+  } finally {
+    // Unconditional: a job that timed out, threw, or never got a worktree at
+    // all (worktreePath stays null) must never leave disk growth behind.
+    if (worktreePath) removeJobWorktree(deps.gitRunner, worktreePath);
   }
 
   // Anchor advances on ATTEMPT (plan decision 3): a failing job retries at the
