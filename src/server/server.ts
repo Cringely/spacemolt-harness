@@ -26,8 +26,8 @@ export interface DashboardServerOptions {
   // #114 A1 pivot: the scheduler's strategy-review job used to reach the store
   // over SSH + a forced-command key on the store host (a root-equivalent
   // key on that host, rejected by the operator 2026-07-19). These two
-  // options together turn on the /api/store/* routes below -- three fixed ops
-  // (dump/gate/mark) gated by their OWN bearer token, independent of
+  // options together turn on the /api/store/* routes below -- four fixed ops
+  // (dump/gate/mark, plus steer since #495) gated by their OWN bearer token, independent of
   // authToken above (different consumer: a scheduler cron, not a browser
   // through the reverse proxy). Either absent -> the routes 404 (deploy-safe
   // disabled mode, same posture as authToken).
@@ -54,7 +54,10 @@ const MAX_EVENTS_LIMIT = 500;
 // into Agent.replan()'s goals.push(instruction) -> digest.ts prompt splice
 // per call. Enforced here, server-side -- the SPA's maxlength (Task 4) is UX
 // only, not the trust boundary.
-const INSTRUCTION_MAX_LENGTH = 500;
+// Exported so the scheduler-side caller (scripts/strategy-store.ts) checks the
+// SAME number rather than a copy of it: one bound, two enforcement points
+// (client fails fast, server is the trust boundary).
+export const INSTRUCTION_MAX_LENGTH = 500;
 const InstructBodySchema = z.object({
   text: z.string().min(1).max(INSTRUCTION_MAX_LENGTH),
 }).strict();
@@ -138,6 +141,52 @@ function findAgent(agents: Agent[], id: string): Agent | undefined {
   return agents.find((a) => a.id === id);
 }
 
+/**
+ * The instruction-acceptance path, shared by BOTH steer channels: the
+ * operator's browser POST /api/agents/:id/instruct, and the scheduler's
+ * POST /api/store/:agentId/steer (#495). One function, not two copies --
+ * the 500-char bound and the #527 query-action gate are security boundaries,
+ * and a boundary written twice is a seam that rots (the second copy is the
+ * one nobody updates). The caller resolves the agent and owns its own auth;
+ * everything from body parsing inward is identical by construction.
+ *
+ * 204 means ACCEPTED AND QUEUED, not acted on: Agent.instruct() pushes onto
+ * the inbox, which the agent peeks at its next wake and consumes at replan.
+ * AgentView deliberately never exposes inbox contents, so there is nothing
+ * to read back and no landed-yet signal to return.
+ */
+async function acceptInstruction(req: Request, agent: Agent): Promise<Response> {
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+  const parsed = InstructBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return Response.json({ error: "invalid_body", detail: parsed.error.message }, { status: 400 });
+  }
+  // #527: a steer that ORDERS a query action is structurally unplannable
+  // (the planner's vocabulary is mutations-only), so nothing marks it done
+  // and it re-raises into every later plan. Reject it here, at the same boundary
+  // and in the same 400 shape as the length bound above, while the
+  // operator is still typing. See src/server/instruct-gate.ts for the
+  // matching rule and the false negatives it accepts on purpose.
+  const queryAction = findDirectedQueryAction(parsed.data.text);
+  if (queryAction) {
+    return Response.json(
+      {
+        error: "query_action_instruction",
+        action: queryAction,
+        detail: queryActionRejectionDetail(queryAction),
+      },
+      { status: 400 },
+    );
+  }
+  agent.instruct(parsed.data.text);
+  return new Response(null, { status: 204 });
+}
+
 function clampLimit(raw: string | null): number {
   const n = Number(raw ?? DEFAULT_EVENTS_LIMIT);
   if (!Number.isFinite(n)) return DEFAULT_EVENTS_LIMIT;
@@ -152,7 +201,7 @@ function clampLimit(raw: string | null): number {
 const STORE_AGENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 /**
- * #114 A1: the three fixed store ops, now HTTP routes instead of an SSH
+ * #114 A1: the fixed store ops, now HTTP routes instead of an SSH
  * forced command. Handles its OWN auth (storeToken/STORE_TOKEN_HEADER) --
  * called before the #173 dashboard gate below, so a caller with only the
  * store bearer never needs a dashboard token and vice versa. Absent
@@ -166,13 +215,23 @@ const STORE_AGENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
  * Store's connection -- this mirrors exactly what the old CLI scripts did
  * per-invocation, so there is no new connection-lifetime invariant to prove;
  * WAL mode (Store's constructor) already permits concurrent readers.
+ *
+ * steer (#495) is the one op that touches no database at all -- it reaches
+ * the live `agents` array instead. It still sits behind the storeDbPath
+ * check above, deliberately: storeDbPath is not a per-op dependency here, it
+ * is the deploy switch for the store API as a whole, and the scheduler is
+ * provisioned with the bearer and the URL together or not at all. Exempting
+ * steer would invent a second configuration state (steer live, the three
+ * data ops dark) that no deploy produces, that no test covers, and that
+ * would let a half-provisioned host accept writes into the planner prompt
+ * while reporting the rest of the API as absent. One switch, one posture.
  */
 async function handleStoreRoute(
   req: Request,
   url: URL,
-  opts: { storeToken?: string; storeDbPath?: string },
+  opts: { storeToken?: string; storeDbPath?: string; agents: Agent[] },
 ): Promise<Response> {
-  const { storeToken, storeDbPath } = opts;
+  const { storeToken, storeDbPath, agents } = opts;
   if (storeToken === undefined || storeDbPath === undefined) {
     return new Response("not found", { status: 404 });
   }
@@ -252,6 +311,24 @@ async function handleStoreRoute(
     }
   }
 
+  // #495: the steer lever's scheduler-side transport. The instruct channel
+  // itself (POST /api/agents/:id/instruct) never broke -- what died at the
+  // #114 A1 pivot was the scheduler's way of REACHING it, which was `docker
+  // exec` across hosts. This adds an OP to the transport the scheduler
+  // already holds a bearer for, rather than a second credential: handing the
+  // strategy job the #173 dashboard token would grant it every dashboard
+  // route to buy this one call. Body handling, the 500-char bound and the
+  // #527 query-action gate are acceptInstruction()'s, byte-for-byte the same
+  // as /instruct's -- not restated here.
+  const steerMatch = url.pathname.match(/^\/api\/store\/([^/]+)\/steer$/);
+  if (steerMatch && req.method === "POST") {
+    const [, agentId] = steerMatch as unknown as [string, string];
+    if (!STORE_AGENT_ID_RE.test(agentId)) return Response.json({ error: "invalid_agent_id" }, { status: 400 });
+    const agent = findAgent(agents, agentId);
+    if (!agent) return Response.json({ error: "agent_not_found" }, { status: 404 });
+    return acceptInstruction(req, agent);
+  }
+
   return new Response("not found", { status: 404 });
 }
 
@@ -276,7 +353,7 @@ export function startDashboardServer(opts: DashboardServerOptions): DashboardSer
       // scheduler caller holding only the store token never needs (and never
       // sees) the dashboard token, and vice versa.
       if (url.pathname.startsWith("/api/store/")) {
-        return handleStoreRoute(req, url, { storeToken, storeDbPath });
+        return handleStoreRoute(req, url, { storeToken, storeDbPath, agents });
       }
 
       // #173: the token gate runs before ANY dashboard routing (HTML, API,
@@ -312,36 +389,7 @@ export function startDashboardServer(opts: DashboardServerOptions): DashboardSer
         const [, id] = instructMatch as unknown as [string, string];
         const agent = findAgent(agents, id);
         if (!agent) return Response.json({ error: "agent_not_found" }, { status: 404 });
-
-        let raw: unknown;
-        try {
-          raw = await req.json();
-        } catch {
-          return Response.json({ error: "invalid_json" }, { status: 400 });
-        }
-        const parsed = InstructBodySchema.safeParse(raw);
-        if (!parsed.success) {
-          return Response.json({ error: "invalid_body", detail: parsed.error.message }, { status: 400 });
-        }
-        // #527: a steer that ORDERS a query action is structurally unplannable
-        // (the planner's vocabulary is mutations-only), so nothing marks it done
-        // and it re-raises into every later plan. Reject it here, at the same boundary
-        // and in the same 400 shape as the length bound above, while the
-        // operator is still typing. See src/server/instruct-gate.ts for the
-        // matching rule and the false negatives it accepts on purpose.
-        const queryAction = findDirectedQueryAction(parsed.data.text);
-        if (queryAction) {
-          return Response.json(
-            {
-              error: "query_action_instruction",
-              action: queryAction,
-              detail: queryActionRejectionDetail(queryAction),
-            },
-            { status: 400 },
-          );
-        }
-        agent.instruct(parsed.data.text);
-        return new Response(null, { status: 204 });
+        return acceptInstruction(req, agent);
       }
 
       const usageMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/usage$/);

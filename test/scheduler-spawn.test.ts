@@ -179,12 +179,20 @@ describe("spawn composer + runner (C3)", () => {
     expect(call.opts.stdin.includes(SENTINELS.claude_oauth_token)).toBe(false); // nor in the prompt
   });
 
-  // Catches: the instruct bearer regressing back into ANY job's env. #114 A1
-  // removed its only transport (the docker-exec steer), so a secret with no
-  // use-path is pure exfil risk (a prompt-injected run with `Bash(gh *)` could
-  // leak an env-held token via a gh comment). No job may hold it until the
-  // steer-transport follow-up restores a real use-path.
-  test("no job's env carries INSTRUCT_BEARER (A1 removed the strategy steer transport, #114)", async () => {
+  // Catches: the instruct bearer regressing back into ANY job's env. A secret
+  // with no use-path is pure exfil risk (a prompt-injected run with `Bash(gh *)`
+  // could leak an env-held token via a gh comment).
+  //
+  // No job may hold it, PERMANENTLY -- there is no longer an expiry condition
+  // on this rule. #114 A1 removed the docker-exec steer, and the earlier version
+  // of this comment said "until the steer-transport follow-up restores a real
+  // use-path". That follow-up is #495, and it deliberately did NOT restore
+  // INSTRUCT_BEARER: the steer rides the store bearer the strategy job already
+  // holds (STORE_BEARER, `POST /api/store/:agentId/steer`), so INSTRUCT_BEARER
+  // has no use-path on any job and never gets one by this route. Left as
+  // written, that sentence read as pre-granted permission for the next agent to
+  // put the token back, which is the exact regression the assertion prevents.
+  test("no job's env carries INSTRUCT_BEARER (the #495 steer rides STORE_BEARER, so this never expires)", async () => {
     for (const j of JOBS) {
       const dirs = makeDirs();
       const { spawner, calls } = fakeSpawner(0);
@@ -345,6 +353,39 @@ describe("spawn composer + runner (C3)", () => {
     // affirmative claim is not).
     expect(prompt).not.toContain("SSHes to the store host");
     expect(prompt).not.toContain("forced-command key");
+  });
+
+  // Catches (#495) the same seam one lever over: the work order telling the
+  // strategy job the steer lever is UNAVAILABLE after the transport shipped.
+  // That text stood from the A1 pivot (2026-07-19) to #495 and was correct
+  // then; left in place afterwards it silently disables the sharpest lever
+  // the job holds, with every offline test still green. Two files with no
+  // shared schema forcing agreement: this prose, and the route in
+  // src/server/server.ts + scripts/strategy-store.ts.
+  test("strategy work order advertises the steer lever as USABLE and names the real command", () => {
+    const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
+    expect(prompt).toContain("bun scripts/strategy-store.ts steer");
+    expect(prompt).toContain("--text-b64");
+    expect(prompt).toContain("500 characters"); // the bound the server enforces
+    expect(prompt).toContain("#527"); // the query-action content rule
+    // The dead advisories, gone. Both are exact strings from the pre-#495
+    // work order, so this fails the moment either is restored.
+    expect(prompt).not.toContain("UNAVAILABLE");
+    expect(prompt).not.toContain("Do NOT attempt a steer");
+  });
+
+  // Catches the L-39 failure the whole base64/one-line convention exists to
+  // prevent: a work order teaching a command form the closed allowedTools
+  // list does not match, which the headless permission layer DENIES at run
+  // time while every offline test stays green. Derives the granted prefix
+  // from the grant string itself rather than hardcoding it, so renaming the
+  // script in one file and not the other turns this red.
+  test("the steer command the work order teaches is covered by the strategy job's existing grant", () => {
+    const grant = "Bash(bun scripts/strategy-store.ts *)";
+    expect(job("strategy").allowedTools).toContain(grant);
+    const grantedPrefix = grant.slice("Bash(".length, -" *)".length); // "bun scripts/strategy-store.ts"
+    const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
+    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --text-b64`);
   });
 
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.

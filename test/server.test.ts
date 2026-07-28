@@ -743,6 +743,186 @@ describe("store API routes (#114 A1)", () => {
   });
 });
 
+// #495: the steer lever's scheduler-side transport. The instruct channel never
+// broke; its TRANSPORT from the scheduler host did (`docker exec`, removed at
+// the A1 pivot). This is a fourth store op rather than a second credential --
+// so what these tests prove is (a) it is gated by the STORE bearer, not the
+// dashboard token, and (b) every guard on /api/agents/:id/instruct applies to
+// it identically, because both channels run the same acceptInstruction().
+describe("POST /api/store/:agentId/steer (#495)", () => {
+  const TOKEN = "test-store-token";
+  const withToken = { [STORE_TOKEN_HEADER]: TOKEN, "content-type": "application/json" };
+
+  // A file-backed store, not :memory:, for the same reason the three data ops
+  // use one: storeDbPath must name a real file the server would open. steer
+  // itself never opens it -- that is the point of the shared-deploy-switch
+  // comment on handleStoreRoute -- but the test must not pretend otherwise.
+  function makeSteerFixture(agentId = "miner") {
+    const dir = mkdtempSync(join(tmpdir(), "spacemolt-steer-route-"));
+    const dbPath = join(dir, "harness.sqlite");
+    const store = new Store(dbPath);
+    const planner = new MockPlanner([
+      { goal: "mine", steps: [{ action: "mine", params: {}, repeat: 5 }] },
+      { goal: "obey", steps: [{ action: "undock", params: {} }] },
+    ]);
+    const agent = new Agent({ id: agentId, persona: "p", api: stubApi(), store, planner, config, now: () => 0 });
+    return { store, dbPath, dir, agent, planner };
+  }
+  const cleanup = (store: Store, dir: string) => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  };
+
+  test("valid steer 204s and the text reaches the planner on the next tick", async () => {
+    const { store, dbPath, dir, agent, planner } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      await agent.runOnce(); // establishes the mine plan, so a replan is observable
+
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/store/miner/steer`, {
+        method: "POST", headers: withToken, body: JSON.stringify({ text: "stop mining, go dock" }),
+      });
+      expect(res.status).toBe(204);
+
+      // 204 is ACCEPTED-AND-QUEUED, so the proof it reached agent.instruct()
+      // is the next tick: an instruction wake carrying this exact text. A
+      // route that 204s without calling instruct() leaves contexts at 1.
+      await agent.runOnce();
+      expect(planner.contexts.length).toBe(2);
+      expect(planner.contexts[1]!.wake.reason).toBe("instruction");
+      expect(planner.contexts[1]!.instruction).toBe("stop mining, go dock");
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("401 without the store bearer, with a wrong one, and with the dashboard token instead", async () => {
+    const { store, dbPath, dir, agent } = makeSteerFixture();
+    try {
+      server = startDashboardServer({
+        host: "127.0.0.1", port: 0, store, agents: [agent],
+        authToken: "dashboard-token", storeToken: TOKEN, storeDbPath: dbPath,
+      });
+      const url = `http://127.0.0.1:${server.port}/api/store/miner/steer`;
+      const body = JSON.stringify({ text: "go dock" });
+      const post = (headers: Record<string, string>) => fetch(url, { method: "POST", headers, body });
+
+      expect((await post({ "content-type": "application/json" })).status).toBe(401);
+      expect((await post({ [STORE_TOKEN_HEADER]: "wrong-token", "content-type": "application/json" })).status).toBe(401);
+      // The whole reason steer is a STORE op: the scheduler holds this bearer
+      // and not the dashboard's. The dashboard token must buy nothing here.
+      expect((await post({ [DASHBOARD_TOKEN_HEADER]: "dashboard-token", "content-type": "application/json" })).status).toBe(401);
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("the 500-char bound applies: 501 rejected as invalid_body, exactly 500 accepted", async () => {
+    const { store, dbPath, dir, agent } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      const url = `http://127.0.0.1:${server.port}/api/store/miner/steer`;
+
+      const tooLong = await fetch(url, { method: "POST", headers: withToken, body: JSON.stringify({ text: "x".repeat(501) }) });
+      expect(tooLong.status).toBe(400);
+      expect(((await tooLong.json()) as { error: string }).error).toBe("invalid_body");
+      // Off-by-one on the same zod .max() the dashboard channel uses.
+      expect((await fetch(url, { method: "POST", headers: withToken, body: JSON.stringify({ text: "x".repeat(500) }) })).status).toBe(204);
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("#527 query-action gate applies, and the rejected steer never reaches the agent", async () => {
+    const { store, dbPath, dir, agent, planner } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      await agent.runOnce();
+
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/store/miner/steer`, {
+        method: "POST", headers: withToken,
+        body: JSON.stringify({ text: "Use find_route with id gold_run and jump to the first hop it returns." }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; action: string; detail: string };
+      expect(body.error).toBe("query_action_instruction");
+      expect(body.action).toBe("find_route");
+      expect(body.detail).toContain("find_route");
+
+      // A gate that 400s but still calls instruct() would replan here.
+      await agent.runOnce();
+      expect(planner.contexts.length).toBe(1);
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("malformed JSON is invalid_json, matching /instruct's shape", async () => {
+    const { store, dbPath, dir, agent } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/store/miner/steer`, {
+        method: "POST", headers: withToken, body: "{not json",
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("invalid_json");
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("unknown agent id 404s with agent_not_found, even holding a valid bearer", async () => {
+    const { store, dbPath, dir, agent } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/store/ghost/steer`, {
+        method: "POST", headers: withToken, body: JSON.stringify({ text: "go dock" }),
+      });
+      expect(res.status).toBe(404);
+      // Distinguishes "no such agent" from the unconfigured-route 404 below,
+      // which returns a bare text body with no JSON error field.
+      expect(((await res.json()) as { error: string }).error).toBe("agent_not_found");
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("agentId allowlist rejects an injection-shaped id before the agent lookup", async () => {
+    const { store, dbPath, dir, agent } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/api/store/${encodeURIComponent("miner;rm -rf /")}/steer`,
+        { method: "POST", headers: withToken, body: JSON.stringify({ text: "go dock" }) },
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("invalid_agent_id");
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+
+  test("unconfigured store API 404s the steer route too (one deploy switch, one posture)", async () => {
+    const { agent, store } = makeAgent();
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/store/miner/steer`, {
+      method: "POST", headers: withToken, body: JSON.stringify({ text: "go dock" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test("GET is not routed to steer: a write op must not be reachable by a read verb", async () => {
+    const { store, dbPath, dir, agent } = makeSteerFixture();
+    try {
+      server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent], storeToken: TOKEN, storeDbPath: dbPath });
+      const res = await fetch(`http://127.0.0.1:${server.port}/api/store/miner/steer`, { headers: { [STORE_TOKEN_HEADER]: TOKEN } });
+      expect(res.status).toBe(404);
+    } finally {
+      cleanup(store, dir);
+    }
+  });
+});
+
 describe("loadStoreToken (#114 A1 startup behavior, mirrors loadDashboardToken)", () => {
   test("knob absent -> disabled (undefined) with exactly one loud warning", () => {
     const warnings: string[] = [];
