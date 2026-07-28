@@ -126,10 +126,8 @@ pull is deterministic and stays cheap.
   `bun scripts/strategy-store.ts steer <agentId> --text-b64 <base64>`, a fourth op on the same
   authenticated route family and the same bearer as gate/mark/dump, calling
   `POST /api/store/:agentId/steer`. 500-character cap; a steer must not order a query action (#527);
-  a 204 means accepted and queued, not applied. From v1.3 until now this charter told the job the
-  steer had no transport and to escalate through the issue and note levers instead; that clause is
-  struck from both entries below, because a charter is inlined verbatim into every spawn and a stale
-  "do not attempt it" is obeyed silently. Everything the ladder says about WHEN to steer is unchanged.
+  a 204 means accepted and queued, not applied. The v1.3 and v1.4 deferral clauses are struck below.
+  Everything the ladder says about WHEN to steer is unchanged.
 - v1.5 (2026-07-25) — broken-capability entries carry both pairs; quote the window pair against a
   window claim (#518/#491).
 - v1.0 (2026-07-13) — initial charter (#164, council adoption #3; method per #142/#158, L-21).
