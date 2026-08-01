@@ -80,20 +80,20 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-51).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-52).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
 - [x] G3: Pilot can transact (fuel, buy, mission flow working)
 - [x] G4: Verified economic win [in progress] — trend +1,222cr/20h, fuel-chain fixed
 - [ ] G5: Economic awareness — #93 (market parsing) closed; #112 (profitability) + #142 (econ panel) open
-- [ ] G6: Team outlives session — scheduler (#114) remains; a governance-ceremony audit found one ceremony (`core_harvest`) was never wired in and one (council) degraded (M-51)
+- [ ] G6: Team outlives session — scheduler (#114) remains; governance ceremonies audited
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: PR #27 merged a reversible planner fallback (#240 Task 1); PR #30 fixed the backlog generator to stop regenerating against the wrong repo (#550). PR #28 (agent-harness-core realignment) and PR #29 (ceremony-findings visibility, still under revision after review found its hook never fired from the PM's own clone) are open. A ceremony audit found the largest 72h failure class (`dock`'s "no station" error, #551) had gone unactioned because most ceremony-filed issues carried no priority label; a fix for #551 is in progress. The pilot runs on `codex-subscription/gpt-5.6-terra` (both planner seats): 42 of 42 plans served over a 4h window, which shows the fallback serves reliably but not yet whether it matches the prior Claude-subscription planner economically. See M-51 in [docs/milestones.md](docs/milestones.md).
+Current work: F1 of fleet-flight (#591) now unblocked: PR #47 merged the livelock fix (#543, safety reflex now defers to rescue plans); PR #46 fixed the merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552, game precondition unmet); PR #45 bumped GitHub Actions. The livelock fix is capability-complete and awaits live confirmation on next deploy. See M-52 in [docs/milestones.md](docs/milestones.md).
 
-The major-milestone timeline (M-01..M-51) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-52) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 
