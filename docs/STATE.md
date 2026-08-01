@@ -18,7 +18,7 @@ _Refreshed 2026-08-01 post-recovery. Boot from this block + `docs/backlog.md` (G
 
 **GATE F1 STATUS.** F1 (strand/trap fix) requires both #543 and #526 closed. PR #47 (layer 1) merged; PR #50 (layer 4 partial) merged. #526 (unenforced fuel floor: pilot mined itself to 2/130 and stranded, NOT a livelock) stays open. F1 blocked until #526 merges.
 
-**ALSO MERGED THIS CLUSTER.** PR #46 fixed merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552); PR #45 bumped GitHub Actions. Reasons in `docs/decisions.md`. Also filed: #676 (stuck-detector alerts), #678 (station naming drift), #679 (reflex spent-tick timing). Closed: #601 (by hand).
+**ALSO MERGED THIS CLUSTER.** PR #46 fixed merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552); PR #45 bumped GitHub Actions. Reasons in `docs/decisions.md`. Closed: #601 (by hand).
 
 **THEN.** #526, #534, #535, #537, #538, #529 and the rest in `docs/backlog.md`.
 
