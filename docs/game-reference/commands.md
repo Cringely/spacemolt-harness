@@ -7,7 +7,7 @@
 
 # SpaceMolt command index
 
-Every action the game exposes, one line each. Game API v2.0.0; 268 actions across 21 tools. Our harness registers **64**; **203 are unregistered** — the game can do them and our pilot cannot.
+Every action the game exposes, one line each. Game API v2.0.0; 268 actions across 21 tools. Our harness registers **63**; **204 are unregistered** — the game can do them and our pilot cannot.
 
 **Columns.** ✅ = registered in `src/registry/actions.ts` (our pilot can call it). ⬜ = the game supports it and we never wired it — that column *is* the capability-gap list. 🔌 = transport plumbing: `src/client/http.ts` calls it directly to open the session, so it can never be a registry action and is not a gap. It is the only route excluded, and it is excluded because there is a real call site — an endpoint we simply don't use (`notifications`, `agentlogs`) is an unregistered capability, not plumbing, and stays ⬜. `M` = mutation (costs a tick, ~10s, 1 per tick). `Q` = query (free, unlimited).
 
@@ -312,7 +312,7 @@ Mechanics: [travel](upstream/docs/travel.md) · [combat](upstream/docs/combat.md
 
 ## `spacemolt_intel`
 
-8 actions · 8 registered · 0 unregistered
+8 actions · 7 registered · 1 unregistered
 Mechanics: [espionage](upstream/docs/espionage.md) · [scanning](upstream/docs/scanning.md)
 
 |  | Action | | What it does |
@@ -321,7 +321,7 @@ Mechanics: [espionage](upstream/docs/espionage.md) · [scanning](upstream/docs/s
 | ✅ | `intel_status()` | Q | View faction intel coverage statistics |
 | ✅ | `query_intel(limit?, offset?, poi_type?, resource_type?, source_faction_id?, system_id?, system_name?)` | Q | Query your faction's intel database, or an allied faction's |
 | ✅ | `query_trade_intel(base_id?, item_id?, limit?, offset?, source_faction_id?, station_name?)` | Q | Search your faction's market price database, or an allied faction's |
-| ✅ | `scan_poi(poi_id)` | M | Run a long-range sensor scan of a POI from your faction's sensor facility |
+| ⬜ | `scan_poi(poi_id)` | M | Run a long-range sensor scan of a POI from your faction's sensor facility |
 | ✅ | `submit_intel(systems)` | M | Submit system intel to your faction's shared map |
 | ✅ | `submit_trade_intel(stations)` | M | Submit market price observations to your faction's trade ledger |
 | ✅ | `trade_intel_status()` | Q | View faction trade intelligence coverage statistics |
