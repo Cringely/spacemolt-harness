@@ -24,6 +24,24 @@ name: container
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "test/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - ".github/workflows/container.yml"
+  # No `paths` filter on pull_request (#601): `test`/`verify` are required
+  # status checks, and a PR outside a filtered workflow's paths never starts
+  # the job, so the check never reports and the merge gate waits forever
+  # (`mergeStateStatus: BLOCKED` with every visible check green). `push`
+  # stays filtered — push isn't part of the PR merge gate, and widening it
+  # would fire `publish` (full rebuild, cosign sign, GHCR push, and the
+  # `latest-main` tag move the production deployer watches) on every
+  # docs-only merge to main, for no gate this repo needs.
   pull_request:
     branches: [main]
   workflow_dispatch:
