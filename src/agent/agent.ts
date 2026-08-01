@@ -7,14 +7,14 @@ import type {
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
 import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
-import { executeTick, miningEquipmentKey, type LearnedSparseRule, type StepResult } from "./executor";
+import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
   knownStationSystems, rememberStation,
 } from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
-import { evaluateReflex, type ReflexConfig } from "./reflex";
+import { evaluateReflex, reflexGaveUpAt, type ReflexConfig, type ReflexFailureRecord } from "./reflex";
 import { normalizePlanLocations, type PlanRewrite } from "./normalize-plan";
 import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
@@ -25,6 +25,7 @@ import {
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
 } from "./stall-monitor";
 import type { EnvelopeNotification } from "../client/http";
+import { SpacemoltError } from "../client/http";
 import { AGENT_DEFAULTS, type DriverMode } from "../config/config";
 
 export interface PlannerHealth {
@@ -208,6 +209,21 @@ const HEARTBEAT_SLOW_DIMS = ["skill_levels", "achievements_earned"] as const;
 // Movement actions whose fuel-blocks feed the strand signal (travel_to expands
 // into jumps; jump/travel are the raw registry verbs).
 const MOVEMENT_ACTIONS = new Set(["travel_to", "jump", "travel"]);
+
+// Issue #672 (review REVISE, PR #50 round 2): bound on the reflex_failed
+// give-up read. Grouped by the per-(stationKey, action) `key` payload field
+// via latestEventPerPayloadKey, so this now bounds DISTINCT (station, action)
+// PAIRS, not raw events -- reflex noise at other stations/actions can no
+// longer evict this station's give-up record the way a flat last-50-events
+// window did (round-1 bug: a busy pilot's OTHER-station failures pushed a
+// station's own terminal failure out of a global window, silently
+// un-arming the give-up with no station-recovered signal). Same sizing
+// rationale as MAX_SPARSE_RULES/MAX_INCOMPATIBLE_POIS below -- the memory
+// only needs to outlast the livelock cadence it exists to break (the
+// production incident produced 30 reflex_failed events in 5 minutes at ONE
+// station, i.e. one key), and a bound guarantees the query stays cheap on a
+// long-lived pilot rather than growing with its lifetime.
+const REFLEX_FAILURE_LOOKBACK = 50;
 
 // Deterministic server-failure retry (#431, live 2026-07-19: each travel 503
 // bought a full ~19.5k-char planner call whose new plan re-issued the
@@ -991,10 +1007,65 @@ export class Agent {
     const remaining = this.plan && this.planState === "running"
       ? this.plan.steps.slice(this.cursor.step)
       : [];
+    // Issue #672 (review BLOCK, PR #50): a `planTravelsToFuel` predicate --
+    // "every remaining step is pure relocation (a MOVEMENT_ACTIONS hop or
+    // `dock`)" -- was tried here and reverted. It matched on action TYPE
+    // only, never destination or purpose, and production plans normally look
+    // exactly like `[travel_to X, dock]` with the next action (refuel, mine,
+    // whatever) added by a LATER replan once the destination is reached. That
+    // makes relocation-only the ordinary shape of nearly every plan, not an
+    // edge case -- so the predicate would have gone true for "traveling to
+    // mine" as readily as "traveling to refuel", silencing BOTH the reflex
+    // AND evaluateWake's low_fuel branch (planRemediesFuel gates both) for
+    // most travel. That is issue #526 (a pilot mined itself to 2/130 and
+    // stranded because the fuel floor was advisory) recreated with travel
+    // plans standing in for mining plans. A destination-aware version --
+    // evidence the destination actually HAS fuel, not merely that the plan
+    // moves -- is real follow-up work, tracked as the open remainder of
+    // #672; this PR ships only the give-up below, which does not have this
+    // failure mode (it acts on a PROVEN station fact, not a plan shape).
     const planRemediesFuel = remaining.some(
       (s) => s.action === "refuel" && (s.params as { target?: string }).target === undefined
     );
     const planRemediesHull = remaining.some((s) => s.action === "repair");
+
+    // Issue #672: a per-station give-up backstop for a TERMINAL reflex
+    // failure. This is the mechanism that fixes the production livelock: the
+    // reflex stops consuming every tick at a station where its action is
+    // terminally impossible, so the pending plan (whatever it is) gets its
+    // turn again. stationKey is the docked base id (StatusSnapshot.dockedAt)
+    // -- the reflex only ever fires while docked, so this is always the
+    // station the failure would repeat at. Read from the persisted
+    // reflex_failed stream (reflexGaveUpAt, see reflex.ts) rather than an
+    // in-memory counter -- the durable-state lesson stall-monitor.ts's
+    // dockNoStationStreak already learned the hard way (PR #32: an in-memory
+    // streak reset on any interleaving outcome and was measured inert over
+    // 5000 ticks).
+    //
+    // latestEventPerPayloadKey, NOT recentEventsByType (review REVISE, PR #50
+    // round 2 -- the identical bug shape store.ts:151-165 already documents
+    // for station memory, #517): recentEventsByType takes the last N EVENTS
+    // GLOBALLY, so a pilot failing reflexes at OTHER stations or on OTHER
+    // actions pushes THIS station's give-up event out of the window with no
+    // station-recovered signal involved, silently un-arming the give-up on
+    // ordinary noise elsewhere. Grouping on the `key` payload field (set at
+    // the emit site, fireReflex below, to `${stationKey}:${action}`) gives
+    // each (station, action) pair exactly one row, so REFLEX_FAILURE_LOOKBACK
+    // bounds distinct PAIRS and no amount of chatter about one station can
+    // evict another's. A pre-fix event with no `key` field is skipped by the
+    // query itself (`json_extract(...) IS NOT NULL`), the same tolerant-load
+    // discipline the other bounded event-log memories in this file use
+    // (AGENTS.md persisted-state tolerance) -- the ~4,140 keyless
+    // reflex_failed rows already in the live pilot's DB just never match and
+    // never arm a give-up, never a crash. Skipped entirely while undocked,
+    // since evaluateReflex never fires there anyway.
+    const stationKey = status?.dockedAt ?? null;
+    const recentReflexFailures = status?.docked && stationKey !== null
+      ? this.store.latestEventPerPayloadKey(this.id, "reflex_failed", "key", REFLEX_FAILURE_LOOKBACK)
+          .map((e) => e.payload as ReflexFailureRecord)
+      : [];
+    const fuelGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel");
+    const hullGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "repair");
 
     // Reflex check first, before wake evaluation: zero-token, declarative
     // rules (auto-refuel/repair while docked) that don't need the planner at
@@ -1003,14 +1074,14 @@ export class Agent {
     // lets the low_fuel/low_hull wake fire normally so the planner sees the
     // problem it couldn't reflexively solve. planRemediesFuel/Hull stop it
     // from firing at all when the pending plan already owns the remedy
-    // (issue #543): a station-empty refuel can't succeed no matter how many
-    // times it's retried, and each attempt was spending the tick the plan's
-    // own buy-then-refuel steps needed to run.
-    const reflex = evaluateReflex(status, this.config.reflex ?? {}, planRemediesFuel, planRemediesHull);
+    // (issue #543); fuelGaveUpHere/hullGaveUpHere stop it once a terminal
+    // failure at this exact station has already proven a retry is pointless
+    // (issue #672).
+    const reflex = evaluateReflex(status, this.config.reflex ?? {}, planRemediesFuel, planRemediesHull, fuelGaveUpHere, hullGaveUpHere);
     let reflexSpentTick = false;
     if (reflex) {
       reflexSpentTick = true;
-      const fired = await this.fireReflex(reflex);
+      const fired = await this.fireReflex(reflex, stationKey);
       if (fired) return; // succeeded: this tick's mutation budget spent, wake suppressed entirely
     }
 
@@ -1372,16 +1443,39 @@ export class Agent {
     }
   }
 
-  private async fireReflex(reflex: ReturnType<typeof evaluateReflex>): Promise<boolean> {
+  // stationKey (issue #672): the docked base id this attempt is made at,
+  // carried onto a failed fire's event so agent.ts's give-up read
+  // (reflexGaveUpAt) can match "this exact station" on a later tick -- see
+  // the call site above for how the key is derived and why. The payload's
+  // `key` field (round 2, review REVISE) is the store's latestEventPerPayloadKey
+  // grouping key, `${stationKey}:${action}` -- the same composite-key
+  // convention wake.ts's blockedOutcomeKey uses -- not a field reflexGaveUpAt
+  // itself reads. Omitted (left undefined) when stationKey is null (docked at
+  // a non-base POI, e.g. an asteroid belt): the give-up can never arm without
+  // a station key either (see the call site's `stationKey !== null` guards),
+  // so an ungrouped row here is simply never queried back.
+  private async fireReflex(reflex: ReturnType<typeof evaluateReflex>, stationKey: string | null): Promise<boolean> {
     if (!reflex) return false;
     try {
       await this.api.action(reflex.action);
       this.emit("reflex", { action: reflex.action, reason: reflex.reason });
       return true;
     } catch (e) {
+      // Terminal vs. transient (issue #672): classifyGameError is the SAME
+      // classifier the executor's own catch site uses, so a text-marker
+      // change there can't desync the two. Only a `blocked` classification
+      // means "retrying this exact call will not change the outcome" -- a
+      // `wait` (transient hold) or `server_retry` (transient transport
+      // failure) must NOT arm the give-up, since those are expected to
+      // resolve on their own. A non-SpacemoltError (e.g. a network throw the
+      // client itself didn't wrap) is conservatively left untagged
+      // (terminal: false) rather than guessed at.
+      const terminal = e instanceof SpacemoltError && classifyGameError(e).kind === "blocked";
       this.emit("reflex_failed", {
         action: reflex.action, reason: reflex.reason,
         message: e instanceof Error ? e.message : String(e),
+        stationKey, terminal,
+        key: stationKey !== null ? `${stationKey}:${reflex.action}` : undefined,
       });
       return false;
     }
