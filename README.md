@@ -91,7 +91,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: F1 of fleet-flight (#591) now unblocked: PR #47 merged the livelock fix (#543, safety reflex now defers to rescue plans); PR #46 fixed the merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552, game precondition unmet); PR #45 bumped GitHub Actions. The livelock fix is capability-complete and awaits live confirmation on next deploy. See M-52 in [docs/milestones.md](docs/milestones.md).
+Current work: F1 of fleet-flight (#591) partially unblocked. PR #47 merged the livelock executor-starvation fix (#543); PR #50 merged the reflex terminal-failure give-up (#672, partial). Live-confirmed 2026-08-01: pilot recovered from 28.5h freeze, now at haven, fuel 130/130, credits 207,158. Remaining: #526 (another livelock) blocks F1 gate; #669/#670 (planner/fuel-urgency issues) remain open. See M-52 in [docs/milestones.md](docs/milestones.md).
 
 The major-milestone timeline (M-01..M-52) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
