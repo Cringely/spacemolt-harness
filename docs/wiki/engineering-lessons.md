@@ -578,3 +578,14 @@ Source: PR #29 (`ceremony-findings-visibility`), review round 2, finding R1.
 
 **Why it matters for building agents.** "Ran clean and exited 0" is not the same claim as "processed everything it should have." The floor check that closed #550 (refuse to write an implausibly small result) is the same fix #562 recommends for #561: name the expected order of magnitude and fail loud when the real count falls far short of it.
 Source: PR #30 (#550, `gen-backlog.py` producer fix); issue #561.
+
+## L-49 — A preemption triggered by condition X must either clear X or defer to a plan addressing X
+
+**What happened.** The miner sat at `market_prime`, fuel 19/130, locked in a livelock for 7+ hours. A low_fuel reflex fired every tick as an interrupt, consuming that tick whether it succeeded. Fuel stayed low, so the reflex kept firing. A rescue plan `[buy fuel_cell x111, refuel]` queued underneath but never executed, because the reflex kept preempting it. The reflex tried to call `refuel` directly at a station with empty reserves (`station_fuel_empty`), failed, and consumed the tick — so the remedial plan that was already accounting for this exact scenario (buy first, then refuel) never got its turn to run. The reflex was starving its own fix.
+
+**The principle.** A safety reflex triggered by a condition is a preemption mechanism, a forced interruption of the current plan. But a reflex cannot serve as both the exclusive solution to a problem and the thing that guarantees no other solution will run. If the condition (fuel too low) will still be true after the reflex's attempt, and if a plan already queued explicitly addresses that condition, the reflex must defer. A preemption that consumes a tick on a remedy that cannot succeed while a queued plan carries a complete remedy wastes both the tick and the remedy.
+
+**Discipline.** Loop engineering and harness design.
+
+**Why it matters for building agents.** Safety reflexes are the agent's immune system — they catch emergencies and interrupt a stale plan. But if the reflex and the plan's own recovery path both exist and the reflex fires every cycle, the reflex wins and the plan never runs. The fix is to make the reflex a conditional preemption: it yields to a plan already carrying its own remedy. The exception rule must acknowledge exceptions; a safety mechanism that admits no override is a livelock looking for a scenario to trigger it.
+Source: PR #47 (#543, `fix(agent): reflex defers to a plan that already remedies fuel/hull`); docs/decisions.md (2026-08-01, safety-reflex deferral); milestones.md M-52.
