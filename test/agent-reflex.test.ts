@@ -103,6 +103,36 @@ describe("Agent reflex integration", () => {
     expect(store.recentEvents("a1", 10).map((e) => e.type)).toContain("reflex_failed");
   });
 
+  // Issue #543 livelock reproduction. Ground truth (production, 2026-08-01):
+  // a plan already carrying "buy fuel_cell" -> "refuel" sat frozen at cursor 0
+  // for 4.5+ hours while `reflex_failed{action:"refuel",reason:"station_fuel_empty"}`
+  // repeated every tick. wake.ts's planRemediesFuel (Layer 1) already stops the
+  // WAKE from replacing this plan, but evaluateReflex fires BEFORE wake is even
+  // evaluated and has no such awareness -- it retries the bare station refuel
+  // every tick regardless of an in-flight plan, and a failed fire still sets
+  // reflexSpentTick, which skips executeOne (agent.ts's `!reflexSpentTick && ...`
+  // guards). The plan's own "buy" step -- the only thing that can ever make the
+  // reflex succeed -- never gets a turn. toEqual (not toContain) is required
+  // here: toContain("buy") would still pass if the reflex fired FIRST and buy
+  // ran second, masking the fact that the reflex should not fire at all this
+  // tick.
+  test("plan already remedies fuel (buy then refuel): reflex defers, the plan's buy step runs", async () => {
+    const { api, calls } = makeApi(lowFuelDocked, { failRefuel: true });
+    const store = new Store(":memory:");
+    store.savePlan("a1", {
+      goal: "refuel", steps: [
+        { action: "buy", params: { id: "fuel_cell", quantity: 10 } },
+        { action: "refuel", params: {} },
+      ],
+    }, []);
+    const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+    await agent.runOnce();
+    expect(calls).toEqual(["buy"]); // reflex must NOT fire; the plan's own remedy step gets the tick
+    expect(store.recentEvents("a1", 10).map((e) => e.type)).not.toContain("reflex_failed");
+  });
+
   test("no reflex configured: identical to Plan-1 behavior, no reflex events", async () => {
     const { api } = makeApi(lowFuelDocked);
     const store = new Store(":memory:");
