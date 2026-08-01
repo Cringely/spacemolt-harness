@@ -69,4 +69,36 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
       expect(instructions).not.toContain("<<");
     }
   });
+
+  // Catches (#495): a charter telling a job the steer lever cannot be reached,
+  // after the transport shipped. That text stood from the A1 pivot (2026-07-19)
+  // to #495, correct when written and silently disabling the sharpest lever
+  // afterwards. Sibling of the dead-filing-form test above with ONE deliberate
+  // difference: this reads the WHOLE file, changelog included. That exclusion is
+  // right for filing forms (a changelog may name an old form as history) and
+  // wrong here, because the charter body's ladder describes the step-1 nudge
+  // without mentioning transport at all, so the changelog was the only place in
+  // the charter speaking to reachability and it said unreachable. The whole file
+  // is inlined verbatim ahead of the work order in every spawn.
+  //
+  // The failure is asymmetric, which is why it earns a test rather than a
+  // reviewer's eye: an instruction NOT to attempt something fails silently. A
+  // job that resolves the conflict cautiously files an issue instead, and no log
+  // tells that apart from a cycle with nothing worth steering.
+  test("no charter/brief tells a job the steer lever is unreachable, and strategy's names the live command", () => {
+    // Exact clauses from the pre-#495 text, same shape as the --body-file
+    // check above. Each one is an imperative deferral, not a historical note.
+    for (const job of JOBS) {
+      const charter = readFileSync(join(root, job.charterPath), "utf8");
+      expect(charter).not.toContain("pending follow-up");
+      expect(charter).not.toContain("use issue/note levers");
+      expect(charter).not.toContain("until it lands");
+    }
+    // The positive half, and the one that fails if v1.6 is ever reverted: the
+    // job whose ladder OWNS the steer must name the transport that serves it.
+    const strategy = JOBS.find((j) => j.id === "strategy")!;
+    const charter = readFileSync(join(root, strategy.charterPath), "utf8");
+    expect(charter).toContain("bun scripts/strategy-store.ts steer");
+    expect(charter).toContain("POST /api/store/:agentId/steer");
+  });
 });

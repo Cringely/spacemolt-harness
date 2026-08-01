@@ -122,6 +122,12 @@ pull is deterministic and stays cheap.
 
 ## CHANGELOG
 
+- v1.6 (2026-07-27) — the steer lever is REACHABLE again (#495). Ladder step 1 is live for this job:
+  `bun scripts/strategy-store.ts steer <agentId> --text-b64 <base64>`, a fourth op on the same
+  authenticated route family and the same bearer as gate/mark/dump, calling
+  `POST /api/store/:agentId/steer`. 500-character cap; a steer must not order a query action (#527);
+  a 204 means accepted and queued, not applied. The v1.3 and v1.4 deferral clauses are struck below.
+  Everything the ladder says about WHEN to steer is unchanged.
 - v1.5 (2026-07-25) — broken-capability entries carry both pairs; quote the window pair against a
   window claim (#518/#491).
 - v1.0 (2026-07-13) — initial charter (#164, council adoption #3; method per #142/#158, L-21).
@@ -131,12 +137,10 @@ pull is deterministic and stays cheap.
   A1, operator-rejected the v1.3 SSH key as a root-equivalent credential on the store host):
   the same three fixed ops (`bun scripts/strategy-store.ts gate|mark|dump <agentId>`) now call
   `GET/POST /api/store/:agentId/{dump,gate,mark}` with a bearer token instead of SSHing anywhere.
-  No key on the store host. The steer lever's transport is still a pending follow-up; use
-  issue/note levers until it lands.
+  No key on the store host. (The steer lever's own transport arrived later, in v1.6.)
 - v1.3 (2026-07-19) — store access moved behind a forced-command SSH key (#114 A1): three fixed
   ops (`bun scripts/strategy-store.ts gate|mark|dump <agentId>`) replace the docker-over-SSH
-  `bun run -` arbitrary read. `dump` is the new read op (heartbeat trend + failure taxonomy). The
-  steer lever's transport is a pending follow-up; use issue/note levers until it lands.
+  `bun run -` arbitrary read. `dump` is the new read op (heartbeat trend + failure taxonomy).
 - v1.2 (2026-07-15) — step-0 gate added: skip the run when fewer than REVIEW_MIN_NEW_PLANS new
   `plan_context` events since the last review marker (src/review/review-gate.ts + the two
   scripts). Stops the timer spending tokens on a quiet pilot; marker write authorized above.

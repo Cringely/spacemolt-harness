@@ -15,9 +15,11 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeActiveCycle } from "./filing";
+import type { GitRunner } from "./git";
 import type { JobDef } from "./jobs";
 import { POLICY_PATHS } from "./policy-paths";
 import { loadAnchors, saveAnchors } from "./state";
+import { createJobWorktree, removeJobWorktree } from "./worktree";
 
 export interface SpawnHandle {
   // stdout is the child's captured output — the `claude -p --output-format json`
@@ -99,7 +101,10 @@ export interface RunDeps {
   spawner: Spawner;
   clock: () => number;
   stateDir: string;
-  checkoutDir: string;
+  /** The one seam runJob uses to create/destroy its ephemeral worktree (#585) — no direct filesystem git calls here. */
+  gitRunner: GitRunner;
+  /** Commit every job this tick is pinned to (tick.ts reads it once per tick from origin/main). */
+  pinnedSha: string;
   secretsDir: string;
   /** Injectable timeout waiter so tests fire the per-job timeout without waiting minutes. */
   waitTimeout?: (ms: number) => Promise<"timeout">;
@@ -155,7 +160,9 @@ function workOrder(job: JobDef, cycleId: string): string {
     strategy: [
       "Target: this 6h strategy review window, per your charter (step-0 gate first).",
       "Authorized store access (#114 A1): the ONE transport is `bun scripts/strategy-store.ts <op> <agentId>` — the WHOLE command on ONE LINE. Three fixed ops: `gate` (step-0 precheck; exit 0 = run, 1 = skip, 2 = error), `mark` (advance the cursor, post-run only), `dump` (the review dataset JSON — heartbeat trend + failure taxonomy). It calls an authenticated HTTP route on the harness server (bearer token in the `X-Store-Token` header); no SSH, no `docker exec`, no arbitrary read. If you need to read the store, that is what `dump` is for — do not reach past these three ops.",
-      "Steer lever status (#114 A1): the instruct-channel steer (POST /api/agents/<id>/instruct) is temporarily UNAVAILABLE — dropping docker exec removed its only transport across the scheduler→container boundary, and the replacement plus its bearer token are a pending follow-up. Do NOT attempt a steer; escalate every finding via the issue/note levers (ladder steps 2-3) instead.",
+      "Steer lever (#495), ladder step 1: `bun scripts/strategy-store.ts steer <agentId> --text-b64 <base64>` — the WHOLE command on ONE LINE, your steer text base64-encoded as the --text-b64 value (no heredoc, no pipe, no newline in the command). It is a fourth op on the SAME authenticated route family and the SAME bearer as the three above; nothing else is needed. Hard cap 500 characters, enforced both sides. A 204 means ACCEPTED AND QUEUED, not applied — the pilot consumes it at its next replan, and there is nothing to read back to confirm it.",
+      "Steer content rule (#527): a steer must NOT order a query action (a read-only lookup such as find_route or view_market). The planner can only be told to take MUTATIONS, so an instruction naming a query is rejected 400 and never reaches the pilot. Write the OUTCOME you want (\"get to a station and refuel\") or the MUTATION to take (\"jump to gold_run, then dock and refuel\").",
+      "When to steer: this is the SHARPEST lever you hold and the only one that acts inside this window. Reach for it when a finding needs correcting NOW and the issue lever is too slow — an issue waits on a human reading a backlog item, which can be hours or days, and a pilot burning credits or stranded does not have that long. Everything else about the ladder stands: a steer is transient and situational, never a standing rule, and a finding that needs a durable fix (a briefing line, a guard, a missing capability) still goes to the issue lever whether or not you also steer. A finding steered twice wanted an issue the first repeat.",
       "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-strategy-review.md --body-b64 <base64>` — the WHOLE command on ONE LINE, the report body base64-encoded as the --body-b64 value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/ and the writer accepts nothing outside it. Issue-worthy findings go through file-finding.",
     ],
     council: [
@@ -278,14 +285,20 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
   let result: "ok" | "fail" = "fail";
   let error: string | undefined;
   let usage: SpawnUsage = { ...EMPTY_USAGE };
+  let worktreePath: string | null = null;
 
   try {
+    // Ephemeral worktree (#585): the job's cwd is a disposable checkout
+    // pinned to deps.pinnedSha, never the shared control clone — a worktree
+    // creation failure is caught below exactly like a charter-read failure
+    // (never a throw out of runJob), so no separate error path is needed.
+    worktreePath = createJobWorktree(deps.gitRunner, deps.stateDir, cycleId, deps.pinnedSha);
     // Charter read failure is a job failure, recorded, never a throw — a
     // charterless spawn would run an unarmed identity at full cadence.
-    const charterText = readFileSync(join(deps.checkoutDir, job.charterPath), "utf8");
+    const charterText = readFileSync(join(worktreePath, job.charterPath), "utf8");
     let stateNow = "";
     try {
-      stateNow = extractStateNow(readFileSync(join(deps.checkoutDir, "docs", "STATE.md"), "utf8"));
+      stateNow = extractStateNow(readFileSync(join(worktreePath, "docs", "STATE.md"), "utf8"));
     } catch {
       stateNow = ""; // missing STATE.md → MISSING marker; the ceremony still runs
     }
@@ -295,7 +308,7 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     // instead of trusting caller-supplied --job/--cycle flags, so a spawned
     // agent cannot mint fresh cycle ids past the (a)(4) flood cap.
     writeActiveCycle(deps.stateDir, { jobId: job.id, cycleId });
-    const handle = deps.spawner(buildArgv(job), { cwd: deps.checkoutDir, env, stdin: prompt });
+    const handle = deps.spawner(buildArgv(job), { cwd: worktreePath, env, stdin: prompt });
     const raced = await raceTimeout(handle.exited, job.timeoutMs, deps.waitTimeout);
     if (raced === "timeout") {
       handle.kill(); // one hung `claude -p` must never outlive its budget (plan decision 2)
@@ -310,6 +323,10 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     }
   } catch (e) {
     error = e instanceof Error ? e.message : String(e); // file/spawn failure — no secret values in messages
+  } finally {
+    // Unconditional: a job that timed out, threw, or never got a worktree at
+    // all (worktreePath stays null) must never leave disk growth behind.
+    if (worktreePath) removeJobWorktree(deps.gitRunner, worktreePath);
   }
 
   // Anchor advances on ATTEMPT (plan decision 3): a failing job retries at the

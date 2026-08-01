@@ -1,14 +1,15 @@
 // Batch C / Task C3 (#114): spawn composer + runner. Offline: injected
 // spawner/clock/fs, zero live `claude -p` spawns, zero tokens.
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readActiveCycle } from "../src/scheduler/filing";
+import type { GitRunner } from "../src/scheduler/git";
 import { JOBS, type JobDef } from "../src/scheduler/jobs";
 import { POLICY_PATHS } from "../src/scheduler/policy-paths";
-import { loadAnchors } from "../src/scheduler/state";
 import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
+import { loadAnchors } from "../src/scheduler/state";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
@@ -27,6 +28,29 @@ const SENTINELS = {
 
 const CHARTER_TEXT = "# Charter: test\r\n\ttabs — em dash, `backticks`\nNEVER merge.\n";
 
+const TEST_PINNED_SHA = "test-pinned-sha";
+
+// #585: runJob now creates an ephemeral worktree per run via deps.gitRunner
+// instead of reading the shared checkout directly. These tests care about
+// runJob's OWN contract (charter composition, secrets, timeout, logging),
+// not real git worktree semantics (covered separately in
+// test/scheduler-worktree.test.ts against a real repo), so this fake
+// simulates "git worktree add" with a real `cpSync` of the fixture checkout
+// into the target path — enough for runJob's real fs.readFileSync calls to
+// find the charter/STATE.md fixtures created below. Remove/prune are no-ops
+// here: runJob's own removeJobWorktree always backstops with a real rmSync
+// regardless of what the git call returns, so cleanup still happens for real.
+function fakeWorktreeGit(checkoutDir: string): GitRunner {
+  return (args) => {
+    if (args[0] === "worktree" && args[1] === "add") {
+      const path = args[args.length - 2]!;
+      cpSync(checkoutDir, path, { recursive: true });
+      return { stdout: "", exitCode: 0 };
+    }
+    return { stdout: "", exitCode: 0 }; // remove/prune — no-op, fs backstop does the real work
+  };
+}
+
 function makeDirs(stateNowBody = "now-block-content-marker") {
   const checkoutDir = tmp("sched-checkout-");
   const secretsDir = tmp("sched-secrets-");
@@ -43,7 +67,7 @@ function makeDirs(stateNowBody = "now-block-content-marker") {
   for (const [name, value] of Object.entries(SENTINELS)) {
     writeFileSync(join(secretsDir, name), `${value}\n`); // trailing newline like a real secret file
   }
-  return { checkoutDir, secretsDir, stateDir };
+  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), pinnedSha: TEST_PINNED_SHA };
 }
 
 interface SpawnCall {
@@ -125,6 +149,22 @@ describe("spawn composer + runner (C3)", () => {
     expect(calls[0]!.opts.stdin).toContain("STATE NOW MISSING — flag this in your report");
   });
 
+  // Catches (#585): a job's cwd regressing back to the shared control clone
+  // instead of a disposable per-run worktree — the whole point of the fix.
+  // Also proves the worktree is actually removed once the job finishes: a
+  // leaked ephemeral directory per run is exactly the unbounded-disk-growth
+  // failure the reap/removal contract exists to prevent.
+  test("job runs in a fresh per-run worktree under stateDir/worktrees, removed after it finishes", async () => {
+    const dirs = makeDirs();
+    const { spawner, calls } = fakeSpawner(0);
+    const outcome = await runJob(job("standup"), { spawner, clock: () => 1_000_000, ...dirs });
+    expect(outcome.result).toBe("ok");
+    const cwd = calls[0]!.opts.cwd;
+    expect(cwd).toContain(join(dirs.stateDir, "worktrees"));
+    expect(cwd).not.toBe(dirs.checkoutDir); // never the shared control clone
+    expect(existsSync(cwd)).toBe(false); // removed once the run completed
+  });
+
   // Catches: a secret on a command line (security-baseline: env-only; argv is
   // visible in `ps` and logs) — and the right PAT reaching the right job.
   test("no token value appears in argv; env carries the tokens", async () => {
@@ -139,12 +179,20 @@ describe("spawn composer + runner (C3)", () => {
     expect(call.opts.stdin.includes(SENTINELS.claude_oauth_token)).toBe(false); // nor in the prompt
   });
 
-  // Catches: the instruct bearer regressing back into ANY job's env. #114 A1
-  // removed its only transport (the docker-exec steer), so a secret with no
-  // use-path is pure exfil risk (a prompt-injected run with `Bash(gh *)` could
-  // leak an env-held token via a gh comment). No job may hold it until the
-  // steer-transport follow-up restores a real use-path.
-  test("no job's env carries INSTRUCT_BEARER (A1 removed the strategy steer transport, #114)", async () => {
+  // Catches: the instruct bearer regressing back into ANY job's env. A secret
+  // with no use-path is pure exfil risk (a prompt-injected run with `Bash(gh *)`
+  // could leak an env-held token via a gh comment).
+  //
+  // No job may hold it, PERMANENTLY -- there is no longer an expiry condition
+  // on this rule. #114 A1 removed the docker-exec steer, and the earlier version
+  // of this comment said "until the steer-transport follow-up restores a real
+  // use-path". That follow-up is #495, and it deliberately did NOT restore
+  // INSTRUCT_BEARER: the steer rides the store bearer the strategy job already
+  // holds (STORE_BEARER, `POST /api/store/:agentId/steer`), so INSTRUCT_BEARER
+  // has no use-path on any job and never gets one by this route. Left as
+  // written, that sentence read as pre-granted permission for the next agent to
+  // put the token back, which is the exact regression the assertion prevents.
+  test("no job's env carries INSTRUCT_BEARER (the #495 steer rides STORE_BEARER, so this never expires)", async () => {
     for (const j of JOBS) {
       const dirs = makeDirs();
       const { spawner, calls } = fakeSpawner(0);
@@ -305,6 +353,39 @@ describe("spawn composer + runner (C3)", () => {
     // affirmative claim is not).
     expect(prompt).not.toContain("SSHes to the store host");
     expect(prompt).not.toContain("forced-command key");
+  });
+
+  // Catches (#495) the same seam one lever over: the work order telling the
+  // strategy job the steer lever is UNAVAILABLE after the transport shipped.
+  // That text stood from the A1 pivot (2026-07-19) to #495 and was correct
+  // then; left in place afterwards it silently disables the sharpest lever
+  // the job holds, with every offline test still green. Two files with no
+  // shared schema forcing agreement: this prose, and the route in
+  // src/server/server.ts + scripts/strategy-store.ts.
+  test("strategy work order advertises the steer lever as USABLE and names the real command", () => {
+    const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
+    expect(prompt).toContain("bun scripts/strategy-store.ts steer");
+    expect(prompt).toContain("--text-b64");
+    expect(prompt).toContain("500 characters"); // the bound the server enforces
+    expect(prompt).toContain("#527"); // the query-action content rule
+    // The dead advisories, gone. Both are exact strings from the pre-#495
+    // work order, so this fails the moment either is restored.
+    expect(prompt).not.toContain("UNAVAILABLE");
+    expect(prompt).not.toContain("Do NOT attempt a steer");
+  });
+
+  // Catches the L-39 failure the whole base64/one-line convention exists to
+  // prevent: a work order teaching a command form the closed allowedTools
+  // list does not match, which the headless permission layer DENIES at run
+  // time while every offline test stays green. Derives the granted prefix
+  // from the grant string itself rather than hardcoding it, so renaming the
+  // script in one file and not the other turns this red.
+  test("the steer command the work order teaches is covered by the strategy job's existing grant", () => {
+    const grant = "Bash(bun scripts/strategy-store.ts *)";
+    expect(job("strategy").allowedTools).toContain(grant);
+    const grantedPrefix = grant.slice("Bash(".length, -" *)".length); // "bun scripts/strategy-store.ts"
+    const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
+    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --text-b64`);
   });
 
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
