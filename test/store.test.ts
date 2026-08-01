@@ -96,6 +96,27 @@ describe("Store.lastMeasuredFuelPerJump", () => {
     store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { action: "mine" } });
     expect(store.lastMeasuredFuelPerJump("a1", "Prospect")).toBeUndefined();
   });
+
+  // #54 review, finding 1: json_extract THROWS on text that is not JSON, and
+  // this query runs unconditionally every tick from agent.ts's hot path over
+  // an events table that can hold rows from older builds. One malformed row
+  // anywhere in history must not crash-loop the pilot -- same tolerance as
+  // dockTrail's json_valid guard (PR #22 review, F2), applied here.
+  test("a malformed stored payload is discarded, not thrown, and the valid measurement still returns", () => {
+    const dbPath = join(tmpdir(), `spacemolt-store-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+    cleanupPaths.push(dbPath);
+    const store = new Store(dbPath);
+    store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { action: "travel_to", fuelPerJump: 2, shipClass: "Prospect" } });
+    // Written past the appendEvent seam on purpose: appendEvent JSON.stringifys,
+    // so no typed writer can produce this.
+    const raw = new Database(dbPath);
+    raw.query("INSERT INTO events (agent_id, ts, type, payload) VALUES (?, ?, ?, ?)")
+      .run("a1", 2, "action", '{"action":"travel_to","fuelPerJump":');
+    raw.close();
+    expect(() => store.lastMeasuredFuelPerJump("a1", "Prospect")).not.toThrow();
+    expect(store.lastMeasuredFuelPerJump("a1", "Prospect")).toBe(2);
+    store.close();
+  });
 });
 
 describe("Store.loadPlan schema tolerance", () => {

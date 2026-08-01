@@ -335,9 +335,7 @@ describe("Agent reflex integration", () => {
   // pure evaluateReflex unit tests in reflex.test.ts): a travel_to hop this
   // ship already took measured its real fuel-per-jump via find_route, and a
   // LATER tick -- a fresh Agent instance over the SAME store, i.e. surviving a
-  // restart -- must use that measurement instead of percent-of-tank. Both
-  // ticks share fuel 19/130 = 14.6%, below the configured 25% percent floor;
-  // only the measured jump cost tells them apart.
+  // restart -- must use that measurement instead of percent-of-tank.
   describe("fuelPerJump measured from a real travel_to hop governs a later reflex tick (#670)", () => {
     function travelStubApi(shipClass: string, totalJumps: number, estimatedFuel: number) {
       let systemId = "sys-1";
@@ -369,7 +367,16 @@ describe("Agent reflex integration", () => {
 
     const jumpConfig: AgentConfig = { ...baseConfig, reflex: { keepFuelAbovePct: 25, keepFuelAboveJumps: 2 } };
 
-    test("measured 15 fuel/jump (1 jump of range on 19 fuel): a later docked tick fires the reflex", async () => {
+    // #54 review, finding 3: the ORIGINAL version of this test used 19/130
+    // fuel (14.6%), which is below the 25% percent floor too -- so it passed
+    // whether or not fuelPerJump was actually wired through from the store;
+    // the percent fallback alone was enough to fire "refuel" on that input.
+    // 29/100 (29%) is chosen so the two signals DISAGREE: percent alone says
+    // NOT urgent (29% is above the 25% floor), and only the measured 15
+    // fuel/jump (1 jump of range on 29 fuel) says urgent. The reflex can only
+    // fire here if jumps are genuinely overriding percent, not just agreeing
+    // with it.
+    test("measured 15 fuel/jump (1 jump of range on 29 fuel, 29% -- ABOVE the percent floor): fires only because jumps are wired", async () => {
       const store = new Store(":memory:");
       store.savePlan("a1", { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys-3" } }] }, []);
       const travelAgent = new Agent({
@@ -379,13 +386,13 @@ describe("Agent reflex integration", () => {
       await travelAgent.runOnce(); // measures and persists fuelPerJump: 15, shipClass: Dreadnought
 
       const { api: dockedApi, calls } = makeApi({
-        credits: 0, fuel: 19, maxFuel: 130, hull: 100, maxHull: 100,
+        credits: 0, fuel: 29, maxFuel: 100, hull: 100, maxHull: 100,
         cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false, shipClass: "Dreadnought",
       });
       const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
       const laterAgent = new Agent({ id: "a1", persona: "p", api: dockedApi, store, planner, config: jumpConfig, now: () => 2 });
       await laterAgent.runOnce();
-      expect(calls).toEqual(["refuel"]); // 1 jump of range left -- genuinely urgent
+      expect(calls).toEqual(["refuel"]); // 1 jump of range left -- genuinely urgent, despite 29% being fine
     });
 
     test("measured 1 fuel/jump (19 jumps of range on 19 fuel): a later docked tick does NOT fire, despite 14.6% being below the percent floor", async () => {

@@ -241,6 +241,11 @@ const SEAMS: Seam[] = [
     anchors: [/only while docked/i, /strand/i],
   },
   {
+    guard: "fuel urgency by measured jump range, not percent of tank (#670: 19/130 fuel read 14.6% 'critical' by a percent rule while holding 19 jumps of real range on a 1-fuel/jump hull; a live pilot froze 28.5h on it -- a DIFFERENT mechanism from the STRANDED entry above, which is the agent.ts wake/anti-strand path)",
+    code: { file: "src/agent/reflex.ts", marker: "keepFuelAboveJumps" },
+    anchors: [/JUMPS OF RANGE/, /28\.5h/, /opposite reality/i],
+  },
+  {
     guard: "ambient skill-XP excluded from the no-progress signal (#250: LEVEL counts, sub-level XP drip does not)",
     // The LEVEL-only return line: folding xp back into the signature changes
     // this exact line (it becomes `return levels * WEIGHT + xp;`), so the

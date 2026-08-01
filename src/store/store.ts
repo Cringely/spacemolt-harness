@@ -202,12 +202,22 @@ export class Store {
    * caller falls back to percent-of-tank until the new ship completes its own
    * jump. Restart-safe like the other by-type queries here: sourced from the
    * events table, not an in-memory field.
+   *
+   * This runs unconditionally every tick from agent.ts's hot path, over an
+   * events table that can hold rows written by older builds. Same tolerance
+   * as dockTrail's `json_valid(payload)` above, for the same reason (PR #22
+   * review, F2, restated for this query in the #54 review): json_extract
+   * THROWS on text that is not JSON, so one malformed row anywhere in history
+   * would crash-loop the pilot instead of just failing to match. `json_valid`
+   * goes right after the cheap `type = 'action'` test, before either
+   * json_extract, matching dockTrail's ordering.
    */
   lastMeasuredFuelPerJump(agentId: string, shipClass: string | null | undefined): number | undefined {
     if (!shipClass) return undefined;
     const row = this.db
       .query(`SELECT payload FROM events
               WHERE agent_id = ? AND type = 'action'
+                AND json_valid(payload)
                 AND json_extract(payload, '$.fuelPerJump') IS NOT NULL
                 AND json_extract(payload, '$.shipClass') = ?
               ORDER BY id DESC LIMIT 1`)
