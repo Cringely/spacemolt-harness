@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { evaluateReflex } from "../src/agent/reflex";
+import { evaluateReflex, reflexGaveUpAt } from "../src/agent/reflex";
 import type { StatusSnapshot } from "../src/client/client";
 
 function status(overrides: Partial<StatusSnapshot>): StatusSnapshot {
@@ -35,5 +35,55 @@ describe("evaluateReflex", () => {
 
   test("does not fire on a null status", () => {
     expect(evaluateReflex(null, { keepFuelAbovePct: 25 })).toBeNull();
+  });
+
+  // Issue #672: the per-station give-up flags withhold firing the same way
+  // planRemediesFuel/Hull already do.
+  test("withholds refuel when fuelGaveUpHere is set, even below threshold", () => {
+    expect(evaluateReflex(status({ fuel: 10 }), { keepFuelAbovePct: 25 }, false, false, true))
+      .toBeNull();
+  });
+
+  test("withholds repair when hullGaveUpHere is set, even below threshold", () => {
+    expect(evaluateReflex(status({ hull: 20 }), { repairBelowHullPct: 30 }, false, false, false, true))
+      .toBeNull();
+  });
+});
+
+describe("reflexGaveUpAt", () => {
+  test("false with no matching terminal failure recorded", () => {
+    expect(reflexGaveUpAt([], "station_a", "refuel")).toBe(false);
+    expect(reflexGaveUpAt(
+      [{ action: "refuel", stationKey: "station_a", terminal: false }],
+      "station_a", "refuel",
+    )).toBe(false); // recorded but NOT terminal -- a transient failure must not arm the give-up
+  });
+
+  test("true once a terminal failure is recorded for this exact (stationKey, action)", () => {
+    expect(reflexGaveUpAt(
+      [{ action: "refuel", stationKey: "station_a", terminal: true }],
+      "station_a", "refuel",
+    )).toBe(true);
+  });
+
+  test("does not cross station keys: a terminal failure elsewhere doesn't give up here", () => {
+    expect(reflexGaveUpAt(
+      [{ action: "refuel", stationKey: "station_b", terminal: true }],
+      "station_a", "refuel",
+    )).toBe(false);
+  });
+
+  test("does not cross actions: a terminal refuel failure doesn't give up repair at the same station", () => {
+    expect(reflexGaveUpAt(
+      [{ action: "refuel", stationKey: "station_a", terminal: true }],
+      "station_a", "repair",
+    )).toBe(false);
+  });
+
+  test("tolerates a legacy record (no stationKey/terminal fields) without crashing or matching", () => {
+    expect(reflexGaveUpAt(
+      [null, undefined, { action: "refuel" }],
+      "station_a", "refuel",
+    )).toBe(false);
   });
 });

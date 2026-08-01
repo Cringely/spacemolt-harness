@@ -132,7 +132,13 @@ const TRANSIENT_BLOCK_MARKERS = [
 // "Pacing repeated actions to the game tick", SM-12) for the incident.
 const ACTION_PENDING_MARKER = "resolves next tick";
 
-function classifyGameError(e: SpacemoltError): StepResult {
+// Exported for agent.ts's reflex path (issue #672): the reflex's own catch
+// site classified nothing at all before this -- every failure, transient or
+// terminal, was recorded identically. Reusing this SAME classifier (rather
+// than a second terminal/transient text match in reflex territory) is the
+// smaller change and the only way the two call sites can't drift on what
+// counts as terminal.
+export function classifyGameError(e: SpacemoltError): StepResult {
   // #431: transient server-side failure, classified by CODE (the transport's
   // own taxonomy, not message text -- a bodyless 503 carries no game prose for
   // the marker allowlist below to read) and checked FIRST: server health and
