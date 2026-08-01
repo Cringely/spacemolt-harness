@@ -8,6 +8,20 @@
 # Residual: `git commit --no-verify` bypasses any client-side hook (see the
 # gate script header); the morning-read rule is the paired last barrier.
 cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# Core harness prose-lint hook, chained ahead of the D3 fence below. git reads
+# hooks from exactly one directory (core.hooksPath = .githooks here), so
+# agent-harness-core's own .claude/hooks/pre-commit (Vale lint on staged .md,
+# advisory-only, always exits 0) never fires unless something in THIS
+# directory calls it (see core's guardrails.md, "core.hooksPath and other
+# hook managers", which recommends exactly this chaining over repointing the
+# config). Must run BEFORE the `exec` a few lines down: exec replaces this
+# script's process image, so anything placed after it would never run on the
+# bun-present path, which is the common case.
+if [ -f .claude/hooks/pre-commit ]; then
+  sh .claude/hooks/pre-commit
+fi
+
 if command -v bun >/dev/null 2>&1; then
   exec bun scripts/policy-path-gate.ts --staged
 fi
