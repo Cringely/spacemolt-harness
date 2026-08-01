@@ -276,4 +276,58 @@ describe("Agent reflex integration", () => {
     expect(calls).toEqual([]); // give-up withheld the reflex: no second doomed refuel attempt
     expect(store.recentEvents("a1", 20).filter((e) => e.type === "reflex_failed").length).toBe(1); // no new terminal failure recorded
   });
+
+  // Review finding (REVISE, PR #50 round 2): the give-up above read
+  // recentEventsByType(..., "reflex_failed", 50) -- the last 50 events
+  // GLOBALLY -- then filtered per station in memory. Noise at OTHER stations
+  // pushes THIS station's give-up event out of that window with no
+  // station-recovered signal, silently un-arming the give-up. This test arms
+  // the give-up at "market_prime_station", then floods the log with 60
+  // reflex_failed events at a DIFFERENT station (well past the old
+  // REFLEX_FAILURE_LOOKBACK=50 global cap), then proves market_prime_station's
+  // give-up is still armed on the next tick there. toEqual (not toContain) on
+  // `calls`: toContain would still pass even if the give-up failed to hold and
+  // a second doomed refuel ran alongside other calls, masking exactly the
+  // regression this test exists to catch.
+  test("terminal reflex failure at a station survives 60 reflex_failed events at another station (#672 round 2)", async () => {
+    const dockedStation: StatusSnapshot = { ...lowFuelDocked, dockedAt: "market_prime_station" };
+    const calls: string[] = [];
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        calls.push(name);
+        if (name === "refuel") throw new SpacemoltError("command_error", "station_fuel_empty");
+        return { result: "ok" };
+      },
+      async status() { return dockedStation; },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    store.savePlan("a1", { goal: "mine ore", steps: [{ action: "mine", params: {}, repeat: 5 }] }, []);
+    const planner = new MockPlanner([
+      { goal: "p1", steps: [{ action: "undock", params: {} }] },
+      { goal: "p2", steps: [{ action: "undock", params: {} }] },
+    ]);
+    let now = 1;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => now });
+
+    await agent.runOnce(); // tick 1: reflex fires, fails terminal at market_prime_station
+    expect(calls).toEqual(["refuel"]);
+
+    // Flood: 60 reflex_failed events at a different station/key, all newer
+    // than the give-up event above.
+    for (let i = 0; i < 60; i++) {
+      store.appendEvent({
+        agentId: "a1", ts: 1000 + i, type: "reflex_failed",
+        payload: {
+          action: "refuel", reason: "station_fuel_empty", message: "noise",
+          stationKey: "other_station", terminal: true, key: "other_station:refuel",
+        },
+      });
+    }
+
+    now = 2;
+    calls.length = 0;
+    await agent.runOnce(); // tick 2: market_prime_station, still below threshold
+    expect(calls).toEqual([]); // give-up still armed despite the flood elsewhere
+  });
 });

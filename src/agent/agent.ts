@@ -210,12 +210,19 @@ const HEARTBEAT_SLOW_DIMS = ["skill_levels", "achievements_earned"] as const;
 // into jumps; jump/travel are the raw registry verbs).
 const MOVEMENT_ACTIONS = new Set(["travel_to", "jump", "travel"]);
 
-// Issue #672: bound on the reflex_failed lookback the per-station give-up
-// reads (recentEventsByType). Same sizing rationale as MAX_SPARSE_RULES/
-// MAX_INCOMPATIBLE_POIS below -- the memory only needs to outlast the
-// livelock cadence it exists to break (the production incident produced 30
-// reflex_failed events in 5 minutes), and a bound guarantees the query stays
-// cheap on a long-lived pilot rather than growing with its lifetime.
+// Issue #672 (review REVISE, PR #50 round 2): bound on the reflex_failed
+// give-up read. Grouped by the per-(stationKey, action) `key` payload field
+// via latestEventPerPayloadKey, so this now bounds DISTINCT (station, action)
+// PAIRS, not raw events -- reflex noise at other stations/actions can no
+// longer evict this station's give-up record the way a flat last-50-events
+// window did (round-1 bug: a busy pilot's OTHER-station failures pushed a
+// station's own terminal failure out of a global window, silently
+// un-arming the give-up with no station-recovered signal). Same sizing
+// rationale as MAX_SPARSE_RULES/MAX_INCOMPATIBLE_POIS below -- the memory
+// only needs to outlast the livelock cadence it exists to break (the
+// production incident produced 30 reflex_failed events in 5 minutes at ONE
+// station, i.e. one key), and a bound guarantees the query stays cheap on a
+// long-lived pilot rather than growing with its lifetime.
 const REFLEX_FAILURE_LOOKBACK = 50;
 
 // Deterministic server-failure retry (#431, live 2026-07-19: each travel 503
@@ -1033,26 +1040,28 @@ export class Agent {
     // in-memory counter -- the durable-state lesson stall-monitor.ts's
     // dockNoStationStreak already learned the hard way (PR #32: an in-memory
     // streak reset on any interleaving outcome and was measured inert over
-    // 5000 ticks). Bounded read (REFLEX_FAILURE_LOOKBACK) like the other
-    // bounded event-log memories in this file (MAX_SPARSE_RULES etc.) --
-    // skipped entirely while undocked, since evaluateReflex never fires
-    // there anyway.
+    // 5000 ticks).
     //
-    // Accepted residual (review, PR #50): the give-up's only eviction path is
-    // REFLEX_FAILURE_LOOKBACK aging the record out among the agent's last 50
-    // reflex_failed events GLOBALLY, not scoped to this station -- an
-    // accident of the bound, not a designed "the station's tank recovered"
-    // signal. Nothing here ever re-checks whether the station's fuel came
-    // back. Accepted because the blast radius is bounded: the give-up gates
-    // only the zero-cost REFLEX, never the planner's own explicit refuel
-    // step (planRemediesFuel, above, is untouched by it), so the cost of
-    // being wrong is a permanently-skipped free path at one station, not a
-    // strand -- the planner can still send an explicit refuel there any time
-    // and it will be attempted normally. No TTL added in this PR; revisit if
-    // a pilot is ever observed returning to a since-recovered station.
+    // latestEventPerPayloadKey, NOT recentEventsByType (review REVISE, PR #50
+    // round 2 -- the identical bug shape store.ts:151-165 already documents
+    // for station memory, #517): recentEventsByType takes the last N EVENTS
+    // GLOBALLY, so a pilot failing reflexes at OTHER stations or on OTHER
+    // actions pushes THIS station's give-up event out of the window with no
+    // station-recovered signal involved, silently un-arming the give-up on
+    // ordinary noise elsewhere. Grouping on the `key` payload field (set at
+    // the emit site, fireReflex below, to `${stationKey}:${action}`) gives
+    // each (station, action) pair exactly one row, so REFLEX_FAILURE_LOOKBACK
+    // bounds distinct PAIRS and no amount of chatter about one station can
+    // evict another's. A pre-fix event with no `key` field is skipped by the
+    // query itself (`json_extract(...) IS NOT NULL`), the same tolerant-load
+    // discipline the other bounded event-log memories in this file use
+    // (AGENTS.md persisted-state tolerance) -- the ~4,140 keyless
+    // reflex_failed rows already in the live pilot's DB just never match and
+    // never arm a give-up, never a crash. Skipped entirely while undocked,
+    // since evaluateReflex never fires there anyway.
     const stationKey = status?.dockedAt ?? null;
     const recentReflexFailures = status?.docked && stationKey !== null
-      ? this.store.recentEventsByType(this.id, "reflex_failed", REFLEX_FAILURE_LOOKBACK)
+      ? this.store.latestEventPerPayloadKey(this.id, "reflex_failed", "key", REFLEX_FAILURE_LOOKBACK)
           .map((e) => e.payload as ReflexFailureRecord)
       : [];
     const fuelGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel");
@@ -1437,7 +1446,14 @@ export class Agent {
   // stationKey (issue #672): the docked base id this attempt is made at,
   // carried onto a failed fire's event so agent.ts's give-up read
   // (reflexGaveUpAt) can match "this exact station" on a later tick -- see
-  // the call site above for how the key is derived and why.
+  // the call site above for how the key is derived and why. The payload's
+  // `key` field (round 2, review REVISE) is the store's latestEventPerPayloadKey
+  // grouping key, `${stationKey}:${action}` -- the same composite-key
+  // convention wake.ts's blockedOutcomeKey uses -- not a field reflexGaveUpAt
+  // itself reads. Omitted (left undefined) when stationKey is null (docked at
+  // a non-base POI, e.g. an asteroid belt): the give-up can never arm without
+  // a station key either (see the call site's `stationKey !== null` guards),
+  // so an ungrouped row here is simply never queried back.
   private async fireReflex(reflex: ReturnType<typeof evaluateReflex>, stationKey: string | null): Promise<boolean> {
     if (!reflex) return false;
     try {
@@ -1459,6 +1475,7 @@ export class Agent {
         action: reflex.action, reason: reflex.reason,
         message: e instanceof Error ? e.message : String(e),
         stationKey, terminal,
+        key: stationKey !== null ? `${stationKey}:${reflex.action}` : undefined,
       });
       return false;
     }
