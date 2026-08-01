@@ -22,7 +22,7 @@ _Refreshed 2026-08-01. Boot from this block + `docs/backlog.md` (GitHub Issues a
 
 **REDEPLOY FINDINGS, RESOLVED.** PR #46 fixed the gate that blocked redeploy status confirmation. #657/#660/#663 all closed: production had been running current code (verified by `git merge-base --is-ancestor`). #667 filed: ceremonies cannot confirm a deploy; fix is emitting the image tag into the event log the seat already reads. #668 filed: `workflow_dispatch` also permits manual runs to move production `latest-main` tag (a manual run was demonstrated and cancelled before tagging).
 
-**THEN.** #534, #535, #537, #538, #529 and backlog issues tracked in `docs/backlog.md` (172 open issues).
+**THEN.** #534, #535, #537, #538, #529 and backlog issues tracked in `docs/backlog.md` (171 open issues).
 
 ## Standing operational facts
 
