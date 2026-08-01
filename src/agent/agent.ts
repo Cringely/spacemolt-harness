@@ -981,10 +981,19 @@ export class Agent {
     // sits upstream of the wake and needs the identical awareness -- see
     // evaluateReflex's doc comment for why a plan-remedies signal must gate
     // firing, not just the wake.
+    //
+    // Review finding (PR #47): a `refuel` step is only a SELF-remedy without
+    // `params.target` -- `target` set means ship-to-ship transfer OUT
+    // (docs/game-reference/upstream/guides/fuel.md:176-186), which drains the
+    // pilot's own tank further and must not suppress the safety reflex.
+    // `repair` has no params at all (src/registry/actions.ts) so no
+    // equivalent check applies there.
     const remaining = this.plan && this.planState === "running"
       ? this.plan.steps.slice(this.cursor.step)
       : [];
-    const planRemediesFuel = remaining.some((s) => s.action === "refuel");
+    const planRemediesFuel = remaining.some(
+      (s) => s.action === "refuel" && (s.params as { target?: string }).target === undefined
+    );
     const planRemediesHull = remaining.some((s) => s.action === "repair");
 
     // Reflex check first, before wake evaluation: zero-token, declarative
