@@ -1000,41 +1000,56 @@ export class Agent {
     const remaining = this.plan && this.planState === "running"
       ? this.plan.steps.slice(this.cursor.step)
       : [];
-    const planHasSelfRefuelStep = remaining.some(
+    // Issue #672 (review BLOCK, PR #50): a `planTravelsToFuel` predicate --
+    // "every remaining step is pure relocation (a MOVEMENT_ACTIONS hop or
+    // `dock`)" -- was tried here and reverted. It matched on action TYPE
+    // only, never destination or purpose, and production plans normally look
+    // exactly like `[travel_to X, dock]` with the next action (refuel, mine,
+    // whatever) added by a LATER replan once the destination is reached. That
+    // makes relocation-only the ordinary shape of nearly every plan, not an
+    // edge case -- so the predicate would have gone true for "traveling to
+    // mine" as readily as "traveling to refuel", silencing BOTH the reflex
+    // AND evaluateWake's low_fuel branch (planRemediesFuel gates both) for
+    // most travel. That is issue #526 (a pilot mined itself to 2/130 and
+    // stranded because the fuel floor was advisory) recreated with travel
+    // plans standing in for mining plans. A destination-aware version --
+    // evidence the destination actually HAS fuel, not merely that the plan
+    // moves -- is real follow-up work, tracked as the open remainder of
+    // #672; this PR ships only the give-up below, which does not have this
+    // failure mode (it acts on a PROVEN station fact, not a plan shape).
+    const planRemediesFuel = remaining.some(
       (s) => s.action === "refuel" && (s.params as { target?: string }).target === undefined
     );
-    // Issue #672: planHasSelfRefuelStep only recognizes "refuel right here."
-    // Production evidence: a docked, low-fuel pilot's plan was correctly
-    // "Leave Market Prime and reach Haven's Grand Exchange Station to refuel
-    // if fuel is available", steps [travel_to, dock] -- no refuel step exists
-    // yet, because the destination hasn't been reached (a future replan there
-    // adds it). planTravelsToFuel recognizes that shape STRUCTURALLY: every
-    // remaining step is pure relocation (a MOVEMENT_ACTIONS hop or a `dock`),
-    // with at least one actual movement step present. Deliberately narrower
-    // than "any plan suppresses the reflex" (issue #526: a plan that keeps
-    // MINING while fuel drains must still let the reflex protect the tank) --
-    // `.every` means one `mine`/`survey`/etc. step anywhere in the remainder
-    // disqualifies the whole plan, so a mixed plan still gets the safety
-    // refuel it needs.
-    const planTravelsToFuel = remaining.length > 0
-      && remaining.some((s) => MOVEMENT_ACTIONS.has(s.action))
-      && remaining.every((s) => MOVEMENT_ACTIONS.has(s.action) || s.action === "dock");
-    const planRemediesFuel = planHasSelfRefuelStep || planTravelsToFuel;
     const planRemediesHull = remaining.some((s) => s.action === "repair");
 
-    // Issue #672 (part 1): a per-station give-up backstop for a TERMINAL
-    // reflex failure, for the cases planRemediesFuel/Hull still doesn't cover
-    // (no plan at all, or a plan unrelated to the vital). stationKey is the
-    // docked base id (StatusSnapshot.dockedAt) -- the reflex only ever fires
-    // while docked, so this is always the station the failure would repeat
-    // at. Read from the persisted reflex_failed stream (reflexGaveUpAt, see
-    // reflex.ts) rather than an in-memory counter -- the durable-state lesson
-    // stall-monitor.ts's dockNoStationStreak already learned the hard way
-    // (PR #32: an in-memory streak reset on any interleaving outcome and was
-    // measured inert over 5000 ticks). Bounded read (REFLEX_FAILURE_LOOKBACK)
-    // like the other bounded event-log memories in this file (MAX_SPARSE_RULES
-    // etc.) -- skipped entirely while undocked, since evaluateReflex never
-    // fires there anyway.
+    // Issue #672: a per-station give-up backstop for a TERMINAL reflex
+    // failure. This is the mechanism that fixes the production livelock: the
+    // reflex stops consuming every tick at a station where its action is
+    // terminally impossible, so the pending plan (whatever it is) gets its
+    // turn again. stationKey is the docked base id (StatusSnapshot.dockedAt)
+    // -- the reflex only ever fires while docked, so this is always the
+    // station the failure would repeat at. Read from the persisted
+    // reflex_failed stream (reflexGaveUpAt, see reflex.ts) rather than an
+    // in-memory counter -- the durable-state lesson stall-monitor.ts's
+    // dockNoStationStreak already learned the hard way (PR #32: an in-memory
+    // streak reset on any interleaving outcome and was measured inert over
+    // 5000 ticks). Bounded read (REFLEX_FAILURE_LOOKBACK) like the other
+    // bounded event-log memories in this file (MAX_SPARSE_RULES etc.) --
+    // skipped entirely while undocked, since evaluateReflex never fires
+    // there anyway.
+    //
+    // Accepted residual (review, PR #50): the give-up's only eviction path is
+    // REFLEX_FAILURE_LOOKBACK aging the record out among the agent's last 50
+    // reflex_failed events GLOBALLY, not scoped to this station -- an
+    // accident of the bound, not a designed "the station's tank recovered"
+    // signal. Nothing here ever re-checks whether the station's fuel came
+    // back. Accepted because the blast radius is bounded: the give-up gates
+    // only the zero-cost REFLEX, never the planner's own explicit refuel
+    // step (planRemediesFuel, above, is untouched by it), so the cost of
+    // being wrong is a permanently-skipped free path at one station, not a
+    // strand -- the planner can still send an explicit refuel there any time
+    // and it will be attempted normally. No TTL added in this PR; revisit if
+    // a pilot is ever observed returning to a since-recovered station.
     const stationKey = status?.dockedAt ?? null;
     const recentReflexFailures = status?.docked && stationKey !== null
       ? this.store.recentEventsByType(this.id, "reflex_failed", REFLEX_FAILURE_LOOKBACK)

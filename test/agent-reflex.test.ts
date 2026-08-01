@@ -233,15 +233,18 @@ describe("Agent reflex integration", () => {
   // whose remaining steps were pure travel-and-dock (no refuel step -- the
   // destination hadn't been reached yet). planRemediesFuel didn't recognize
   // that shape, so the reflex fired every tick, failed every tick on the
-  // station's genuinely empty tank (`station_fuel_empty`), and each failure
-  // spent the tick -- 30 reflex_failed in 5 minutes, the travel step never ran.
+  // station's empty tank (`station_fuel_empty`), and each failure spent the
+  // tick -- 30 reflex_failed in 5 minutes, the travel step never ran.
   //
-  // Part 1: the per-station give-up. No plan is seeded here on purpose (a
-  // running "mine" plan is used instead of none, so the give-up is proven in
-  // isolation from planRemediesFuel -- a mine step is not a fuel remedy by
-  // either the old or the widened predicate). Tick 1 reproduces the terminal
-  // failure at the station; tick 2 proves the SAME doomed call is withheld,
-  // not retried, at that exact station.
+  // This is the fix that closes the livelock: a per-station give-up on a
+  // TERMINAL reflex failure, independent of what the pending plan is. A
+  // running "mine" plan is seeded (rather than none) to prove the give-up
+  // does not depend on any plan-shape recognition -- a mine step is not a
+  // fuel remedy under any version of planRemediesFuel, so this isolates the
+  // give-up cleanly. Tick 1 reproduces the terminal failure at the station;
+  // tick 2 proves the SAME doomed call is withheld, not retried, at that
+  // exact station. (A destination-aware travel-toward-fuel remedy is real
+  // follow-up work, not shipped here -- see docs/decisions.md, 2026-08-01.)
   test("terminal reflex failure at a station: does not retry there next tick (#672)", async () => {
     const dockedStation: StatusSnapshot = { ...lowFuelDocked, dockedAt: "market_prime_station" };
     const calls: string[] = [];
@@ -272,51 +275,5 @@ describe("Agent reflex integration", () => {
     await agent.runOnce(); // tick 2: same station, still below threshold
     expect(calls).toEqual([]); // give-up withheld the reflex: no second doomed refuel attempt
     expect(store.recentEvents("a1", 20).filter((e) => e.type === "reflex_failed").length).toBe(1); // no new terminal failure recorded
-  });
-
-  // Part 2: the widened remedy predicate. Reproduces the production plan
-  // shape directly (travel + dock, no refuel step) and proves the reflex is
-  // withheld so the plan's own relocation step gets the tick -- "jump" stands
-  // in for the production's travel_to (both are MOVEMENT_ACTIONS; jump avoids
-  // mocking find_route). failRefuel:true means an unwithheld reflex would
-  // show up unmistakably in `calls`.
-  test("plan travels toward fuel (jump + dock, no refuel step yet): reflex defers to the plan (#672)", async () => {
-    const { api, calls } = makeApi(lowFuelDocked, { failRefuel: true });
-    const store = new Store(":memory:");
-    store.savePlan("a1", {
-      goal: "Leave Market Prime and reach Haven's Grand Exchange Station to refuel if fuel is available.",
-      steps: [
-        { action: "jump", params: { id: "haven" } },
-        { action: "dock", params: {} },
-      ],
-    }, []);
-    const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
-    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
-
-    await agent.runOnce();
-    expect(calls).toEqual(["jump"]); // reflex must NOT fire; the plan's own relocation step gets the tick
-    expect(store.recentEvents("a1", 10).map((e) => e.type)).not.toContain("reflex_failed");
-  });
-
-  // Negative case for the widened predicate (issue #526 recreation check): a
-  // plan that travels but ALSO mines is not pure relocation, so it must NOT
-  // suppress the safety reflex -- exactly the shape #526 warns about (a plan
-  // that keeps draining a resource while docked/low fuel goes unprotected).
-  test("plan travels but also mines (mixed plan): reflex still fires, not a remedy (#672, #526 guard)", async () => {
-    const { api, calls } = makeApi(lowFuelDocked, { failRefuel: true });
-    const store = new Store(":memory:");
-    store.savePlan("a1", {
-      goal: "reroute to a richer belt",
-      steps: [
-        { action: "jump", params: { id: "belt-system" } },
-        { action: "mine", params: {} },
-      ],
-    }, []);
-    const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
-    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
-
-    await agent.runOnce();
-    expect(calls).toEqual(["refuel"]); // reflex still fires: a mine step ahead disqualifies the plan
-    expect(store.recentEvents("a1", 10).map((e) => e.type)).toContain("reflex_failed");
   });
 });
