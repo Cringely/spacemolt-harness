@@ -24,19 +24,8 @@ name: container
 on:
   push:
     branches: [main]
-    paths: &gate_paths
-      - "src/**"
-      - "test/**"
-      - "scripts/**"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "package.json"
-      - "bun.lock"
-      - "tsconfig.json"
-      - ".github/workflows/container.yml"
   pull_request:
     branches: [main]
-    paths: *gate_paths
   workflow_dispatch:
 
 # Minimal default; jobs elevate only what they need.
