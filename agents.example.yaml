@@ -36,7 +36,13 @@ agents:
     # fallback_planner: { provider: claude-subscription, model: sonnet }
     # experiment: { revert_if_no: any, within_hours: 12 }
     # Zero-token reflex: auto-refuel while docked, no planner call needed.
-    reflex: { keep_fuel_above: 30 }
+    # keep_fuel_above is percent-of-tank (issue #670: the wrong metric on its
+    # own -- 19/130 fuel read as a 14.6% emergency while being 19 jumps of
+    # range). keep_fuel_above_jumps expresses the floor in jumps instead, and
+    # takes over once this ship has completed one measured jump; keep_fuel_above
+    # stays as the bootstrap for the window before that. Both optional and
+    # additive -- set one, the other, or both.
+    reflex: { keep_fuel_above: 30, keep_fuel_above_jumps: 2 }
     # Deterministic, dashboard-visible progress pulse: every N minutes emit a
     # progress_heartbeat reporting whether any progress dimension advanced since
     # the last one. Reports only (never acts); default 30. Zero LLM cost.

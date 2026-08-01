@@ -58,6 +58,67 @@ describe("Store", () => {
   });
 });
 
+// Issue #670 producer fix: the reflex's range signal is read back from the
+// persisted action-event stream, not an in-memory field, so it survives a
+// restart (same convention as reflexGaveUpAt's reflex_failed reads).
+describe("Store.lastMeasuredFuelPerJump", () => {
+  test("undefined with no measured jump on record", () => {
+    const store = new Store(":memory:");
+    expect(store.lastMeasuredFuelPerJump("a1", "Prospect")).toBeUndefined();
+  });
+
+  test("returns the most recent measurement for the given ship class", () => {
+    const store = new Store(":memory:");
+    store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { action: "travel_to", fuelPerJump: 1, shipClass: "Prospect" } });
+    store.appendEvent({ agentId: "a1", ts: 2, type: "action", payload: { action: "travel_to", fuelPerJump: 3, shipClass: "Prospect" } });
+    expect(store.lastMeasuredFuelPerJump("a1", "Prospect")).toBe(3);
+  });
+
+  // switch_ship staleness guard: a measurement recorded under a DIFFERENT ship
+  // class must not answer for the current one -- a stale, cheaper number would
+  // understate range on a costlier hull, exactly the direction issue #526
+  // warns against.
+  test("a measurement recorded under a different ship class does not match", () => {
+    const store = new Store(":memory:");
+    store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { fuelPerJump: 1, shipClass: "Prospect" } });
+    expect(store.lastMeasuredFuelPerJump("a1", "Dreadnought")).toBeUndefined();
+  });
+
+  test("undefined when the current ship class is unknown", () => {
+    const store = new Store(":memory:");
+    store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { fuelPerJump: 1, shipClass: "Prospect" } });
+    expect(store.lastMeasuredFuelPerJump("a1", undefined)).toBeUndefined();
+    expect(store.lastMeasuredFuelPerJump("a1", null)).toBeUndefined();
+  });
+
+  test("ignores events with no fuelPerJump (ordinary action noise)", () => {
+    const store = new Store(":memory:");
+    store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { action: "mine" } });
+    expect(store.lastMeasuredFuelPerJump("a1", "Prospect")).toBeUndefined();
+  });
+
+  // #54 review, finding 1: json_extract THROWS on text that is not JSON, and
+  // this query runs unconditionally every tick from agent.ts's hot path over
+  // an events table that can hold rows from older builds. One malformed row
+  // anywhere in history must not crash-loop the pilot -- same tolerance as
+  // dockTrail's json_valid guard (PR #22 review, F2), applied here.
+  test("a malformed stored payload is discarded, not thrown, and the valid measurement still returns", () => {
+    const dbPath = join(tmpdir(), `spacemolt-store-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+    cleanupPaths.push(dbPath);
+    const store = new Store(dbPath);
+    store.appendEvent({ agentId: "a1", ts: 1, type: "action", payload: { action: "travel_to", fuelPerJump: 2, shipClass: "Prospect" } });
+    // Written past the appendEvent seam on purpose: appendEvent JSON.stringifys,
+    // so no typed writer can produce this.
+    const raw = new Database(dbPath);
+    raw.query("INSERT INTO events (agent_id, ts, type, payload) VALUES (?, ?, ?, ?)")
+      .run("a1", 2, "action", '{"action":"travel_to","fuelPerJump":');
+    raw.close();
+    expect(() => store.lastMeasuredFuelPerJump("a1", "Prospect")).not.toThrow();
+    expect(store.lastMeasuredFuelPerJump("a1", "Prospect")).toBe(2);
+    store.close();
+  });
+});
+
 describe("Store.loadPlan schema tolerance", () => {
   // A plan an OLDER build stored before the chat.target enum tightening: the
   // then-permissive z.string() let "broadcast" through, which the current

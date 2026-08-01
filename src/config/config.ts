@@ -163,6 +163,13 @@ const AgentEntrySchema = z.object({
   repeat_block_window_minutes: z.number().int().min(1).default(AGENT_DEFAULTS.repeatBlockWindowMinutes),
   reflex: z.object({
     keep_fuel_above: z.number().min(0).max(100).optional(),
+    // Issue #670: range in jumps, not percent of tank -- see
+    // reflex.ts's evaluateReflex doc comment. Additive, not a rename of
+    // keep_fuel_above: an existing agents.yaml keeps parsing and behaving
+    // exactly as before (percent governs until this ship's first measured
+    // jump either way), so adopting the fix is an explicit opt-in rather
+    // than a synchronized config/code deploy.
+    keep_fuel_above_jumps: z.number().int().min(0).optional(),
     repair_below_hull: z.number().min(0).max(100).optional(),
   }).strict().optional(),
   improv: ImprovSpecSchema.optional(),
@@ -228,7 +235,7 @@ export interface AgentEntry {
   progressHeartbeatMinutes: number;
   repeatBlockThreshold: number;
   repeatBlockWindowMinutes: number;
-  reflex?: { keepFuelAbovePct?: number; repairBelowHullPct?: number };
+  reflex?: { keepFuelAbovePct?: number; keepFuelAboveJumps?: number; repairBelowHullPct?: number };
   // Improv seam (Batch B). `improv` is present only when the block is configured;
   // `mode` is DERIVED — "improv" iff the block exists and is enabled, else
   // "plan-then-execute" (the default when the block is absent). Kept as a derived
@@ -302,7 +309,11 @@ export function loadConfig(path: string): HarnessConfig {
       repeatBlockThreshold: a.repeat_block_threshold,
       repeatBlockWindowMinutes: a.repeat_block_window_minutes,
       reflex: a.reflex
-        ? { keepFuelAbovePct: a.reflex.keep_fuel_above, repairBelowHullPct: a.reflex.repair_below_hull }
+        ? {
+            keepFuelAbovePct: a.reflex.keep_fuel_above,
+            keepFuelAboveJumps: a.reflex.keep_fuel_above_jumps,
+            repairBelowHullPct: a.reflex.repair_below_hull,
+          }
         : undefined,
       improv: a.improv
         ? {

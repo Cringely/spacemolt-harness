@@ -1067,6 +1067,12 @@ export class Agent {
     const fuelGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel");
     const hullGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "repair");
 
+    // Issue #670: this ship's own measured fuel-per-jump (undefined until its
+    // first completed jump, or after a switch_ship until the new hull's
+    // first). See reflex.ts's evaluateReflex doc comment for why this
+    // replaces percent-of-tank rather than adding to it.
+    const fuelPerJump = this.store.lastMeasuredFuelPerJump(this.id, status?.shipClass);
+
     // Reflex check first, before wake evaluation: zero-token, declarative
     // rules (auto-refuel/repair while docked) that don't need the planner at
     // all. A successful fire suppresses the wake entirely for this tick. A
@@ -1077,7 +1083,10 @@ export class Agent {
     // (issue #543); fuelGaveUpHere/hullGaveUpHere stop it once a terminal
     // failure at this exact station has already proven a retry is pointless
     // (issue #672).
-    const reflex = evaluateReflex(status, this.config.reflex ?? {}, planRemediesFuel, planRemediesHull, fuelGaveUpHere, hullGaveUpHere);
+    const reflex = evaluateReflex(
+      status, this.config.reflex ?? {}, fuelPerJump,
+      planRemediesFuel, planRemediesHull, fuelGaveUpHere, hullGaveUpHere,
+    );
     let reflexSpentTick = false;
     if (reflex) {
       reflexSpentTick = true;
@@ -3016,9 +3025,15 @@ export class Agent {
     // broken capabilities (#571, #581). Written by spread, not as an explicit
     // `undefined`, so a game/legacy block's payload is byte-identical to today's
     // and the absent field keeps meaning "the game refused us".
+    // fuelPerJump/shipClass (issue #670) ride along the same way, only on a
+    // travel_to hop that measured one -- store.lastMeasuredFuelPerJump reads
+    // them back for the reflex.
     this.emit("action", {
       action: step?.action, params: step?.params, outcome: result.kind, result: result.resultText,
       ...(result.kind === "blocked" && result.guard ? { guard: true } : {}),
+      ...(result.kind === "continue" && result.fuelPerJump !== undefined
+        ? { fuelPerJump: result.fuelPerJump, shipClass: result.shipClass }
+        : {}),
     });
 
     // Station geography (issue #517): learn here, at the one seam where the

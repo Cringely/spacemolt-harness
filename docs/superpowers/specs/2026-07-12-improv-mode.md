@@ -60,6 +60,18 @@ Resources / survival:
 - refuel and repair work ONLY while docked. Watch fuel actively; before any multi-hop move,
   confirm you can reach a station and top up while docked. Never let fuel strand you between
   systems — an undocked ship at 0 fuel is dead (this happened live, 2026-07-12).
+- Judge fuel urgency by JUMPS OF RANGE, never by percent of tank capacity. `find_route` to any
+  destination reports `fuel_per_jump` (or `estimated_fuel`/`total_jumps` — divide) — that is your
+  ship's real per-jump cost, and fuel ÷ that cost is how many jumps you actually have left. A tank
+  reading a low PERCENTAGE is not an emergency if the ship's own jumps are cheap: live 2026-08-01,
+  a pilot at 19/130 fuel (14.6%, "critical" by a percent rule) held 19 jumps of range on a
+  1-fuel/jump hull and sat frozen for 28.5h refusing to travel on fuel that could have carried it
+  anywhere nearby. The same 19 fuel on a hull costing 15/jump is one jump from stranded — same
+  percentage, opposite reality. Never hardcode a fuel-per-jump number for any hull; always read it
+  from `find_route` or derive it from an actual jump you just took (fuel before minus fuel after).
+  (Also a §5 deterministic backstop: in plan-then-execute the reflex measures this ship's own
+  fuel-per-jump from the `find_route` response every `travel_to` hop already fetches and judges its
+  auto-refuel threshold in jumps once that measurement exists — issue #670.)
 - If you've already committed to a remedy (heading to refuel), don't re-open that decision every
   tick just because the condition still reads bad. Commit until it completes or provably fails —
   re-deciding a fix already under way is the classic token-burning livelock.

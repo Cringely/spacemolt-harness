@@ -475,6 +475,12 @@ describe("executeTick: travel_to macro", () => {
   function stubRouteApi(opts: {
     systemId: string; nextHopId?: string; notFoundMessage?: string;
     failFind?: SpacemoltError; failJump?: SpacemoltError;
+    // Issue #670: totalJumps/estimatedFuel/fuelPerJump let a test drive both
+    // shapes measuredFuelPerJump() reads (see executor.ts) -- the ratio
+    // fallback (2026-07-10 VERIFIED shape) and the direct field (2026-08-01
+    // live capture). shipClass rides on status() so travelToTick's guard
+    // (fuelPerJump AND shipClass both known) can be exercised or withheld.
+    totalJumps?: number; estimatedFuel?: number; fuelPerJumpField?: number; shipClass?: string;
   }) {
     const calls: Array<{ name: string; params?: Record<string, unknown> }> = [];
     let systemId = opts.systemId;
@@ -488,7 +494,8 @@ describe("executeTick: travel_to macro", () => {
           }
           return {
             structuredContent: {
-              found: true, total_jumps: 1, estimated_fuel: 1, fuel_available: 130,
+              found: true, total_jumps: opts.totalJumps ?? 1, estimated_fuel: opts.estimatedFuel ?? 1, fuel_available: 130,
+              ...(opts.fuelPerJumpField !== undefined ? { fuel_per_jump: opts.fuelPerJumpField } : {}),
               message: "Route found: 1 jump(s).",
               route: [
                 { jumps: 0, name: systemId, system_id: systemId },
@@ -509,6 +516,7 @@ describe("executeTick: travel_to macro", () => {
         return {
           credits: 0, fuel: 50, maxFuel: 100, hull: 100, maxHull: 100,
           cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false, systemId,
+          ...(opts.shipClass !== undefined ? { shipClass: opts.shipClass } : {}),
         };
       },
       async notifications() { return []; },
@@ -531,6 +539,39 @@ describe("executeTick: travel_to macro", () => {
     expect(r).toEqual({ kind: "continue", cursor: { step: 0, iteration: 1 }, resultText: "ok" });
     expect(calls.map((c) => c.name)).toEqual(["find_route", "jump"]);
     expect(calls[1]!.params).toEqual({ id: "sys-2" });
+  });
+
+  // Issue #670 producer fix: the jump this step just took already told us the
+  // real fuel cost via find_route -- this is where the reflex's range signal
+  // comes from, with zero new game calls.
+  describe("fuelPerJump measurement", () => {
+    test("derives fuelPerJump from estimated_fuel/total_jumps when the ship class is known", async () => {
+      const { api } = stubRouteApi({
+        systemId: "sys-1", nextHopId: "sys-2", totalJumps: 1, estimatedFuel: 15, shipClass: "Dreadnought",
+      });
+      const plan: Plan = { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys-3" } }] };
+      const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+      expect(r).toEqual({
+        kind: "continue", cursor: { step: 0, iteration: 1 }, resultText: "ok",
+        fuelPerJump: 15, shipClass: "Dreadnought",
+      });
+    });
+
+    test("prefers the direct fuel_per_jump field over the ratio when both are present", async () => {
+      const { api } = stubRouteApi({
+        systemId: "sys-1", nextHopId: "sys-2", totalJumps: 1, estimatedFuel: 1, fuelPerJumpField: 1, shipClass: "Prospect",
+      });
+      const plan: Plan = { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys-3" } }] };
+      const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+      expect((r as { fuelPerJump?: number }).fuelPerJump).toBe(1);
+    });
+
+    test("omits fuelPerJump when the ship class is unknown -- nothing to key a later match on", async () => {
+      const { api } = stubRouteApi({ systemId: "sys-1", nextHopId: "sys-2", totalJumps: 1, estimatedFuel: 15 });
+      const plan: Plan = { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys-3" } }] };
+      const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+      expect((r as { fuelPerJump?: number }).fuelPerJump).toBeUndefined();
+    });
   });
 
   test("arrival on a later tick advances the plan", async () => {
