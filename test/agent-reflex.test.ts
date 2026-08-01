@@ -103,6 +103,119 @@ describe("Agent reflex integration", () => {
     expect(store.recentEvents("a1", 10).map((e) => e.type)).toContain("reflex_failed");
   });
 
+  // Issue #543 livelock reproduction. Ground truth (production, 2026-08-01):
+  // a plan already carrying "buy fuel_cell" -> "refuel" sat frozen at cursor 0
+  // for 4.5+ hours while `reflex_failed{action:"refuel",reason:"station_fuel_empty"}`
+  // repeated every tick. wake.ts's planRemediesFuel (Layer 1) already stops the
+  // WAKE from replacing this plan, but evaluateReflex fires BEFORE wake is even
+  // evaluated and has no such awareness -- it retries the bare station refuel
+  // every tick regardless of an in-flight plan, and a failed fire still sets
+  // reflexSpentTick, which skips executeOne (agent.ts's `!reflexSpentTick && ...`
+  // guards). The plan's own "buy" step -- the only thing that can ever make the
+  // reflex succeed -- never gets a turn. toEqual (not toContain) is required
+  // here: toContain("buy") would still pass if the reflex fired FIRST and buy
+  // ran second, masking the fact that the reflex should not fire at all this
+  // tick.
+  test("plan already remedies fuel (buy then refuel): reflex defers, the plan's buy step runs", async () => {
+    const { api, calls } = makeApi(lowFuelDocked, { failRefuel: true });
+    const store = new Store(":memory:");
+    store.savePlan("a1", {
+      goal: "refuel", steps: [
+        { action: "buy", params: { id: "fuel_cell", quantity: 10 } },
+        { action: "refuel", params: {} },
+      ],
+    }, []);
+    const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+    await agent.runOnce();
+    expect(calls).toEqual(["buy"]); // reflex must NOT fire; the plan's own remedy step gets the tick
+    expect(store.recentEvents("a1", 10).map((e) => e.type)).not.toContain("reflex_failed");
+  });
+
+  // Review finding (PR #47, round 1): a `refuel` step with `params.target` set
+  // is a ship-to-ship TRANSFER OUT (docs/game-reference/upstream/guides/fuel.md:176-186),
+  // not a self-remedy -- it drains the pilot's own tank further. Matching on
+  // action NAME alone (the pre-fix planRemediesFuel/Hull check) would count
+  // this step as "the plan already handles low fuel" and suppress the safety
+  // reflex while the transfer keeps draining it. Asserts on the STORE EVENT
+  // TYPE, not `calls` (both the reflex and the plan step call the game action
+  // named "refuel", so a bare string comparison can't tell them apart): a
+  // successful reflex fire always emits type "reflex"; the plan step, if
+  // wrongly allowed to run instead, would emit "action" with
+  // params.target === "buddy" and no "reflex" event at all.
+  test("plan's only 'refuel' step targets another ship: reflex still fires (not a self-remedy)", async () => {
+    const { api } = makeApi(lowFuelDocked);
+    const store = new Store(":memory:");
+    store.savePlan("a1", {
+      goal: "help buddy", steps: [{ action: "refuel", params: { target: "buddy" } }],
+    }, []);
+    const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+    await agent.runOnce();
+    const types = store.recentEvents("a1", 10).map((e) => e.type);
+    expect(types).toContain("reflex"); // the safety refuel must still fire
+    expect(types).not.toContain("action"); // the ship-to-ship step must NOT run this tick
+  });
+
+  // Review finding (PR #47, round 1): the single-tick reproduction above only
+  // proves "buy" gets the tick -- it never runs the plan far enough to confirm
+  // "refuel" (the actual remedy) succeeds once the cursor reaches it. This is
+  // the test that settles the open question this PR flagged as separate scope:
+  // whether a bare docked `refuel` needs an explicit item_id once cargo cells
+  // exist. Per the vendored docked draw order (docs/game-reference/upstream/
+  // guides/fuel.md:104-108: faction reserve, then station tank, then cargo
+  // cells "if the station is empty or you can't afford station fuel"), this
+  // fixture models an EMPTY station tank (the #543 condition) and a bare
+  // refuel with no item_id, and it succeeds once a cell exists -- matching the
+  // documented fallback rather than working around a gap in the fixture.
+  test("plan's own buy-then-refuel resolves low fuel over two ticks (documented cargo-cell fallback, no item_id)", async () => {
+    const store = new Store(":memory:");
+    store.savePlan("a1", {
+      goal: "refuel", steps: [
+        { action: "buy", params: { id: "fuel_cell", quantity: 10 } },
+        { action: "refuel", params: {} },
+      ],
+    }, []);
+
+    let fuel = 5;
+    const maxFuel = 100;
+    let hasCell = false;
+    const calls: string[] = [];
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        calls.push(name);
+        if (name === "buy") { hasCell = true; return { result: "ok" }; }
+        if (name === "refuel") {
+          if (!hasCell) throw new SpacemoltError("command_error", "station_fuel_empty");
+          fuel = Math.min(maxFuel, fuel + 20); // fuel_cell restores 20 (fuel.md's table)
+          hasCell = false;
+          return { result: "ok" };
+        }
+        return { result: "ok" };
+      },
+      async status() {
+        return {
+          credits: 0, fuel, maxFuel, hull: 100, maxHull: 100,
+          cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false,
+        };
+      },
+      async notifications() { return []; },
+    };
+    const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+    let now = 1;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => now });
+
+    await agent.runOnce(); // tick 1: reflex withheld, plan's "buy" runs
+    now = 2;
+    await agent.runOnce(); // tick 2: reflex withheld (refuel still ahead of cursor), plan's "refuel" runs
+
+    expect(calls).toEqual(["buy", "refuel"]); // reflex never fired across either tick
+    expect(fuel).toBe(25); // the plan's own remedy actually resolved the vital
+    expect(store.recentEvents("a1", 20).map((e) => e.type)).not.toContain("reflex_failed");
+  });
+
   test("no reflex configured: identical to Plan-1 behavior, no reflex events", async () => {
     const { api } = makeApi(lowFuelDocked);
     const store = new Store(":memory:");

@@ -970,13 +970,43 @@ export class Agent {
     // wake gates below rather than inside runSteward.
     if (status) this.maybeForceDockReroute(status);
 
+    // Layer 1 (producer fix): while a plan is running, a matching remedy
+    // ahead of the cursor means the plan itself, not a fresh wake/reflex, is
+    // responsible for this vital. Scanning from cursor.step onward is the
+    // correct window -- once the refuel/repair step has been passed and the
+    // condition still holds, the remedy demonstrably failed and a fresh
+    // signal is warranted (genuine new information). Only while running: a
+    // none/done/blocked plan has no in-flight remedy to defer to. Computed
+    // BEFORE the reflex check (moved up for issue #543) because the reflex
+    // sits upstream of the wake and needs the identical awareness -- see
+    // evaluateReflex's doc comment for why a plan-remedies signal must gate
+    // firing, not just the wake.
+    //
+    // Review finding (PR #47): a `refuel` step is only a SELF-remedy without
+    // `params.target` -- `target` set means ship-to-ship transfer OUT
+    // (docs/game-reference/upstream/guides/fuel.md:176-186), which drains the
+    // pilot's own tank further and must not suppress the safety reflex.
+    // `repair` has no params at all (src/registry/actions.ts) so no
+    // equivalent check applies there.
+    const remaining = this.plan && this.planState === "running"
+      ? this.plan.steps.slice(this.cursor.step)
+      : [];
+    const planRemediesFuel = remaining.some(
+      (s) => s.action === "refuel" && (s.params as { target?: string }).target === undefined
+    );
+    const planRemediesHull = remaining.some((s) => s.action === "repair");
+
     // Reflex check first, before wake evaluation: zero-token, declarative
     // rules (auto-refuel/repair while docked) that don't need the planner at
     // all. A successful fire suppresses the wake entirely for this tick. A
     // failed fire ("can't afford") still spends this tick's one mutation, but
     // lets the low_fuel/low_hull wake fire normally so the planner sees the
-    // problem it couldn't reflexively solve.
-    const reflex = evaluateReflex(status, this.config.reflex ?? {});
+    // problem it couldn't reflexively solve. planRemediesFuel/Hull stop it
+    // from firing at all when the pending plan already owns the remedy
+    // (issue #543): a station-empty refuel can't succeed no matter how many
+    // times it's retried, and each attempt was spending the tick the plan's
+    // own buy-then-refuel steps needed to run.
+    const reflex = evaluateReflex(status, this.config.reflex ?? {}, planRemediesFuel, planRemediesHull);
     let reflexSpentTick = false;
     if (reflex) {
       reflexSpentTick = true;
@@ -992,18 +1022,6 @@ export class Agent {
     // but replan is deliberately skipped (backoff), so eager shift became a
     // real bug (dropped operator instructions) if left unchanged.
     const instruction = this.inbox[0];
-    // Layer 1 (producer fix): while a plan is running, suppress the
-    // low_fuel/low_hull wake if the plan still carries the matching remedy
-    // ahead of the cursor. Scanning from cursor.step onward is the correct
-    // window -- once the refuel/repair step has been passed and the condition
-    // still holds, the remedy demonstrably failed and a fresh wake is
-    // warranted (genuine new information). Only while running: a none/done/
-    // blocked plan has no in-flight remedy to defer to.
-    const remaining = this.plan && this.planState === "running"
-      ? this.plan.steps.slice(this.cursor.step)
-      : [];
-    const planRemediesFuel = remaining.some((s) => s.action === "refuel");
-    const planRemediesHull = remaining.some((s) => s.action === "repair");
     const wake = evaluateWake({
       planState: this.planState,
       blockedReason: this.blockedReason,
