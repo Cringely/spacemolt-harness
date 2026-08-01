@@ -15,7 +15,14 @@ export type StepResult =
   // ACTION_PENDING_MARKER below); tells executeOne to skip one submission
   // before re-firing. See docs/archive/decisions-2026-07-12.md (2026-07-12,
   // "Pacing repeated actions to the game tick", SM-12).
-  | { kind: "continue"; cursor: PlanCursor; resultText?: string; settle?: true }
+  // fuelPerJump/shipClass ride along ONLY on a travel_to hop that completed a
+  // real jump (see measuredFuelPerJump below, issue #670): the real per-jump
+  // fuel cost this ship's own find_route response just reported, plus the
+  // ship class it was measured on, so a later switch_ship can't have the
+  // reflex compare fuel against a different hull's cost. Absent on every
+  // other continue (no jump happened, nothing measured) -- same "written by
+  // spread, never an explicit undefined" convention as `guard` above.
+  | { kind: "continue"; cursor: PlanCursor; resultText?: string; settle?: true; fuelPerJump?: number; shipClass?: string }
   // A transient, self-resolving block (prior tick's action not yet finished,
   // or ship still mid-travel). Holds the CURRENT step; no cursor advance, no
   // blocked wake. See classifyGameError below and
@@ -214,6 +221,28 @@ function nextHop(structuredContent: unknown): { hop: string | null; reason?: str
   if (sc?.found === false) return { hop: null, reason: sc.message };
   const candidate = sc?.route?.[1]?.system_id;
   return { hop: typeof candidate === "string" ? candidate : null };
+}
+
+// Issue #670 producer fix: this ship's own real fuel-per-jump, read from the
+// SAME find_route response nextHop() already parses -- zero new game calls.
+// Prefers `fuel_per_jump` when the game reports it directly (live capture,
+// 2026-08-01: `{"fuel_per_jump":1,"estimated_fuel":1,...}`); the older VERIFIED
+// shape above (2026-07-10) carries no such field, so estimated_fuel/total_jumps
+// is the fallback ratio. Both name the same quantity: fuel.md:318's jump
+// formula has no distance term (`ceil(scale^1.5 * speed * 10.0 * 0.10)`), so
+// every hop of an inter-system route costs the same for this ship, and the
+// ratio over a multi-hop route is exact, not an average. undefined when
+// neither field parses (never a guessed number -- see issue #677, retracted
+// after an ASSUMED scale/speed was falsified by a live jump).
+function measuredFuelPerJump(structuredContent: unknown): number | undefined {
+  const sc = structuredContent as
+    | { fuel_per_jump?: unknown; estimated_fuel?: unknown; total_jumps?: unknown }
+    | undefined;
+  if (typeof sc?.fuel_per_jump === "number" && sc.fuel_per_jump > 0) return sc.fuel_per_jump;
+  if (typeof sc?.estimated_fuel === "number" && typeof sc?.total_jumps === "number" && sc.total_jumps > 0) {
+    return sc.estimated_fuel / sc.total_jumps;
+  }
+  return undefined;
 }
 
 function advance(plan: Plan, cursor: PlanCursor, resultText?: string): StepResult {
@@ -686,10 +715,19 @@ async function travelToTick(
     if (e instanceof SpacemoltError) return classifyGameError(e);
     throw e;
   }
+  // Issue #670: this hop's own find_route response already answered "how much
+  // fuel does a jump cost on THIS ship" -- carry it (and the ship class it was
+  // measured on) onto the result so agent.ts can persist it for the reflex.
+  // status.shipClass is this tick's PRE-jump snapshot, i.e. the ship that just
+  // paid this cost, not whatever it might switch to next.
+  const fuelPerJump = measuredFuelPerJump(route);
   return {
     kind: "continue",
     cursor: { step: cursor.step, iteration: cursor.iteration + 1 },
     resultText: snippet(jumpResult.result),
+    ...(fuelPerJump !== undefined && status.shipClass !== undefined
+      ? { fuelPerJump, shipClass: status.shipClass }
+      : {}),
   };
 }
 

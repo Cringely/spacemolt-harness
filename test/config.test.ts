@@ -134,6 +134,18 @@ agents:
     expect(cfg.agents[0]!.reflex).toEqual({ keepFuelAbovePct: 30, repairBelowHullPct: 60 });
   });
 
+  // Issue #670: keep_fuel_above_jumps is additive, not a rename of
+  // keep_fuel_above (see reflex.ts) -- an existing config with only the old
+  // key keeps parsing (asserted above) and keepFuelAboveJumps is simply
+  // absent, not a load error.
+  test("reflex: keep_fuel_above_jumps parses alongside keep_fuel_above", () => {
+    const dir = mkdtempSync(join(tmpdir(), "smconf-"));
+    const path = join(dir, "agents.yaml");
+    writeFileSync(path, reflexYaml.replace("keep_fuel_above: 30", "keep_fuel_above: 30\n      keep_fuel_above_jumps: 2"));
+    const cfg = loadConfig(path);
+    expect(cfg.agents[0]!.reflex).toEqual({ keepFuelAbovePct: 30, keepFuelAboveJumps: 2, repairBelowHullPct: 60 });
+  });
+
   test("reflexes: (the incident's misspelling) throws at load instead of silently dropping the block", () => {
     const dir = mkdtempSync(join(tmpdir(), "smconf-"));
     const path = join(dir, "agents.yaml");

@@ -1,7 +1,16 @@
 import type { StatusSnapshot } from "../client/client";
 
 export interface ReflexConfig {
+  // Issue #670 (percent-of-tank inverted the real emergency: 19/130 = 14.6%
+  // read as critical while being 19 JUMPS of range on a 1-fuel/jump hull).
+  // keepFuelAboveJumps is the producer fix -- range measured in jumps, the
+  // thing that actually determines whether the pilot can reach a station, not
+  // tank capacity. keepFuelAbovePct stays: percent is still the correct signal
+  // until this ship's own per-jump cost has ever been observed (see
+  // evaluateReflex below), so it is not a second knob for the same job but the
+  // bootstrap this ship falls back to before any measurement exists.
   keepFuelAbovePct?: number;
+  keepFuelAboveJumps?: number;
   repairBelowHullPct?: number;
 }
 
@@ -18,9 +27,32 @@ export interface ReflexFire {
  * before hull (first match wins), matching evaluateWake's "first reason
  * wins" convention. Enumerated inputs: status.fuel, status.maxFuel,
  * status.hull, status.maxHull, status.docked, config.keepFuelAbovePct,
- * config.repairBelowHullPct, planRemediesFuel, planRemediesHull,
- * fuelGaveUpHere, hullGaveUpHere -- eleven total, all read fresh each
+ * config.keepFuelAboveJumps, fuelPerJump, planRemediesFuel, planRemediesHull,
+ * fuelGaveUpHere, hullGaveUpHere -- thirteen total, all read fresh each
  * runOnce() call; nothing here is cached.
+ *
+ * Issue #670 (live 2026-08-01): the miner sat at market_prime for 28.5h,
+ * fuel 19/130 (14.6%), while `find_route` to every neighbour showed
+ * `fuel_per_jump: 1` -- 19 jumps of real range, not an emergency. Percent of
+ * tank cannot tell "19 fuel on a 1-fuel/jump hull" (abundant) from "19 fuel on
+ * a 15-fuel/jump hull" (one jump from stranded); both read as the same
+ * percentage of ANY tank size. `fuelPerJump` is this ship's own measured
+ * fuel-per-jump (agent.ts's `lastMeasuredFuelPerJump`, derived from the
+ * `find_route` response travelToTick already fetches for every travel_to hop
+ * -- zero new game calls). When it is known, jumpsRemaining = floor(fuel /
+ * fuelPerJump) is the real signal and REPLACES the percent check entirely for
+ * this evaluation (a jump count is strictly more informative than a
+ * percentage once it exists, so percent no longer gets a vote). When it is
+ * NOT yet known (this ship has never completed a jump this session --
+ * possible right after boot or a switch_ship), the check falls back to
+ * config.keepFuelAbovePct, UNCHANGED from before this fix -- not a permanent
+ * revert to the old bug, because it governs only the narrow window before the
+ * ship's first measured jump and is superseded the moment one lands. The
+ * alternative rejected: firing on neither signal when unmeasured, which would
+ * silently disarm the reflex for a ship that only ever moves via intra-system
+ * `travel` (never registers a jump) -- the #526 lesson ("a fallback that never
+ * warns recreates the strand") applies here too, so an unmeasured ship keeps
+ * exactly today's protection rather than losing it.
  *
  * Issue #543 (livelock): a docked, out-of-station-reserve refuel
  * (`station_fuel_empty`) cannot succeed no matter how many times this fires
@@ -49,16 +81,16 @@ export interface ReflexFire {
  * for nothing and blocks whatever the plan itself could do instead.
  */
 export function evaluateReflex(
-  status: StatusSnapshot | null, config: ReflexConfig,
+  status: StatusSnapshot | null, config: ReflexConfig, fuelPerJump?: number,
   planRemediesFuel?: boolean, planRemediesHull?: boolean,
   fuelGaveUpHere?: boolean, hullGaveUpHere?: boolean,
 ): ReflexFire | null {
   if (!status || !status.docked) return null;
   const { fuel, maxFuel, hull, maxHull } = status;
-  if (
-    config.keepFuelAbovePct != null && maxFuel > 0 &&
-    (fuel / maxFuel) * 100 < config.keepFuelAbovePct && !planRemediesFuel && !fuelGaveUpHere
-  ) {
+  const fuelUrgent = config.keepFuelAboveJumps != null && fuelPerJump != null && fuelPerJump > 0
+    ? Math.floor(fuel / fuelPerJump) < config.keepFuelAboveJumps
+    : config.keepFuelAbovePct != null && maxFuel > 0 && (fuel / maxFuel) * 100 < config.keepFuelAbovePct;
+  if (fuelUrgent && !planRemediesFuel && !fuelGaveUpHere) {
     return { action: "refuel", reason: "low_fuel" };
   }
   if (

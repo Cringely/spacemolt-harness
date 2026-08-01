@@ -187,6 +187,37 @@ export class Store {
   }
 
   /**
+   * Issue #670 producer fix: this ship's own last measured fuel-per-jump, or
+   * undefined if it has never completed a jump this ship carries a record of
+   * (see executor.ts's measuredFuelPerJump -- the value comes free from the
+   * find_route response every travel_to hop already fetches). One row, most
+   * recent first -- a bespoke single-value query rather than reusing
+   * latestEventPerPayloadKey (built for "one row per DISTINCT key", not "the
+   * one latest fact"), which would need a constant payload key invented solely
+   * to group on, a field with no meaning of its own.
+   *
+   * shipClass gates the match: a stale measurement from a PREVIOUS ship (after
+   * switch_ship) would understate range on a costlier hull -- exactly the
+   * direction #526 warns against -- so a mismatch returns undefined and the
+   * caller falls back to percent-of-tank until the new ship completes its own
+   * jump. Restart-safe like the other by-type queries here: sourced from the
+   * events table, not an in-memory field.
+   */
+  lastMeasuredFuelPerJump(agentId: string, shipClass: string | null | undefined): number | undefined {
+    if (!shipClass) return undefined;
+    const row = this.db
+      .query(`SELECT payload FROM events
+              WHERE agent_id = ? AND type = 'action'
+                AND json_extract(payload, '$.fuelPerJump') IS NOT NULL
+                AND json_extract(payload, '$.shipClass') = ?
+              ORDER BY id DESC LIMIT 1`)
+      .get(agentId, shipClass) as { payload: string } | null;
+    if (!row) return undefined;
+    const v = (JSON.parse(row.payload) as { fuelPerJump?: unknown }).fuelPerJump;
+    return typeof v === "number" && v > 0 ? v : undefined;
+  }
+
+  /**
    * The agent's dock trail: every `status_snapshot`, every `dock` action and
    * every MOVE (`jump`, `travel_to`) it has recorded, ascending, projected down
    * to the six fields the station backfill reads (issue #525).

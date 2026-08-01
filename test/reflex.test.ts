@@ -10,7 +10,7 @@ function status(overrides: Partial<StatusSnapshot>): StatusSnapshot {
 }
 
 describe("evaluateReflex", () => {
-  test("fires refuel when docked and fuel below threshold", () => {
+  test("fires refuel when docked and fuel below threshold (percent fallback, unmeasured)", () => {
     expect(evaluateReflex(status({ fuel: 10 }), { keepFuelAbovePct: 25 }))
       .toEqual({ action: "refuel", reason: "low_fuel" });
   });
@@ -40,13 +40,45 @@ describe("evaluateReflex", () => {
   // Issue #672: the per-station give-up flags withhold firing the same way
   // planRemediesFuel/Hull already do.
   test("withholds refuel when fuelGaveUpHere is set, even below threshold", () => {
-    expect(evaluateReflex(status({ fuel: 10 }), { keepFuelAbovePct: 25 }, false, false, true))
+    expect(evaluateReflex(status({ fuel: 10 }), { keepFuelAbovePct: 25 }, undefined, false, false, true))
       .toBeNull();
   });
 
   test("withholds repair when hullGaveUpHere is set, even below threshold", () => {
-    expect(evaluateReflex(status({ hull: 20 }), { repairBelowHullPct: 30 }, false, false, false, true))
+    expect(evaluateReflex(status({ hull: 20 }), { repairBelowHullPct: 30 }, undefined, false, false, false, true))
       .toBeNull();
+  });
+
+  // Issue #670: the actual live incident and its inverse. Same fuel, same
+  // percent of tank (19/130 = 14.6%, below any percent floor anyone would
+  // configure) -- the jump cost is what must flip the verdict.
+  describe("jump-based urgency (issue #670)", () => {
+    test("19/130 fuel at 1 fuel/jump (19 jumps of range) is NOT urgent", () => {
+      expect(evaluateReflex(
+        status({ fuel: 19, maxFuel: 130 }), { keepFuelAboveJumps: 2 }, 1,
+      )).toBeNull();
+    });
+
+    test("19/130 fuel at 15 fuel/jump (1 jump of range) IS urgent -- same percent, opposite verdict", () => {
+      expect(evaluateReflex(
+        status({ fuel: 19, maxFuel: 130 }), { keepFuelAboveJumps: 2 }, 15,
+      )).toEqual({ action: "refuel", reason: "low_fuel" });
+    });
+
+    test("measured fuelPerJump REPLACES percent, not ORs with it: a measured-abundant ship does not fire even below the configured percent floor", () => {
+      // 19/130 = 14.6%, well under a 25% percent floor -- the old code would
+      // fire here unconditionally. With a measurement showing 19 jumps of
+      // range, it must not.
+      expect(evaluateReflex(
+        status({ fuel: 19, maxFuel: 130 }), { keepFuelAbovePct: 25, keepFuelAboveJumps: 2 }, 1,
+      )).toBeNull();
+    });
+
+    test("unmeasured (fuelPerJump undefined) falls back to percent-of-tank, unchanged from before this fix", () => {
+      expect(evaluateReflex(
+        status({ fuel: 19, maxFuel: 130 }), { keepFuelAbovePct: 25, keepFuelAboveJumps: 2 }, undefined,
+      )).toEqual({ action: "refuel", reason: "low_fuel" });
+    });
   });
 });
 

@@ -330,4 +330,81 @@ describe("Agent reflex integration", () => {
     await agent.runOnce(); // tick 2: market_prime_station, still below threshold
     expect(calls).toEqual([]); // give-up still armed despite the flood elsewhere
   });
+
+  // Issue #670, end-to-end through the real Agent/Store wiring (not just the
+  // pure evaluateReflex unit tests in reflex.test.ts): a travel_to hop this
+  // ship already took measured its real fuel-per-jump via find_route, and a
+  // LATER tick -- a fresh Agent instance over the SAME store, i.e. surviving a
+  // restart -- must use that measurement instead of percent-of-tank. Both
+  // ticks share fuel 19/130 = 14.6%, below the configured 25% percent floor;
+  // only the measured jump cost tells them apart.
+  describe("fuelPerJump measured from a real travel_to hop governs a later reflex tick (#670)", () => {
+    function travelStubApi(shipClass: string, totalJumps: number, estimatedFuel: number) {
+      let systemId = "sys-1";
+      const api: GameApi = {
+        async action(name: string, params?: Record<string, unknown>): Promise<V2Result> {
+          if (name === "find_route") {
+            return {
+              structuredContent: {
+                found: true, total_jumps: totalJumps, estimated_fuel: estimatedFuel, fuel_available: 100,
+                route: [{ jumps: 0, system_id: systemId }, { jumps: 1, system_id: "sys-2" }],
+                target_system: "sys-3",
+              },
+            };
+          }
+          if (name === "jump") { systemId = params!["id"] as string; return { result: "ok" }; }
+          return { result: "ok" };
+        },
+        async status(): Promise<StatusSnapshot> {
+          return {
+            credits: 0, fuel: 100, maxFuel: 130, hull: 100, maxHull: 100,
+            cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false,
+            systemId, shipClass,
+          };
+        },
+        async notifications() { return []; },
+      };
+      return api;
+    }
+
+    const jumpConfig: AgentConfig = { ...baseConfig, reflex: { keepFuelAbovePct: 25, keepFuelAboveJumps: 2 } };
+
+    test("measured 15 fuel/jump (1 jump of range on 19 fuel): a later docked tick fires the reflex", async () => {
+      const store = new Store(":memory:");
+      store.savePlan("a1", { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys-3" } }] }, []);
+      const travelAgent = new Agent({
+        id: "a1", persona: "p", api: travelStubApi("Dreadnought", 1, 15),
+        store, planner: new MockPlanner([{ goal: "unused", steps: [{ action: "undock", params: {} }] }]), config: jumpConfig, now: () => 1,
+      });
+      await travelAgent.runOnce(); // measures and persists fuelPerJump: 15, shipClass: Dreadnought
+
+      const { api: dockedApi, calls } = makeApi({
+        credits: 0, fuel: 19, maxFuel: 130, hull: 100, maxHull: 100,
+        cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false, shipClass: "Dreadnought",
+      });
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const laterAgent = new Agent({ id: "a1", persona: "p", api: dockedApi, store, planner, config: jumpConfig, now: () => 2 });
+      await laterAgent.runOnce();
+      expect(calls).toEqual(["refuel"]); // 1 jump of range left -- genuinely urgent
+    });
+
+    test("measured 1 fuel/jump (19 jumps of range on 19 fuel): a later docked tick does NOT fire, despite 14.6% being below the percent floor", async () => {
+      const store = new Store(":memory:");
+      store.savePlan("a1", { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys-3" } }] }, []);
+      const travelAgent = new Agent({
+        id: "a1", persona: "p", api: travelStubApi("Prospect", 1, 1),
+        store, planner: new MockPlanner([{ goal: "unused", steps: [{ action: "undock", params: {} }] }]), config: jumpConfig, now: () => 1,
+      });
+      await travelAgent.runOnce(); // measures and persists fuelPerJump: 1, shipClass: Prospect
+
+      const { api: dockedApi, calls } = makeApi({
+        credits: 0, fuel: 19, maxFuel: 130, hull: 100, maxHull: 100,
+        cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false, shipClass: "Prospect",
+      });
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const laterAgent = new Agent({ id: "a1", persona: "p", api: dockedApi, store, planner, config: jumpConfig, now: () => 2 });
+      await laterAgent.runOnce();
+      expect(calls).toEqual([]); // 19 jumps of range -- not urgent, the #670 false alarm this fix closes
+    });
+  });
 });
