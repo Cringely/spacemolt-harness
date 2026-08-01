@@ -30,7 +30,7 @@ Full reasoning for every choice lives in [docs/decisions.md](docs/decisions.md) 
 |---|---|
 | [AGENTS.md](AGENTS.md) | Canonical agent context: conventions and the context map |
 | [docs/STATE.md](docs/STATE.md) | Living handoff — where work stands, what's next, what's blocked |
-| [docs/milestones.md](docs/milestones.md) | The major-milestone timeline (M-01..M-39) — the "here's the journey" view; SSOT for the claude.ai milestone-tracker Artifact |
+| [docs/milestones.md](docs/milestones.md) | The major-milestone timeline (M-01..M-53) — the "here's the journey" view; SSOT for the claude.ai milestone-tracker Artifact |
 | [docs/decisions.md](docs/decisions.md) | The decision log (the educational core of the project) |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Approved design spec |
 | [docs/superpowers/plans/](docs/superpowers/plans/) | Implementation plans (full code, TDD task-by-task — TDD: test-driven development, write the test before the code that passes it) |
@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-52).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-53).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -91,9 +91,9 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: F1 of fleet-flight (#591) now unblocked: PR #47 merged the livelock fix (#543, safety reflex now defers to rescue plans); PR #46 fixed the merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552, game precondition unmet); PR #45 bumped GitHub Actions. The livelock fix is capability-complete and awaits live confirmation on next deploy. See M-52 in [docs/milestones.md](docs/milestones.md).
+Current work: F1 of fleet-flight (#591) ✅ COMPLETE (M-53: PR #50 merged the per-station terminal give-up for #672). F2 (launch scout+corsair) is ready to dispatch. Prior cluster: PR #47 fixed executor starvation (#543, M-52); PR #46 fixed merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552); PR #45 bumped GitHub Actions. Livelock two-layer fix: safety reflex defers to rescue plans (#543), and reflex gives up at a terminal-failure station (#672). Next: F2 dispatch, then #526/#534/#535/#537/#538/#529. See [docs/STATE.md](docs/STATE.md).
 
-The major-milestone timeline (M-01..M-52) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-53) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 
