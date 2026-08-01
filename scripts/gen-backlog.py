@@ -107,8 +107,14 @@ def repo_root():
 def main():
     root = repo_root()
     out_path = os.path.join(root, "docs", "backlog.md")
+    # --limit must exceed total issue count (open+closed), not just open
+    # count: `gh issue list` returns the N most RECENT issues regardless of
+    # state, so once the repo passes the cap older open issues silently drop
+    # out of the count. Live-caught 2026-08-01: repo total was 324 (184 open)
+    # against a 300 cap, undercounting to 174 open with no error. 1000 gives
+    # headroom over today's total; bump again well before it's tight.
     raw = subprocess.run(
-        ["gh", "issue", "list", "--repo", BACKLOG_REPO, "--state", "all", "--limit", "300",
+        ["gh", "issue", "list", "--repo", BACKLOG_REPO, "--state", "all", "--limit", "1000",
          "--json", "number,title,labels,state"],
         capture_output=True, text=True, check=True).stdout
     issues = json.loads(raw)
