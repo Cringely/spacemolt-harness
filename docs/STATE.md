@@ -24,7 +24,7 @@ _Refreshed 2026-08-02 post-launch (deploy verified 18:26Z). Boot from this block
 
 **PRODUCTION CONFIG FACTS.** `max_plans_per_window: 12` in `agents.yaml` (schema default 36). `keep_fuel_above_jumps: 8` (estimate, not measured). Scheduler on LXC healthy (user `smsched`, cron every 10m).
 
-**MERGED, 30 PRs since 2026-08-01–08-02.** Detail in `docs/milestones.md` (M-53, M-54).
+**MERGED, 30 PRs 2026-08-01–08-02.** Behavior-changing ones: M-53, M-54 in `docs/milestones.md`.
 
 **BACKLOG. 164 open issues, P0 at zero.** Regenerated from GitHub Issues SSOT.
 
