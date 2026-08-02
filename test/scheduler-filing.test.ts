@@ -8,9 +8,9 @@ import {
   FILING_REPO,
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
+  MACHINE_LABEL,
   fileFinding,
   readActiveCycle,
-  searchDedupCandidates,
   writeActiveCycle,
   type GhRunner,
 } from "../src/scheduler/filing";
@@ -256,64 +256,98 @@ describe("finding filer input hardening (C2, security review)", () => {
   });
 });
 
-// The discovery half of #635: a fresh spawn has no memory of a prior run's
-// dedup-key, so it must be able to look one up before minting a new spelling.
-describe("dedup-key discovery (#635 search mode)", () => {
-  // Catches: the same silent-remote-mismatch class as the FILING_REPO test
-  // above, applied to the new search path — an unscoped search would surface
-  // (or leak) issues from whatever repo the checkout's origin points at.
-  test("search is scoped to FILING_REPO and the machine-filed label", () => {
-    const { gh, calls } = fakeGh([]);
-    searchDedupCandidates(gh, "core harvest unimplemented");
-    expect(calls.length).toBe(1);
-    const call = calls[0]!;
-    expect(call.args[0]).toBe("issue");
-    expect(call.args[1]).toBe("list");
-    const idx = call.args.indexOf("--label");
-    expect(idx).toBeGreaterThanOrEqual(0);
-    expect(call.args[idx + 1]).toBe("machine-filed");
-    const repoIdx = call.args.indexOf("--repo");
-    expect(call.args[repoIdx + 1]).toBe(FILING_REPO);
-  });
-
-  // Catches: a candidate's dedup-key not being extracted, forcing the caller
-  // back to guessing a spelling anyway.
-  test("extracts each hit's dedup-key from its sm-dedup marker", () => {
-    const { gh } = fakeGh([]);
-    const stub: GhRunner = (args) => {
+// The auto-bump half of #635 (PR #62 review, finding 1): fileFinding() must
+// catch the severity-affix drift ITSELF on the create path — an agent that
+// forgets a manual step cannot produce a duplicate, because there is no
+// manual step left to forget. Uses a small stateful gh double (unlike the
+// shared fakeGh's fixed canned response) because the scenario under test is
+// exactly "the SECOND call must see what the FIRST call created".
+describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
+  function statefulGh() {
+    const calls: GhCall[] = [];
+    let nextIssue = 200;
+    const created: Array<{ number: number; body: string }> = [];
+    const gh: GhRunner = (args) => {
+      const bodyIdx = args.indexOf("--body-file");
+      const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
+      calls.push({ args, body });
       if (args[0] === "issue" && args[1] === "list") {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([
-            { number: 621, title: "P0 BLOCKER: core_harvest job unimplemented", state: "OPEN", body: "text\n\n<!-- sm-dedup:core_harvest_unimplemented -->\nfiled-by: x" },
-            { number: 700, title: "unrelated", state: "OPEN", body: "no marker here" },
-          ]),
-        };
+        // findDedupMatch's exact-marker search (--search present) never has a
+        // literal-text match here by construction (the whole point is that
+        // the two calls use DIFFERENT literal keys) — empty is correct, not
+        // a stub shortcut. findNearMatch's open-state fetch (no --search) sees
+        // every issue created so far, exactly like the real backlog would.
+        if (args.includes("--search")) return { stdout: "[]", exitCode: 0 };
+        return { stdout: JSON.stringify(created.map((c) => ({ number: c.number, body: c.body }))), exitCode: 0 };
       }
-      return gh(args);
+      if (args[0] === "issue" && args[1] === "create") {
+        const number = nextIssue++;
+        created.push({ number, body: body ?? "" });
+        return { stdout: `https://github.com/x/y/issues/${number}\n`, exitCode: 0 };
+      }
+      return { stdout: "", exitCode: 0 };
     };
-    const hits = searchDedupCandidates(stub, "core harvest");
-    expect(hits).toEqual([
-      { number: 621, title: "P0 BLOCKER: core_harvest job unimplemented", state: "OPEN", dedupKey: "core_harvest_unimplemented" },
-      { number: 700, title: "unrelated", state: "OPEN", dedupKey: null },
-    ]);
+    return { gh, calls };
+  }
+
+  // The exact case from the incident: #628 (`core-harvest-unimplemented-p0`)
+  // and #639 (`p0-core-harvest-unimplemented`) should have collapsed to one
+  // issue. Ablation: removing the `findNearMatch` call from fileFinding (or
+  // reverting SEVERITY_WORDS to an empty set) turns this red — the second
+  // call would return "created" with a distinct issue number.
+  test("a severity-word variant of an OPEN issue's key bumps it instead of creating a new issue", () => {
+    const dir = tmp();
+    const { gh, calls } = statefulGh();
+    const first = fileFinding(gh, dir, { ...finding(1), dedupKey: "core-harvest-unimplemented-p0" });
+    expect(first.outcome).toBe("created");
+    const second = fileFinding(gh, dir, { ...finding(2), dedupKey: "p0-core-harvest-unimplemented" });
+    expect(second.outcome).toBe("bumped");
+    expect(second.issue).toBe(first.issue);
+    expect(calls.filter((c) => c.args[1] === "create").length).toBe(1);
   });
 
-  // Catches: a search-operator injection through the query — the same class
-  // R7 flagged for the dedup-key search, now on the free-text query.
-  test("hostile search query ⇒ rejected before any gh invocation", () => {
-    const { gh, calls } = fakeGh([]);
-    for (const q of ['x" OR label:secret', "in:body foo", "a".repeat(81), ""]) {
-      expect(() => searchDedupCandidates(gh, q)).toThrow(FilingInputError);
-    }
-    expect(calls.length).toBe(0);
+  // The named residual gap (filing.ts's SEVERITY_WORDS comment): normalization
+  // strips a closed severity vocabulary, not general wording similarity. Two
+  // runs that genuinely disagree on wording still file twice — documented
+  // here so the boundary is a stated limit, not a silently-broken promise.
+  test("a genuinely different WORDING for the same condition still files as two issues", () => {
+    const dir = tmp();
+    const { gh } = statefulGh();
+    const first = fileFinding(gh, dir, { ...finding(1), dedupKey: "core-harvest-unimplemented" });
+    const second = fileFinding(gh, dir, { ...finding(2), dedupKey: "core-harvest-job-unimplemented" });
+    expect(first.outcome).toBe("created");
+    expect(second.outcome).toBe("created");
+    expect(second.issue).not.toBe(first.issue);
   });
 
-  // Catches: an unparseable gh answer crashing the discovery step instead of
-  // degrading to "no candidates, mint fresh" — same posture as findDedupMatch.
-  test("malformed gh JSON ⇒ empty candidate list, never a throw", () => {
-    const stub: GhRunner = () => ({ stdout: "not json", exitCode: 0 });
-    expect(searchDedupCandidates(stub, "some query")).toEqual([]);
+  // Catches: near-match reaching past OPEN into closed issues — a closed
+  // near-match should file fresh, matching findDedupMatch's own window
+  // philosophy (a fix, once shipped and closed, does not need reopening).
+  test("the near-match fetch is scoped to --state open, --label machine-filed, and FILING_REPO", () => {
+    const dir = tmp();
+    const { gh, calls } = statefulGh();
+    fileFinding(gh, dir, { ...finding(1), dedupKey: "core-harvest-unimplemented-p0" });
+    const nearMatchCall = calls.find((c) => c.args[1] === "list" && !c.args.includes("--search"));
+    expect(nearMatchCall).toBeDefined();
+    const args = nearMatchCall!.args;
+    expect(args[args.indexOf("--state") + 1]).toBe("open");
+    expect(args[args.indexOf("--label") + 1]).toBe(MACHINE_LABEL);
+    expect(args[args.indexOf("--repo") + 1]).toBe(FILING_REPO);
+  });
+
+  // Catches: an unparseable near-match answer crashing filing instead of
+  // degrading to "no near-match, mint fresh" — same posture as findDedupMatch
+  // (test/scheduler-filing.test.ts "match closed 45d ago ⇒ new issue" pins
+  // the analogous case for the exact-match path).
+  test("malformed near-match JSON ⇒ files fresh, never throws", () => {
+    const dir = tmp();
+    const stub: GhRunner = (args) => {
+      if (args[0] === "issue" && args[1] === "list") return { stdout: "not json", exitCode: 0 };
+      if (args[0] === "issue" && args[1] === "create") return { stdout: "https://github.com/x/y/issues/300\n", exitCode: 0 };
+      return { stdout: "", exitCode: 0 };
+    };
+    const res = fileFinding(stub, tmp(), { ...finding(1), dedupKey: "core-harvest-unimplemented" });
+    expect(res.outcome).toBe("created");
   });
 });
 
@@ -397,26 +431,6 @@ describe("file-finding CLI (base64 argv body)", () => {
   // maps the malformed-base64 case above. A subprocess probe cannot cover it —
   // the >64KB body's ~87KB base64 token exceeds the Windows host's ~32KB command
   // line, so the arg can't even be passed here; production runs on Linux, 128KB.)
-
-  // Catches (#635): --search rejecting a hostile query before any gh call —
-  // a real match would touch the network, so only the rejected path is safe
-  // to spawn here (same constraint as the D1/base64 cases above).
-  test("--search with a hostile query ⇒ exit 2 before any gh call", () => {
-    const res = runCli(["--search", "x\" OR label:secret"]);
-    expect(res.exitCode).toBe(2);
-    expect(res.stderr).toContain("search query");
-  });
-
-  // Catches: --search requiring SCHEDULER_STATE_DIR/active-cycle like the
-  // write path — it must not, since it reads nothing and files nothing. Proven
-  // here by NOT setting SCHEDULER_STATE_DIR at all and still failing on the
-  // QUERY, never on the missing env/active-cycle checks that gate writes.
-  test("--search needs no SCHEDULER_STATE_DIR — rejects on the query, not on missing state dir", () => {
-    const res = runCli(["--search", ""]); // empty query still hostile-shaped (rejected by SEARCH_QUERY_RE)
-    expect(res.exitCode).toBe(2);
-    expect(res.stderr).not.toContain("SCHEDULER_STATE_DIR");
-    expect(res.stderr).not.toContain("no active cycle");
-  });
 
   // Catches: the D1 kill switch not honored at the CLI — disabled ⇒ exit 3.
   test("D1 gate disabled ⇒ exit 3 before any gh call", () => {

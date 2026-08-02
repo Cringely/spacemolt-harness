@@ -94,24 +94,38 @@ export const MAX_BODY_BYTES = 64 * 1024;
 // `core-harvest-unimplemented-p0`, `p0-core-harvest-unimplemented` — and the exact-phrase
 // dedup search (below) matched none of them against each other. Tightened from
 // `[A-Za-z0-9._-]` to lowercase-only kebab-case (no underscore, no dot, no leading/
-// trailing/doubled hyphen): this alone collapses the case/separator half of that
-// drift mechanically. The other half — a severity affix (p0/blocker) riding inside
-// the key — is a wording choice no regex can name as "not part of the condition",
-// so it stays a work-order rule (spawn.ts FILING_HOWTO), paired with the search-first
-// step below that lets a fresh spawn discover and reuse a prior run's exact key.
+// trailing/doubled hyphen): this mechanically collapses the case/separator half of
+// that drift. The other half — a severity affix (p0/blocker) riding inside the key —
+// is closed below by fileFinding() itself (see findNearMatch), not left to a work-order
+// convention an agent can forget: review (PR #62) flagged the first cut of this fix for
+// putting the whole invariant in prose an agent might not follow, so the create path
+// now enforces it directly.
 const DEDUP_KEY_RE = /^(?=.{1,64}$)[a-z0-9]+(-[a-z0-9]+)*$/;
-
-// The free-text half of the same fix: a fresh spawn must be able to ask "has this
-// condition already been filed?" before minting a key. Charset kept narrow (no `:`,
-// quotes, or parens) so a caller-composed query cannot smuggle a `gh search` field
-// operator (`label:`, `in:`, a quoted phrase) the way the untrusted-dedup-key review
-// already flagged for the exact-match search above.
-const SEARCH_QUERY_RE = /^[A-Za-z0-9 .-]{1,80}$/;
 
 // Reads a PRIOR key back out of an issue body — permissive on purpose (production
 // issues may still carry the pre-tightening underscore/dot keys from before this
 // fix), unlike DEDUP_KEY_RE which only governs what a NEW key may be.
 const SM_DEDUP_MARKER_RE = /<!--\s*sm-dedup:([A-Za-z0-9._-]+)\s*-->/;
+
+// Closed, small vocabulary matching this project's own priority scheme
+// (DEFAULT_TRIAGE_LABEL: priority:P0-P3) plus the literal word #621's issue title
+// carried ("P0 BLOCKER"). Stripping these as whole hyphen-segments lets
+// `core-harvest-unimplemented-p0` and `p0-core-harvest-unimplemented` normalize to
+// the same `core-harvest-unimplemented`, closing the EXACT drift #635 recorded.
+// It is deliberately NOT a general similarity matcher: two runs that pick genuinely
+// different words for the same condition (`core-harvest-unimplemented` vs
+// `core-harvest-job-unimplemented`) still mint two issues — that residual gap needs
+// judgment no regex can supply, and is named as such rather than silently claimed
+// fixed (a rung-2 gate here would need fuzzy matching, which trades a mechanical,
+// ablatable check for a probabilistic one; rejected for that reason).
+const SEVERITY_WORDS = new Set(["p0", "p1", "p2", "p3", "blocker", "critical"]);
+
+function normalizeDedupKey(key: string): string {
+  return key
+    .split("-")
+    .filter((seg) => !SEVERITY_WORDS.has(seg))
+    .join("-");
+}
 
 // Scheduler-owned filing identity: runJob (spawn.ts) writes this file at each
 // spawn; the file-finding CLI reads it instead of trusting caller flags.
@@ -235,54 +249,55 @@ function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit |
     .sort((a, b) => Date.parse(b.closedAt as string) - Date.parse(a.closedAt as string))[0];
 }
 
-export interface DedupCandidate {
+interface NearMatchHit {
   number: number;
-  title: string;
-  state: string;
-  /** Extracted from the `<!-- sm-dedup:KEY -->` marker; null on a machine-filed hit with no marker. */
-  dedupKey: string | null;
-}
-
-interface SearchHit {
-  number: number;
-  title: string;
   body: string;
-  state: string;
 }
 
-// The discovery half of #635: a fresh spawn has no memory of the key a PRIOR
-// spawn minted for the same condition, so it must be able to ask before it
-// mints one. Scoped to MACHINE_LABEL — this is a lookup over the filer's own
-// output, not a general issue search — and to FILING_REPO via run(), same as
-// every other gh call in this file.
-export function searchDedupCandidates(gh: GhRunner, query: string): DedupCandidate[] {
-  if (!SEARCH_QUERY_RE.test(query)) {
-    throw new FilingInputError(`search query must match ${SEARCH_QUERY_RE} (got: ${JSON.stringify(query)})`);
-  }
+// gh issue list defaults to 30 results; raised to cover the realistic
+// machine-filed volume (92 open at review time) without unbounded pagination.
+// ponytail: a hardcoded ceiling, not a config knob — a repo whose machine-filed
+// backlog outgrows this needs a design revisit, not a bigger constant.
+const NEAR_MATCH_FETCH_LIMIT = 200;
+
+// The auto-bump half of #635 (PR #62 review, finding 1): fileFinding() must
+// catch the severity-affix drift itself, not depend on an agent searching
+// before it mints a key. No query string at all — fetch by MACHINE_LABEL
+// alone and filter the JSON client-side (PR #62 review, finding 2): this
+// removes the query-DSL charset/injection surface the first cut of this fix
+// introduced, at the cost of one client-side pass over an already-bounded
+// fetch. OPEN only (unlike findDedupMatch's open+recently-closed): a
+// near-match to something closed >30d ago should file fresh, same
+// philosophy the exact-match window already encodes.
+function findNearMatch(gh: GhRunner, dedupKey: string): number | undefined {
   const stdout = run(gh, [
     "issue",
     "list",
     "--state",
-    "all",
+    "open",
     "--label",
     MACHINE_LABEL,
-    "--search",
-    query,
+    "--limit",
+    String(NEAR_MATCH_FETCH_LIMIT),
     "--json",
-    "number,title,body,state",
+    "number,body",
   ]);
-  let hits: SearchHit[];
+  let hits: NearMatchHit[];
   try {
-    hits = JSON.parse(stdout) as SearchHit[];
+    hits = JSON.parse(stdout) as NearMatchHit[];
   } catch {
-    return []; // unparseable answer → no candidates, caller mints fresh rather than crash
+    return undefined; // unparseable answer → no near-match, caller mints fresh rather than crash
   }
-  return hits.map((h) => ({
-    number: h.number,
-    title: h.title,
-    state: h.state,
-    dedupKey: h.body.match(SM_DEDUP_MARKER_RE)?.[1] ?? null,
-  }));
+  const wanted = normalizeDedupKey(dedupKey);
+  for (const hit of hits) {
+    // Same schema-tolerance posture as loadCounter/readActiveCycle: a hit
+    // missing/mistyping `body` (a partial gh answer, not a real production
+    // shape) degrades to "no key here" rather than throwing mid-scan.
+    if (typeof hit.body !== "string") continue;
+    const candidateKey = hit.body.match(SM_DEDUP_MARKER_RE)?.[1];
+    if (candidateKey !== undefined && normalizeDedupKey(candidateKey) === wanted) return hit.number;
+  }
+  return undefined;
 }
 
 export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput): FindingOutcome {
@@ -331,12 +346,19 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
 
   // (a)(1)+(a)(3): dedup across open and recently-closed; a match is bumped.
   const match = findDedupMatch(gh, dedupKey, Date.now());
-  if (match) {
+  // #635 fix: an exact-key miss still gets one more check — a severity-word
+  // variant of a key already carried by an OPEN machine-filed issue. This is
+  // what makes the fix mechanical rather than a convention the agent might
+  // skip: `core-harvest-unimplemented-p0` bumps the issue already filed under
+  // `p0-core-harvest-unimplemented` with no agent search step in between.
+  const nearMatchIssue = match ? undefined : findNearMatch(gh, dedupKey);
+  const bumpTarget = match?.number ?? nearMatchIssue;
+  if (bumpTarget !== undefined) {
     const scratch = writeScratchBody(stateDir, body);
-    run(gh, ["issue", "comment", String(match.number), "--body-file", scratch]);
+    run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return { outcome: "bumped", issue: match.number };
+    return { outcome: "bumped", issue: bumpTarget };
   }
 
   // (a)(2): label + provenance on every created issue. Priority label too

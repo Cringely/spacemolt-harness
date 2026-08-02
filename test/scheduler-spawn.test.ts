@@ -137,17 +137,18 @@ describe("spawn composer + runner (C3)", () => {
     }
   });
 
-  // Catches (#635): a work order minting a dedup-key with no instruction to
-  // check for a prior run's spelling first — the exact gap that let one
-  // condition file three times under three different keys. Ablation: cutting
-  // the search-first sentence back to the pre-fix FILING_HOWTO (dedup-key
-  // template only, no --search mention) turns this red.
-  test("every work order instructs searching for a prior dedup-key before minting a new one", () => {
+  // Catches (#635): a work order minting a dedup-key with no guidance on the
+  // condition-only, no-severity-word shape — the wording half of the drift no
+  // code can enforce (the mechanical half, severity-word normalization, is
+  // enforced in fileFinding() itself — see test/scheduler-filing.test.ts's
+  // "severity-word near-match auto-bump" block, which is the test that
+  // actually proves the invariant; this one only proves the guidance text
+  // reached the prompt).
+  test("every work order names the dedup-key shape (condition-only, no severity word)", () => {
     for (const j of JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
-      expect(prompt).toContain("--search");
-      expect(prompt).toContain("copy its dedupKey VERBATIM");
-      expect(prompt).toContain("no severity or priority word");
+      expect(prompt).toContain("leave severity/priority");
+      expect(prompt).toContain("auto-normalizes a severity word");
     }
   });
 
