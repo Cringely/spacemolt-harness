@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-53).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-54).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -88,12 +88,12 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [x] G4: Verified economic win [in progress] — trend +1,222cr/20h, fuel-chain fixed
 - [ ] G5: Economic awareness — #93 (market parsing) closed; #112 (profitability) + #142 (econ panel) open
 - [ ] G6: Team outlives session — scheduler (#114) remains; governance ceremonies audited
-- [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
+- [ ] G7: Fleet prerequisites — two accounts + secrets DONE, both flying; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: F1 of fleet-flight (#591) gates closed (M-52, M-53). PR #72 merged strand-evidence guards (#690); PR #73 under review for planner re-buy defect (#669). Live-confirmed 2026-08-02: pilot docked at cargo_lanes, fuel 130/130, credits 203,572, zero restarts. Real defect found: pilot re-attempts buys at stations that can't fill. #526 (executor starvation) closed by M-52; F2 awaits dispatch. See M-52/M-53 in [docs/milestones.md](docs/milestones.md).
+Current work: fleet-flight (#591) F1 and F2 both closed (M-52, M-53, M-54). Scout and corsair launched 2026-08-02 18:26Z alongside the miner, closing #593; all three pilots ran real actions the same window. The real blocker turned out to be two host secrets never provisioned, not the persona-briefing gap #593 had carried for weeks. Personas remain minimal (two of #159's four elements; #159 stays open, parked); the corsair starts at 0 credits. F3 (#534/#569/#592) is next. See M-54 in [docs/milestones.md](docs/milestones.md).
 
-The major-milestone timeline (M-01..M-53) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-54) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 

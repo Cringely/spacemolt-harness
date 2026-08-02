@@ -44,6 +44,7 @@ _Regenerated from 164 open issues._
 - #696 `S` — Operator steer channel: instruction receipt is invisible in telemetry (backoff-gate asymmetry unconfirmed as cause)
 - #697 `M` — miner: bought and immediately stored an unused ship, abandoned an active distress mission, same plan
 - #698 `M` — Consecutive-thrash gate resets the repeat-break counting floor, suppressing the breaker it should trigger
+- #700 `S` — Stale-mission advisory can never fire on distress missions: 24h threshold vs ~3h expiry
 
 ## Observability
 
@@ -96,7 +97,6 @@ _Regenerated from 164 open issues._
 - #231 — Social extras — spacemolt_social remainder (23 of 25 actions unregistered)
 - #232 — Player-to-player transfer & storage gifting — spacemolt_transfer + spacemolt_storage
 - #591 `L` — Epic: path to fleet flight, 3 pilots, measurably progressing
-- #593 `M` — Launch scout and corsair: take the fleet from 1 pilot to 3
 
 ## Process
 
