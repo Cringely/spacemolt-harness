@@ -3,6 +3,7 @@ import type { FittedModule, GameApi, ModuleSpec, ShipFit, StatusSnapshot } from 
 import type { Plan, PlanStep } from "../registry/plan";
 import type { PlanCursor } from "../store/store";
 import { catalog } from "../catalog/catalog";
+import { fuelUrgent } from "./reflex";
 
 // Invariant: resultText carries a short snippet (capped ~120 chars, see
 // snippet() below) of the game's human-readable `result` text on every
@@ -923,10 +924,19 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  * sparse-deposit rules, plain data (see LearnedSparseRule above). Optional
  * for the same reason as tickStatus: absent means no learned rules, and only
  * the mine deposit guard reads it.
+ *
+ * `fuelReserveConfig`/`fuelPerJump` (issue #526) feed the fuel-floor mine
+ * guard below -- the same jump-aware urgency signal evaluateReflex uses
+ * (reflex.ts's `fuelUrgent`, extracted so the two consumers can't drift).
+ * Both optional, same best-effort contract as the rest of this function: no
+ * config and no measurement means the guard never fires, never a fabricated
+ * block from missing data.
  */
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
   learnedSparse?: LearnedSparseRule[], buyOrderAlreadyOpen?: boolean,
+  fuelReserveConfig?: { keepFuelAboveJumps?: number; keepFuelAbovePct?: number },
+  fuelPerJump?: number,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1024,6 +1034,56 @@ export async function executeTick(
   // deferred here until the get_poi shape was cited -- now exists below
   // (mineDepositBlock, issue #188), built on the PoiDepositsSchema citation
   // that #291/PR #302 landed.
+  // Fuel-floor precondition guard (issue #526, live 2026-07-25): the persona
+  // prompt already says "keep fuel above 25%" -- a request TO THE MODEL, not
+  // a constraint the system enforces. The pilot mined to 2/130 (1.5%) anyway
+  // and stranded at a system with no other players, then spent six hours
+  // re-broadcasting distress_signal into the void (auto-rescue only reaches
+  // players in-system -- fuel.md:221). Invariant: a `mine` step must not be
+  // SUBMITTED while remaining fuel reads urgent by the SAME check
+  // evaluateReflex uses for the docked auto-refuel (reflex.ts's fuelUrgent,
+  // issue #670) -- jumps-remaining once this ship's own fuelPerJump has been
+  // measured, else percent-of-tank. Deliberately NOT a flat percentage on its
+  // own: #670 already proved percent-of-tank misjudges risk by hull size (19
+  // fuel reads identically "critical" on a 1-fuel/jump hull and a 15-fuel/jump
+  // one), and a HARD BLOCK is a worse place than a reflex to repeat that
+  // mistake, since a false block costs real mining time. Reusing fuelUrgent
+  // instead of re-deriving it is also the receipt for not inventing a second
+  // threshold knob: one urgency computation, two call sites.
+  //
+  // What this can and cannot promise: reaching the reserve floor means fuel
+  // enough for the configured number of jumps, or the configured percent of
+  // tank -- NOT a promise that a station with fuel to sell is within that
+  // range. Station tanks can and do run dry (fuel.md's own "empty stations
+  // can't sell you fuel" warning; `fuel_cell` itself was server-wide
+  // unavailable across three stations 2026-07-28 through 2026-08-01). The
+  // floor buys distance, not a guaranteed refuel.
+  //
+  // Scope, on purpose: only the `mine` action is refused. travel_to/jump/dock
+  // steps pass through unguarded -- a plan that is already ROUTING toward
+  // fuel must keep running, or this guard recreates issue #672 (the reflex's
+  // narrower livelock, where a plan that hadn't reached its refuel step yet
+  // read as making no progress). Blocking mine, and only mine, forces a
+  // replan out of "keep mining, deal with fuel later" without touching the
+  // one action family that could actually fix it.
+  //
+  // Fail-open like every guard in this file: no preStatus (fetch failed) or
+  // no configured floor (fuelReserveConfig/fuelPerJump both absent) means no
+  // verdict, never a fabricated block.
+  if (
+    step.action === "mine" && preStatus &&
+    fuelUrgent(
+      preStatus.fuel, preStatus.maxFuel, fuelPerJump,
+      fuelReserveConfig?.keepFuelAboveJumps, fuelReserveConfig?.keepFuelAbovePct,
+    )
+  ) {
+    const reason =
+      `fuel ${preStatus.fuel}/${preStatus.maxFuel} is at or below the configured reserve floor -- ` +
+      `mining further risks stranding. Refuel now if docked, or travel_to/jump toward a known station ` +
+      `with fuel before continuing to mine.`;
+    return guardBlock(reason);
+  }
+
   if (step.action === "mine" && preStatus?.modules !== undefined && !hasMiningModule(preStatus)) {
     const reason = "no mining equipment fitted; a mine action needs a mining laser module";
     return guardBlock(reason);

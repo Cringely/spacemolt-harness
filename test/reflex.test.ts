@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { evaluateReflex, reflexGaveUpAt } from "../src/agent/reflex";
+import { evaluateReflex, fuelUrgent, reflexGaveUpAt } from "../src/agent/reflex";
 import type { StatusSnapshot } from "../src/client/client";
 
 function status(overrides: Partial<StatusSnapshot>): StatusSnapshot {
@@ -79,6 +79,38 @@ describe("evaluateReflex", () => {
         status({ fuel: 19, maxFuel: 130 }), { keepFuelAbovePct: 25, keepFuelAboveJumps: 2 }, undefined,
       )).toEqual({ action: "refuel", reason: "low_fuel" });
     });
+  });
+});
+
+// fuelUrgent (issue #526 extraction): evaluateReflex's own tests above
+// exercise this formula thoroughly through the docked wrapper. These are
+// direct-call tests on the exported name itself -- the contract a SECOND
+// consumer (executor.ts's mine fuel-floor guard) now also depends on, so a
+// signature or precedence change here would need to be caught without
+// routing through evaluateReflex's docked-only gate.
+describe("fuelUrgent", () => {
+  test("jump-aware boundary: floor(fuel/fuelPerJump) < keepAboveJumps is the exact cutoff", () => {
+    // Killing mutation: `<` -> `<=` flips this exact boundary (floor(9/3)=3).
+    expect(fuelUrgent(9, 100, 3, 3, undefined)).toBe(false); // exactly 3 jumps of range, threshold is 3: not urgent
+    expect(fuelUrgent(8, 100, 3, 3, undefined)).toBe(true); // 2 jumps of range, under the threshold: urgent
+  });
+
+  test("measured fuelPerJump REPLACES the percent check, never ORs with it", () => {
+    // Killing mutation: `||` instead of the ternary's replace semantics.
+    // 19/130 = 14.6%, under a 25% floor, but 19 jumps of range at 1/jump.
+    expect(fuelUrgent(19, 130, 1, 2, 25)).toBe(false);
+  });
+
+  test("unmeasured (fuelPerJump undefined) falls back to percent-of-tank", () => {
+    // Killing mutation: dropping the `fuelPerJump != null` guard so an
+    // undefined fuelPerJump reaches the jump branch (NaN comparisons are
+    // always false, which would silently disable the percent fallback).
+    expect(fuelUrgent(19, 130, undefined, 2, 25)).toBe(true);
+  });
+
+  test("neither threshold configured: never urgent", () => {
+    // Killing mutation: a `??` default substituted for either threshold.
+    expect(fuelUrgent(1, 100, undefined, undefined, undefined)).toBe(false);
   });
 });
 

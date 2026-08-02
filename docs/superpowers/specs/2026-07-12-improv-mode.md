@@ -72,6 +72,16 @@ Resources / survival:
   (Also a §5 deterministic backstop: in plan-then-execute the reflex measures this ship's own
   fuel-per-jump from the `find_route` response every `travel_to` hop already fetches and judges its
   auto-refuel threshold in jumps once that measurement exists — issue #670.)
+- A `mine` action is refused once fuel reads below the reserve floor (25% of tank by default, or
+  the jumps-remaining check above once this ship's fuel-per-jump has been measured). Mining itself
+  burns no fuel, but a mining trip that never turns back does. Live 2026-07-25: a pilot mined to
+  2/130 fuel (1.5%) with cargo full and no route home, then spent six hours re-broadcasting
+  `distress_signal` into a system with no other players (rescue only reaches players in the SAME
+  system, so nobody answered). Treat a mine refusal as the trip's actual deadline, not a false
+  alarm: stop mining, refuel if docked, or `travel_to`/`jump` toward a known station before the
+  tank runs dry, not after. (Also a §5 deterministic backstop: in plan-then-execute the executor
+  refuses the `mine` step outright below the floor, sharing reflex.ts's `fuelUrgent` check with the
+  auto-refuel reflex above, issue #526.)
 - If you've already committed to a remedy (heading to refuel), don't re-open that decision every
   tick just because the condition still reads bad. Commit until it completes or provably fails —
   re-deciding a fix already under way is the classic token-burning livelock.
