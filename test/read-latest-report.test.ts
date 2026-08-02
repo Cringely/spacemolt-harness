@@ -48,12 +48,19 @@ describe("pickNewest (pure planner)", () => {
 });
 
 describe("globToRegExp", () => {
-  // Catches: a literal glob character (`.`) being treated as regex-any-char,
-  // which would let "XcouncilYreview.md" wrongly match "*council-review.md".
+  // Catches: a literal glob character (`.`) being treated as regex-any-char.
+  // The second assertion changes ONLY the `.` to `X` — every other byte,
+  // including the hyphen before "council", stays identical to the glob's
+  // literal suffix — so an unescaped dot (matching any single character,
+  // including "X") is the ONLY way this could wrongly return true. A prior
+  // version of this test also swapped the leading hyphen for "X", which
+  // broke the literal-prefix match on its own and made the assertion fail
+  // regardless of whether the dot was escaped — it could not catch the bug
+  // it claimed to guard (found in review, PR #66).
   test("escapes regex metacharacters outside the wildcard", () => {
     const re = globToRegExp("*-council-review.md");
     expect(re.test("2026-07-31-council-review.md")).toBe(true);
-    expect(re.test("2026-07-31Xcouncil-reviewXmd")).toBe(false);
+    expect(re.test("2026-07-31-council-reviewXmd")).toBe(false);
   });
 });
 
@@ -135,6 +142,24 @@ describe("read-latest-report CLI (#654 evidence-gap fix)", () => {
     expect(res.exitCode).toBe(0);
     expect(res.stdout.trim()).toBe(NO_MATCH);
     expect(res.stdout).not.toContain("HOST SECRET CONTENT");
+  });
+
+  // Catches: #654's exact defect rebuilt inside its own fix — a genuine I/O
+  // failure reading the target (not "nothing matched") collapsing into
+  // NO_MATCHING_REPORT_FOUND, which is indistinguishable from an empty
+  // reports/ dir and would recreate "denied read looks like nothing there".
+  // Portable across platforms (no chmod/icacls, no admin privilege needed):
+  // a directory whose name matches the glob passes the symlink filter (it's
+  // a real directory, not a link) and is picked as "newest", so the actual
+  // open+read in production code hits a real EISDIR — the same code path an
+  // EACCES/EPERM permission denial would hit, just a portable trigger for it.
+  test("target exists but can't be read as a file ⇒ REPORT_READ_FAILED sentinel, not NO_MATCH", () => {
+    const stateDir = tmp();
+    mkdirSync(join(stateDir, "reports", "2026-07-31-council-review.md"), { recursive: true });
+    const res = run(["--glob", "*-council-review.md"], stateDir);
+    expect(res.exitCode).toBe(1);
+    expect(res.stdout.trim()).toBe("REPORT_READ_FAILED EISDIR 2026-07-31-council-review.md");
+    expect(res.stdout).not.toContain(NO_MATCH);
   });
 
   test("reports/ directory presence alone does not create false negatives: newest of three wins", () => {

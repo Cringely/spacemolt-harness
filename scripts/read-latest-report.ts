@@ -33,7 +33,30 @@
 // A symlink PLANTED inside reports/ is still excluded below (defense in
 // depth) — write-report.ts already refuses to create one there, so this is
 // four lines, not a new primitive.
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+//
+// A THIRD outcome, not just FOUND/NO_MATCH: readdirSync on a reports/ we
+// can't list, or a target file we can't open, must never collapse into
+// NO_MATCHING_REPORT_FOUND — that is #654's exact defect (denied read read
+// as "nothing there") rebuilt inside its own fix. Any I/O failure prints
+// `REPORT_READ_FAILED <errno-code> <what>` and exits 1, distinct from the
+// exit-2 usage/rejected-input path and the exit-0 FOUND/NO_MATCH path
+// (same three-way exit-code convention as file-finding.ts: 0 success,
+// 1 runtime failure, 2 usage). `<what>` is a bare filename or "reports/",
+// never the resolved absolute path — the error code plus the name is
+// enough to act on without printing anything host-specific.
+//
+// CodeQL js/file-system-race (#66 review): the original code picked the
+// newest filename via the readdir-time lstat filter, then re-touched the
+// filesystem by path at read time (statSync/readFileSync(target)) — two
+// separate lookups of the same name, a window in which a symlink swapped
+// in between them would defeat the exclusion below. Fixed by opening the
+// target exactly ONCE with O_NOFOLLOW and doing every subsequent
+// operation (stat, read) on that same descriptor: the symlink check and
+// the use are now the same syscall, so there is no gap for a swap to land
+// in. The lstat filter over directory entries stays (it decides which
+// name is "newest" among candidates, not whether the read is safe), but
+// the read itself no longer trusts it.
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const NO_MATCH = "NO_MATCHING_REPORT_FOUND";
@@ -42,6 +65,19 @@ function usage(msg: string): never {
   console.error(msg);
   console.error("usage: bun scripts/read-latest-report.ts --glob <filename pattern, e.g. '*-council-review.md'>");
   process.exit(2);
+}
+
+/**
+ * A genuine I/O failure (permission denied, vanished file, etc.) reading
+ * something that IS there — as opposed to NO_MATCH, which means nothing
+ * matched. Kept distinct on purpose: see the file-header comment on why
+ * folding this into NO_MATCH would rebuild #654's exact defect. `what` is
+ * a bare filename, never a resolved path (may carry stateDir internals).
+ */
+function failRead(e: unknown, what: string): never {
+  const code = e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "UNKNOWN";
+  console.log(`REPORT_READ_FAILED ${code} ${what}`);
+  process.exit(1);
 }
 
 /** Turn a restricted filename glob (only `*` as a wildcard) into an anchored regex. */
@@ -94,7 +130,13 @@ function main(): void {
 
   let entries: string[] = [];
   if (existsSync(reportsDir)) {
-    entries = readdirSync(reportsDir).filter((n) => {
+    let names: string[];
+    try {
+      names = readdirSync(reportsDir);
+    } catch (e) {
+      failRead(e, "reports/"); // e.g. denied list permission — NOT "no reports exist"
+    }
+    entries = names.filter((n) => {
       try {
         return !lstatSync(join(reportsDir, n)).isSymbolicLink();
       } catch {
@@ -110,10 +152,32 @@ function main(): void {
   }
 
   const target = join(reportsDir, newest);
-  const mtime = statSync(target).mtime.toISOString();
-  const body = readFileSync(target, "utf8");
-  console.log(`FOUND ${newest} mtime=${mtime}`);
-  console.log(body);
+
+  // Single open, O_NOFOLLOW: rejects a symlink target atomically (no separate
+  // check-then-use gap for a swap to land in — see file-header comment).
+  // Every read below operates on this one descriptor, not on `target` again.
+  // O_NOFOLLOW is POSIX-only — Node/Bun leaves fs.constants.O_NOFOLLOW
+  // undefined on Windows, so `?? 0` makes that a documented no-op there
+  // rather than an accidental one. The scheduler this script actually runs
+  // on is Linux, where the flag is real; the dev/test host here is Windows,
+  // where this line of defense is inert and the upstream lstat filter over
+  // directory entries (below) is what the symlink-exclusion test exercises.
+  let fd: number;
+  try {
+    fd = openSync(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (e) {
+    failRead(e, newest);
+  }
+  try {
+    const mtime = fstatSync(fd).mtime.toISOString();
+    const body = readFileSync(fd, "utf8");
+    console.log(`FOUND ${newest} mtime=${mtime}`);
+    console.log(body);
+  } catch (e) {
+    failRead(e, newest);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 if (import.meta.main) main();
