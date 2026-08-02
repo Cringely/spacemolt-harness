@@ -240,6 +240,18 @@ const REFLEX_FAILURE_LOOKBACK = 50;
 // mode for this constant to paper over with a TTL.
 const BUY_ORDER_OPEN_LOOKBACK = 50;
 
+// Issue #669: bound on the item_unavailable read, same distinct-key-cap
+// sizing receipt as BUY_ORDER_OPEN_LOOKBACK directly above -- grouped by the
+// per-(stationKey, itemId) `key` payload field via latestEventPerPayloadKey,
+// so this bounds DISTINCT (station, item) pairs the pilot has ever proven
+// unavailable, not raw events. Unlike buy_order this memory has no real
+// invalidation signal (no galaxy-wide "who stocks X" query exists -- see
+// learnItemUnavailable below), so staleness is bounded by a TIME window
+// (repeatBlockWindowMinutes, reused rather than a new config knob) read at
+// the query site, not by this constant; this constant only caps how many
+// distinct pairs the query itself scans.
+const ITEM_UNAVAILABLE_LOOKBACK = 50;
+
 // Deterministic server-failure retry (#431, live 2026-07-19: each travel 503
 // bought a full ~19.5k-char planner call whose new plan re-issued the
 // byte-identical step; second occurrence of the class after the 2026-07-13
@@ -2526,6 +2538,42 @@ export class Agent {
     this.emit("buy_order", { key: `${stationKey}:${itemId}`, stationKey, itemId, open: true });
   }
 
+  // Repeated-buy memory (issue #669). Invariant: a `buy` blocked with
+  // item_not_available at this station teaches the executor's pre-call guard
+  // (executor.ts) not to resubmit the same (station, item) pair -- see the
+  // guard's own comment for why this is a TIME-WINDOWED memory rather than
+  // the buy_order guard's open/close pair: item_not_available has no real
+  // invalidation signal (no galaxy-wide stock query exists), so there is
+  // nothing to "clear" on success. Only ONE event kind is ever written here
+  // (a fresh proof of unavailability); staleness is handled entirely by the
+  // window check at the read site (executeOne below), which is what lets a
+  // stale record self-expire instead of latching permanently.
+  //
+  // Detection matches the same message-prefix convention this file's own
+  // buy-id correction already relies on (classifyGameError's caller,
+  // executor.ts: `e.message.includes("invalid_item")`) rather than the
+  // transport's generic `error.code` (openapi-v2.json's own field
+  // description: terminal game errors surface as the single bucket
+  // "command_error", with the specific game-rule code living only in the
+  // message text) -- there is no more precise structured signal to key on.
+  // `.includes`, not an exact-prefix match: markets.md:86 documents the
+  // MEANING of item_not_available, not a literal wire format, so tolerant
+  // matching is the honest choice per this project's evidence precedence.
+  //
+  // Same seam as learnBuyOrderOpened above: the action, its outcome, and the
+  // pre-action station are all in hand here and nowhere else.
+  private learnItemUnavailable(
+    action: string | undefined, params: unknown, result: StepResult, status: StatusSnapshot | null,
+  ): void {
+    if (action !== "buy") return;
+    if (result.kind !== "blocked" || !result.reason.includes("item_not_available")) return;
+    const stationKey = status?.dockedAt;
+    if (!stationKey) return;
+    const itemId = (params as { id?: unknown } | undefined)?.id;
+    if (typeof itemId !== "string" || itemId.length === 0) return;
+    this.emit("item_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
+  }
+
   // Clearing half of the memory above. `predicate` decides which open
   // records this call closes -- see the two call sites (cancel_order success,
   // buy_filled notification) for why each is scoped the way it is.
@@ -3076,6 +3124,27 @@ export class Agent {
           return r.key === `${buyOrderStationKey}:${buyOrderItemId}` && r.open === true;
         });
 
+    // Issue #669: whether THIS exact `buy` step targets a (station, item)
+    // pair already PROVEN item_not_available here (see learnItemUnavailable
+    // above). Same query shape as buyOrderAlreadyOpen directly above --
+    // false for every other step, only a buy step pays for the read -- but
+    // additionally windowed by repeatBlockWindowMinutes (reused, not a new
+    // knob: it already means "how long do we keep steering the planner away
+    // from a proven-doomed repeat" for the same-error-repeat breaker below)
+    // because, unlike an open buy_order, item_not_available has no real
+    // invalidation signal to clear on -- see the constant's own comment.
+    const buyItemId = step?.action === "buy" ? (step.params as { id?: unknown }).id : undefined;
+    const buyStationKey = status?.dockedAt ?? null;
+    const itemUnavailableWindowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    const itemUnavailableAtStation =
+      typeof buyItemId === "string" && buyStationKey !== null &&
+      this.store.latestEventPerPayloadKey(this.id, "item_unavailable", "key", ITEM_UNAVAILABLE_LOOKBACK)
+        .some((e) => {
+          const r = e.payload as { key?: unknown };
+          return r.key === `${buyStationKey}:${buyItemId}` && (this.now() - e.ts) < itemUnavailableWindowMs;
+        });
+
     // Issue #188: currently-valid learned sparse rules ride along as plain
     // data -- TTL-filtered here so the executor stays clockless.
     //
@@ -3099,7 +3168,7 @@ export class Agent {
     };
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
-      fuelReserveConfig, fuelPerJump,
+      fuelReserveConfig, fuelPerJump, itemUnavailableAtStation,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of
@@ -3182,6 +3251,10 @@ export class Agent {
     // outcome, and the pre-action station are all in hand here and nowhere
     // else.
     this.learnBuyOrderOpened(step?.action, step?.params, result, status);
+
+    // Repeated-buy memory (issue #669): see learnItemUnavailable's own doc
+    // comment. Same seam as learnBuyOrderOpened directly above.
+    this.learnItemUnavailable(step?.action, step?.params, result, status);
 
     // The other half: a successful cancel_order closes whatever this station
     // had open. Scoped to the CURRENT station (status?.dockedAt) because

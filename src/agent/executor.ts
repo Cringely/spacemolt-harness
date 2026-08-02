@@ -1002,6 +1002,11 @@ export async function executeTick(
   learnedSparse?: LearnedSparseRule[], buyOrderAlreadyOpen?: boolean,
   fuelReserveConfig?: { keepFuelAboveJumps?: number; keepFuelAbovePct?: number },
   fuelPerJump?: number,
+  // Issue #669: appended at the end (not slotted alongside buyOrderAlreadyOpen
+  // above) so every existing positional call site -- dozens across test/ --
+  // keeps its argument list unaffected; only agent.ts's own call site is
+  // updated to pass it.
+  itemUnavailableAtStation?: boolean,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1222,6 +1227,43 @@ export async function executeTick(
 
   if (step.action === "travel_to") {
     return travelToTick(api, plan, cursor, step.params.system_id, preStatus);
+  }
+
+  // Repeated-buy guard (issue #669). Invariant: a `buy` is not resubmitted for
+  // an (station, item) pair this station has already proven, via
+  // item_not_available, has no seller -- within a bounded memory window (see
+  // itemUnavailableAtStation below). Production incidents: 17 blocked buy
+  // attempts for fuel_cell at one station in ~10 minutes (#669), 18 more in a
+  // later 2026-08-02 episode that drove `plan_budget_exceeded` over 40 times --
+  // each attempt was a live call the station had already answered.
+  // item_not_available is the game's own documented code for this refusal
+  // (docs/game-reference/upstream/docs/markets.md:86, "Nothing on the book
+  // can fill your buy ... Place a create_buy_order instead"); this guard
+  // steers toward that same remedy rather than repeating the doomed buy.
+  // itemUnavailableAtStation is computed in agent.ts from the persisted
+  // item_unavailable event stream (see learnItemUnavailable there), the same
+  // store-free boundary buyOrderAlreadyOpen already respects below -- plain
+  // data in, no store reference here.
+  //
+  // Deliberately NOT the create_buy_order guard's shape: that guard clears on
+  // two real signals (cancel_order, buy_filled) because a standing order truly
+  // closes on exactly those two events. A spot-market restock has no such
+  // signal -- no galaxy-wide "who stocks X" query exists (per the vendored
+  // reference and the #669 live probe) -- so a permanent block here would
+  // repeat round 1 of the create_buy_order guard's mistake (PR #58: "converting
+  // a credit leak into a permanent inability to buy that item at that
+  // station"). The window is a receipt, not a guess: a bounded memory is the
+  // standard substitute when no invalidation signal exists, and it fails
+  // toward re-allowing (a stale block clears itself) rather than toward
+  // never trying again.
+  if (step.action === "buy" && itemUnavailableAtStation) {
+    const itemId = (step.params as { id?: unknown }).id;
+    const reason =
+      `buy of ${itemId} refused: this station already confirmed item_not_available for it -- ` +
+      `resubmitting the same buy will not change the outcome. Post a standing bid instead with ` +
+      `create_buy_order (item_id, quantity, price_each -- omit price_each for the catalog base value) ` +
+      `and let a seller come to you, or travel to a different station that stocks it.`;
+    return guardBlock(reason);
   }
 
   // create_buy_order duplicate-order guard (issue #681, round 2). CORRECTED
