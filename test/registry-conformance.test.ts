@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { z } from "zod";
 import { REGISTRY } from "../src/registry/actions";
+import { paramsObject } from "../src/registry/params-shape";
 import slim from "./fixtures/openapi-slim.json";
 
 const fixture = slim as unknown as Record<string, { required: string[]; properties: string[] }>;
@@ -21,7 +21,10 @@ describe("registry conforms to OpenAPI spec", () => {
       // Same shape the commands.md generator and SpacemoltHttp.call both build.
       const entry = fixture[`/api/v2/${a.tool}${a.name ? `/${a.name}` : ""}`];
       expect(entry).toBeDefined(); // action exists in the game API
-      const shape = (a.params as z.ZodObject<z.ZodRawShape>).shape;
+      // paramsObject, not a raw `.shape` cast: an entry carrying a cross-field
+      // refinement (deposit's item-XOR-gift form, #703) is a ZodEffects around
+      // the object, and the properties this test checks are the inner object's.
+      const shape = paramsObject(a.params).shape;
       // every param we send is a real param
       for (const key of Object.keys(shape)) {
         expect(entry!.properties).toContain(key);

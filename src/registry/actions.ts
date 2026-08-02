@@ -213,16 +213,79 @@ export const REGISTRY: ActionDef[] = [
   // test/fixtures/openapi-slim.json and commands.md:432. Same subset choice as
   // withdraw: item_id + quantity required on our side (the one real use case --
   // deposit a specific item from cargo into personal storage before crafting),
-  // matching default source:"cargo" target:"self" (storage.md). credits/
-  // bucket/dest_bucket/message/items/target/source are real faction-gifting/
-  // bulk properties with no consumer here and are skipped as dead data, same
-  // reasoning as withdraw's comment above. Deposits always require docking
-  // (storage.md:46); mirrors withdraw's docked guard.
+  // matching default source:"cargo" target:"self" (storage.md).
+  // bucket/dest_bucket/items/source are real faction/bulk properties with no
+  // consumer here and stay skipped as dead data, same reasoning as withdraw's
+  // comment above. Deposits always require docking (storage.md:46).
+  //
+  // GIFT FORM (issue #703): target/credits/message are REOPENED. This comment
+  // used to skip them alongside the other four, and that was correct with ONE
+  // pilot -- a gift needs a second party, and there wasn't one. The fleet
+  // created the consumer: on 2026-08-02 the corsair pilot was detained by the
+  // Crimson Pact over a 27cr bounty it held 0 credits to pay, while the miner
+  // sat on ~199.7k. Waiting does not fix that (police.md:57, "The jail timer
+  // lifts the current detention, but the bounty itself is only cleared by
+  // payment" -- and crimson is the corsair's own empire, so it re-detains on
+  // the next dock there); a credit transfer does (police.md:56, "If your
+  // credits reach the bounty amount mid-sentence, it is paid automatically on
+  // your next action and you are released immediately"). trading.md:93 names
+  // this exact use: "Rescue operations ... credits reach them instantly
+  // wherever they respawn ... they don't even need to be online."
+  //
+  // There is NO send_gift endpoint to register: the prose docs' `send_gift` is
+  // a naming alias. All 286 paths in the vendored OpenAPI were checked and none
+  // contains "gift"; the real route is this one, and storage.md:37 says so in
+  // the transfer table -- "Cargo or storage | Another player | deposit_items
+  // with target: <player name> (a gift)". Per-property citations, all from
+  // docs/game-reference/upstream/openapi-v2.json (this path at :116199,
+  // x-is-mutation:true), cross-checked against the properties list for the same
+  // path in test/fixtures/openapi-slim.json:
+  //   target  (:116273) "Target: 'self' (personal storage), 'faction' (faction
+  //           storage), or a player name/ID (gift)"
+  //   credits (:116228) "For 'deposit' with target=<player name/id>: the amount
+  //           of credits to gift that player."
+  //   message (:116260) "Optional message when gifting to another player"
+  // The API's own required set is empty, so both forms conform.
+  //
+  // The two forms are mutually exclusive by REFINEMENT, not by convention: the
+  // spec scopes `credits` to target=<player>, and a call mixing the forms is a
+  // shape we have no captured example of -- no load-bearing unknowns. Rejected
+  // alternative: five independently-optional fields with exclusivity left to
+  // the executor, which would let a malformed deposit{} reach the game and
+  // spend the tick. The refinement wraps the object in a ZodEffects, so the two
+  // shape-readers (digest/ollama vocabulary, the conformance test) go through
+  // paramsObject() in registry/params-shape.ts. The gift ITSELF -- who may
+  // receive credits and how many per call -- is guarded at execution; see
+  // executor.ts's fleet credit-gift guard.
   { tool: "spacemolt_storage", name: "deposit", kind: "mutation", eventLabel: "Deposit to storage",
     params: z.object({
-      item_id: z.string(),
-      quantity: z.number().int().min(1),
-    }).strict() },
+      item_id: z.string().optional(),
+      quantity: z.number().int().min(1).optional(),
+      target: z.string().optional(),
+      credits: z.number().int().min(1).optional(),
+      message: z.string().optional(),
+    }).strict().superRefine((v, ctx) => {
+      const item = v.item_id !== undefined || v.quantity !== undefined;
+      const gift = v.target !== undefined || v.credits !== undefined || v.message !== undefined;
+      const fail = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+      // Each message is written as a correction the planner can act on, the
+      // same way the executor's guard reasons are: a plan rejected here comes
+      // back to the planner as this text (planner/parse.ts, planWithSingleRetry).
+      if (item && gift) {
+        fail("deposit takes EITHER the item form {item_id, quantity} OR the gift form " +
+          "{target, credits, message?} -- never both in one call");
+      } else if (item) {
+        if (v.item_id === undefined || v.quantity === undefined) {
+          fail("deposit item form needs BOTH item_id and quantity");
+        }
+      } else if (gift) {
+        if (v.target === undefined || v.credits === undefined) {
+          fail("deposit gift form needs BOTH target (the recipient's username) and credits");
+        }
+      } else {
+        fail("deposit needs either {item_id, quantity} (store an item) or {target, credits} (gift credits)");
+      }
+    }) },
   // craft / recycle (issue #221): the crafting & refining loop's two job-queue
   // mutations. VERIFIED against the vendored OpenAPI (docs/game-reference/
   // upstream/openapi-v2.json:33612 /api/v2/spacemolt/craft, x-is-mutation:true
