@@ -91,7 +91,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts registered; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: F1 of fleet-flight (#591) partially unblocked. PR #47 merged the livelock executor-starvation fix (#543); PR #50 merged the reflex terminal-failure give-up (#672, partial). Live-confirmed 2026-08-01: pilot recovered from 28.5h freeze, now at haven, fuel 130/130, credits 207,158. Remaining: #526 (another livelock) blocks F1 gate; #669/#670 (planner/fuel-urgency issues) remain open. See M-52 in [docs/milestones.md](docs/milestones.md).
+Current work: F1 of fleet-flight (#591) gates closed (M-52, M-53). PR #72 merged strand-evidence guards (#690); PR #73 under review for planner re-buy defect (#669). Live-confirmed 2026-08-02: pilot docked at cargo_lanes, fuel 130/130, credits 203,572, zero restarts. Real defect found: pilot re-attempts buys at stations that can't fill. #526 (executor starvation) closed by M-52; F2 awaits dispatch. See M-52/M-53 in [docs/milestones.md](docs/milestones.md).
 
 The major-milestone timeline (M-01..M-52) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
