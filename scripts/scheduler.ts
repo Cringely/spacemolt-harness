@@ -7,7 +7,10 @@
 // env file (runbook E1 step 5) is what sets the three variables; `git pull`
 // of the checkout belongs to the E1 wrapper, not here.
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { defaultBreaker, loadBreakers, manualReset, saveBreakers } from "../src/scheduler/breaker";
+import type { GhRunner } from "../src/scheduler/filing";
 import { health } from "../src/scheduler/health";
 import { JOBS } from "../src/scheduler/jobs";
 import type { Spawner } from "../src/scheduler/spawn";
@@ -94,5 +97,26 @@ const spawner: Spawner = (argv, opts) => {
 // call time, header-only, never logged.
 const usageFetcher = makeUsageFetcher();
 
-const result = await tick({ clock: Date.now, stateDir, checkoutDir, secretsDir, gitRunner, spawner, usageFetcher });
+// #558 part 2: the scheduler's OWN `gh` runner, so tick.ts can file a
+// failure-alarm issue without going through a spawned job. gh_pat_readcomment
+// is the same PAT standup/strategy/council already carry into file-finding.ts
+// (job.patSecret, spawn.ts buildEnv) — it already has whatever scope issue
+// create/comment needs, verified by every job that already files through it.
+// Missing secret file degrades to no ghRunner (tick.ts's fire loop just skips
+// filing, same optional-dependency shape as usageFetcher) rather than a
+// startup crash — a scheduler host mid-provisioning must still be able to run
+// every OTHER capability while this one secret is not yet in place.
+let ghRunner: GhRunner | undefined;
+try {
+  const ghToken = readFileSync(join(secretsDir, "gh_pat_readcomment"), "utf8").trim();
+  ghRunner = (args) => {
+    const res = spawnSync("gh", args, { encoding: "utf8", env: { ...process.env, GH_TOKEN: ghToken } });
+    if (res.error) return { stdout: "", exitCode: 1 };
+    return { stdout: res.stdout ?? "", exitCode: res.status ?? 1 };
+  };
+} catch {
+  console.error("gh_pat_readcomment secret unreadable — failure-alarm filing disabled this run");
+}
+
+const result = await tick({ clock: Date.now, stateDir, checkoutDir, secretsDir, gitRunner, spawner, usageFetcher, ghRunner });
 console.log(JSON.stringify(result));

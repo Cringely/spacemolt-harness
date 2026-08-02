@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { loadBreakerConfig, loadBreakers, recordDispatchResult, saveBreakers } from "./breaker";
 import { loadLedger, recordOutcome, sweepLedger } from "./dispatch-ledger";
 import { dueJobs, type MainStatus } from "./due";
+import { fileFailureAlarm } from "./failure-alarm";
+import type { GhRunner } from "./filing";
 import type { GitResult, GitRunner } from "./git";
 import { JOBS } from "./jobs";
 import { runJob, type Spawner } from "./spawn";
@@ -43,6 +45,11 @@ export interface TickDeps {
   usageFetcher?: UsageFetcher;
   /** Passed through to runJob so tests fire per-job timeouts instantly. */
   waitTimeout?: (ms: number) => Promise<"timeout">;
+  /** #558 part 2: files/bumps a failure-alarm issue for a job that fails this
+   *  tick. Optional like usageFetcher above — production wires the real `gh`
+   *  runner (scripts/scheduler.ts), tick tests that don't exercise the alarm
+   *  leave it unset and the fire loop just skips filing. */
+  ghRunner?: GhRunner;
 }
 
 export interface TickResult {
@@ -280,6 +287,38 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
         setStewardSha(deps.stateDir, job.id, main.headSha);
       }
       fired.push({ jobId: job.id, result: outcome.result });
+
+      // #558 part 2: a failed run must surface the same way a successful one
+      // does. Reload anchors FRESH (not the tick-start `anchors` var above) —
+      // runJob already saved this job's post-attempt failStreak, and reusing
+      // the stale in-memory copy here would read the streak from BEFORE this
+      // attempt (same staleness reasoning as setStewardSha's own comment).
+      if (outcome.result === "fail" && deps.ghRunner) {
+        try {
+          const failStreak = loadAnchors(deps.stateDir)[job.id].failStreak;
+          fileFailureAlarm(deps.ghRunner, deps.stateDir, {
+            jobId: job.id,
+            cycleId: outcome.cycleId,
+            failStreak,
+            timedOut: outcome.timedOut,
+            exitCode: outcome.exitCode,
+          });
+        } catch {
+          // A gh outage filing the ALARM must never abort the tick that is
+          // trying to report the original failure — no-throw, like runJob.
+          // But silent was #558's own defect one level up, so log it.
+          //
+          // Deliberately does NOT interpolate the caught message. filing.ts
+          // run() builds that message from the gh binary's own stdout, capped
+          // at 300 chars — and a PAT is 40-93 chars, so the cap bounds nothing
+          // that matters. Our PAT never flows into it (it lives only in
+          // scheduler.ts's spawnSync env), but what a third-party binary may
+          // print on an auth failure is not knowable from this repo, and
+          // security.md says log presence, not content. The job id is the
+          // actionable half anyway: it names which alarm could not file.
+          console.error(`gh call failed filing the failure-alarm for job ${job.id} — see the gh CLI / cron log for detail`);
+        }
+      }
     }
 
     const pruned = pruneOld(deps.stateDir, now);
