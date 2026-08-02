@@ -7,6 +7,18 @@
 //
 //   bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>
 //
+// A second, read-only mode (#635) lets a fresh spawn discover a PRIOR run's
+// dedup-key for the same condition before minting a new one — a headless job
+// has no memory across cycles, and three cycles once minted three spellings
+// of one finding because nothing let the fourth cycle ask "has this been
+// filed already?":
+//
+//   bun scripts/file-finding.ts --search "<query>"
+//
+// Prints a JSON array of matching machine-filed issues (number, title, state,
+// dedupKey — parsed from each hit's `<!-- sm-dedup:KEY -->` marker). Stateless:
+// needs neither SCHEDULER_STATE_DIR nor the D1 gate, which govern writes only.
+//
 // Every created issue gets a fixed priority label (src/scheduler/filing.ts
 // DEFAULT_TRIAGE_LABEL) with no caller input — an earlier draft let the
 // caller escalate via `--priority`, but review (R7, PR #29) cut it: every
@@ -35,11 +47,19 @@
 import { spawnSync } from "node:child_process";
 import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
 import { canFile, loadGates } from "../src/scheduler/gates";
-import { FilingInputError, MAX_BODY_BYTES, fileFinding, readActiveCycle, type GhRunner } from "../src/scheduler/filing";
+import {
+  FilingInputError,
+  MAX_BODY_BYTES,
+  fileFinding,
+  readActiveCycle,
+  searchDedupCandidates,
+  type GhRunner,
+} from "../src/scheduler/filing";
 
 function usage(msg: string): never {
   console.error(msg);
   console.error("usage: bun scripts/file-finding.ts --dedup-key <key> --title <title> --body-b64 <base64 of the body>");
+  console.error('   or: bun scripts/file-finding.ts --search "<query>"  (discover a prior run\'s dedup-key before minting a new one)');
   process.exit(2);
 }
 
@@ -51,6 +71,26 @@ for (let i = 0; i < args.length; i += 2) {
   if (flag === undefined || !flag.startsWith("--") || value === undefined) usage(`bad argument: ${flag}`);
   opts[flag.slice(2)] = value;
 }
+
+const gh: GhRunner = (ghArgs) => {
+  const res = spawnSync("gh", ghArgs, { encoding: "utf8" });
+  if (res.error) throw res.error;
+  return { stdout: res.stdout ?? "", exitCode: res.status ?? 1 };
+};
+
+// Search mode (#635 discovery step): stateless and read-only, so it needs
+// neither SCHEDULER_STATE_DIR nor the D1 filing gate — those govern WRITES.
+if (opts["search"] !== undefined) {
+  try {
+    console.log(JSON.stringify(searchDedupCandidates(gh, opts["search"])));
+  } catch (e) {
+    if (e instanceof FilingInputError) usage(e.message);
+    console.error(`file-finding search failed: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 const { title } = opts;
 const dedupKey = opts["dedup-key"];
 const bodyB64 = opts["body-b64"];
@@ -79,12 +119,6 @@ try {
 } catch (e) {
   usage(e instanceof BodyArgError ? e.message : `invalid --body-b64: ${e instanceof Error ? e.message : String(e)}`);
 }
-
-const gh: GhRunner = (ghArgs) => {
-  const res = spawnSync("gh", ghArgs, { encoding: "utf8" });
-  if (res.error) throw res.error;
-  return { stdout: res.stdout ?? "", exitCode: res.status ?? 1 };
-};
 
 try {
   const outcome = fileFinding(gh, stateDir, {

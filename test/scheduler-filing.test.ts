@@ -10,6 +10,7 @@ import {
   FilingInputError,
   fileFinding,
   readActiveCycle,
+  searchDedupCandidates,
   writeActiveCycle,
   type GhRunner,
 } from "../src/scheduler/filing";
@@ -228,6 +229,21 @@ describe("finding filer input hardening (C2, security review)", () => {
     expect(calls.length).toBe(0);
   });
 
+  // Catches (#635): the exact drift observed in production — three cycles
+  // minted `core_harvest_unimplemented`, `core-harvest-unimplemented-p0`, and
+  // `p0-core-harvest-unimplemented` for ONE condition, and the case/separator
+  // variant (snake_case, uppercase, a bare dot) is the mechanically-checkable
+  // half of that drift. Ablation: reverting DEDUP_KEY_RE to its pre-fix
+  // `[A-Za-z0-9._-]{1,64}` turns this red (every one of these keys used to pass).
+  test("non-kebab-case dedup key (underscore, uppercase, dot) ⇒ rejected", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    for (const key of ["core_harvest_unimplemented", "Core-Harvest", "core.harvest", "-leading-hyphen", "trailing-hyphen-"]) {
+      expect(() => fileFinding(gh, dir, { ...finding(), dedupKey: key })).toThrow(FilingInputError);
+    }
+    expect(calls.length).toBe(0);
+  });
+
   // Catches: the (a)(4) flood cap keyed on caller-supplied identity — the
   // cycle id must be scheduler-owned (runJob writes it; the CLI reads it).
   test("active-cycle file round-trips; corrupt file reads as null", () => {
@@ -237,6 +253,67 @@ describe("finding filer input hardening (C2, security review)", () => {
     expect(readActiveCycle(dir)).toEqual({ jobId: "standup", cycleId: "standup-123" });
     writeFileSync(join(dir, "active-cycle.json"), '{"jobId":'); // truncated
     expect(readActiveCycle(dir)).toBe(null); // never a throw
+  });
+});
+
+// The discovery half of #635: a fresh spawn has no memory of a prior run's
+// dedup-key, so it must be able to look one up before minting a new spelling.
+describe("dedup-key discovery (#635 search mode)", () => {
+  // Catches: the same silent-remote-mismatch class as the FILING_REPO test
+  // above, applied to the new search path — an unscoped search would surface
+  // (or leak) issues from whatever repo the checkout's origin points at.
+  test("search is scoped to FILING_REPO and the machine-filed label", () => {
+    const { gh, calls } = fakeGh([]);
+    searchDedupCandidates(gh, "core harvest unimplemented");
+    expect(calls.length).toBe(1);
+    const call = calls[0]!;
+    expect(call.args[0]).toBe("issue");
+    expect(call.args[1]).toBe("list");
+    const idx = call.args.indexOf("--label");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(call.args[idx + 1]).toBe("machine-filed");
+    const repoIdx = call.args.indexOf("--repo");
+    expect(call.args[repoIdx + 1]).toBe(FILING_REPO);
+  });
+
+  // Catches: a candidate's dedup-key not being extracted, forcing the caller
+  // back to guessing a spelling anyway.
+  test("extracts each hit's dedup-key from its sm-dedup marker", () => {
+    const { gh } = fakeGh([]);
+    const stub: GhRunner = (args) => {
+      if (args[0] === "issue" && args[1] === "list") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { number: 621, title: "P0 BLOCKER: core_harvest job unimplemented", state: "OPEN", body: "text\n\n<!-- sm-dedup:core_harvest_unimplemented -->\nfiled-by: x" },
+            { number: 700, title: "unrelated", state: "OPEN", body: "no marker here" },
+          ]),
+        };
+      }
+      return gh(args);
+    };
+    const hits = searchDedupCandidates(stub, "core harvest");
+    expect(hits).toEqual([
+      { number: 621, title: "P0 BLOCKER: core_harvest job unimplemented", state: "OPEN", dedupKey: "core_harvest_unimplemented" },
+      { number: 700, title: "unrelated", state: "OPEN", dedupKey: null },
+    ]);
+  });
+
+  // Catches: a search-operator injection through the query — the same class
+  // R7 flagged for the dedup-key search, now on the free-text query.
+  test("hostile search query ⇒ rejected before any gh invocation", () => {
+    const { gh, calls } = fakeGh([]);
+    for (const q of ['x" OR label:secret', "in:body foo", "a".repeat(81), ""]) {
+      expect(() => searchDedupCandidates(gh, q)).toThrow(FilingInputError);
+    }
+    expect(calls.length).toBe(0);
+  });
+
+  // Catches: an unparseable gh answer crashing the discovery step instead of
+  // degrading to "no candidates, mint fresh" — same posture as findDedupMatch.
+  test("malformed gh JSON ⇒ empty candidate list, never a throw", () => {
+    const stub: GhRunner = () => ({ stdout: "not json", exitCode: 0 });
+    expect(searchDedupCandidates(stub, "some query")).toEqual([]);
   });
 });
 
@@ -320,6 +397,26 @@ describe("file-finding CLI (base64 argv body)", () => {
   // maps the malformed-base64 case above. A subprocess probe cannot cover it —
   // the >64KB body's ~87KB base64 token exceeds the Windows host's ~32KB command
   // line, so the arg can't even be passed here; production runs on Linux, 128KB.)
+
+  // Catches (#635): --search rejecting a hostile query before any gh call —
+  // a real match would touch the network, so only the rejected path is safe
+  // to spawn here (same constraint as the D1/base64 cases above).
+  test("--search with a hostile query ⇒ exit 2 before any gh call", () => {
+    const res = runCli(["--search", "x\" OR label:secret"]);
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("search query");
+  });
+
+  // Catches: --search requiring SCHEDULER_STATE_DIR/active-cycle like the
+  // write path — it must not, since it reads nothing and files nothing. Proven
+  // here by NOT setting SCHEDULER_STATE_DIR at all and still failing on the
+  // QUERY, never on the missing env/active-cycle checks that gate writes.
+  test("--search needs no SCHEDULER_STATE_DIR — rejects on the query, not on missing state dir", () => {
+    const res = runCli(["--search", ""]); // empty query still hostile-shaped (rejected by SEARCH_QUERY_RE)
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).not.toContain("SCHEDULER_STATE_DIR");
+    expect(res.stderr).not.toContain("no active cycle");
+  });
 
   // Catches: the D1 kill switch not honored at the CLI — disabled ⇒ exit 3.
   test("D1 gate disabled ⇒ exit 3 before any gh call", () => {

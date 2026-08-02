@@ -89,7 +89,29 @@ export class FilingInputError extends Error {}
 /** Hard cap on the finding body (enforced here and again at the CLI's STDIN read). */
 export const MAX_BODY_BYTES = 64 * 1024;
 
-const DEDUP_KEY_RE = /^[A-Za-z0-9._-]{1,64}$/;
+// Producer fix (#635): a headless spawn has no memory of past runs, so three
+// separate cycles minted three spellings of one finding — `core_harvest_unimplemented`,
+// `core-harvest-unimplemented-p0`, `p0-core-harvest-unimplemented` — and the exact-phrase
+// dedup search (below) matched none of them against each other. Tightened from
+// `[A-Za-z0-9._-]` to lowercase-only kebab-case (no underscore, no dot, no leading/
+// trailing/doubled hyphen): this alone collapses the case/separator half of that
+// drift mechanically. The other half — a severity affix (p0/blocker) riding inside
+// the key — is a wording choice no regex can name as "not part of the condition",
+// so it stays a work-order rule (spawn.ts FILING_HOWTO), paired with the search-first
+// step below that lets a fresh spawn discover and reuse a prior run's exact key.
+const DEDUP_KEY_RE = /^(?=.{1,64}$)[a-z0-9]+(-[a-z0-9]+)*$/;
+
+// The free-text half of the same fix: a fresh spawn must be able to ask "has this
+// condition already been filed?" before minting a key. Charset kept narrow (no `:`,
+// quotes, or parens) so a caller-composed query cannot smuggle a `gh search` field
+// operator (`label:`, `in:`, a quoted phrase) the way the untrusted-dedup-key review
+// already flagged for the exact-match search above.
+const SEARCH_QUERY_RE = /^[A-Za-z0-9 .-]{1,80}$/;
+
+// Reads a PRIOR key back out of an issue body — permissive on purpose (production
+// issues may still carry the pre-tightening underscore/dot keys from before this
+// fix), unlike DEDUP_KEY_RE which only governs what a NEW key may be.
+const SM_DEDUP_MARKER_RE = /<!--\s*sm-dedup:([A-Za-z0-9._-]+)\s*-->/;
 
 // Scheduler-owned filing identity: runJob (spawn.ts) writes this file at each
 // spawn; the file-finding CLI reads it instead of trusting caller flags.
@@ -211,6 +233,56 @@ function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit |
   return hits
     .filter((h) => h.closedAt !== null && now - Date.parse(h.closedAt) <= CLOSED_DEDUP_WINDOW_MS)
     .sort((a, b) => Date.parse(b.closedAt as string) - Date.parse(a.closedAt as string))[0];
+}
+
+export interface DedupCandidate {
+  number: number;
+  title: string;
+  state: string;
+  /** Extracted from the `<!-- sm-dedup:KEY -->` marker; null on a machine-filed hit with no marker. */
+  dedupKey: string | null;
+}
+
+interface SearchHit {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+}
+
+// The discovery half of #635: a fresh spawn has no memory of the key a PRIOR
+// spawn minted for the same condition, so it must be able to ask before it
+// mints one. Scoped to MACHINE_LABEL — this is a lookup over the filer's own
+// output, not a general issue search — and to FILING_REPO via run(), same as
+// every other gh call in this file.
+export function searchDedupCandidates(gh: GhRunner, query: string): DedupCandidate[] {
+  if (!SEARCH_QUERY_RE.test(query)) {
+    throw new FilingInputError(`search query must match ${SEARCH_QUERY_RE} (got: ${JSON.stringify(query)})`);
+  }
+  const stdout = run(gh, [
+    "issue",
+    "list",
+    "--state",
+    "all",
+    "--label",
+    MACHINE_LABEL,
+    "--search",
+    query,
+    "--json",
+    "number,title,body,state",
+  ]);
+  let hits: SearchHit[];
+  try {
+    hits = JSON.parse(stdout) as SearchHit[];
+  } catch {
+    return []; // unparseable answer → no candidates, caller mints fresh rather than crash
+  }
+  return hits.map((h) => ({
+    number: h.number,
+    title: h.title,
+    state: h.state,
+    dedupKey: h.body.match(SM_DEDUP_MARKER_RE)?.[1] ?? null,
+  }));
 }
 
 export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput): FindingOutcome {

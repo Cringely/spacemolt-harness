@@ -131,6 +131,15 @@ Both sides must agree on one thing no schema forces: the body reaches the script
 
 **Spanning test.** `test/gen-backlog-repo.test.ts` ("BACKLOG_REPO agrees with filing.ts's FILING_REPO") reads both source files and asserts the same literal. Its sibling test ("the gh issue list call always passes --repo BACKLOG_REPO") pins the #550 regression directly: dropping `--repo` from the `subprocess.run` args (the original bug) fails it. `test/scheduler-filing.test.ts:73` separately pins `FILING_REPO`'s value.
 
+## 14. Dedup-key stability: work-order prose ↔ `--search` discovery mode ↔ key charset (#635)
+
+**Side A**: `src/scheduler/spawn.ts`'s `FILING_HOWTO` tells every spawned job to run `bun scripts/file-finding.ts --search "<query>"` before minting a `--dedup-key`, and to copy a matching hit's key verbatim rather than re-derive one.
+**Side B**: `scripts/file-finding.ts`'s `--search` flag (calling `src/scheduler/filing.ts`'s `searchDedupCandidates`) and `filing.ts`'s `DEDUP_KEY_RE` (the lowercase-kebab-case charset a NEW key must satisfy).
+
+**How they drift.** A headless spawn has no memory of a prior cycle's exact key: three cycles once minted `core_harvest_unimplemented`, `core-harvest-unimplemented-p0`, and `p0-core-harvest-unimplemented` for one condition, and the filer's exact-marker dedup search matched none of them against each other. The prose (Side A) is the only thing telling a fresh spawn to look before it mints; if it's edited to drop the search step, or `--search` is renamed on Side B without the prose following, every spawn goes back to inventing a spelling and each side's own tests stay green (the CLI still parses its own flags; the prose still renders into the prompt).
+
+**Spanning tests.** `test/scheduler-spawn.test.ts` ("every work order instructs searching for a prior dedup-key before minting a new one") pins side A. `test/scheduler-filing.test.ts` ("dedup-key discovery (#635 search mode)" block, plus "non-kebab-case dedup key... ⇒ rejected") pins side B's `--search` behavior and the tightened charset. Renaming `--search` or reverting `DEDUP_KEY_RE` to its pre-fix `[A-Za-z0-9._-]` form fails at least one.
+
 ## Keeping the manifest current
 
 Adding a new hand-paired instruction seam (two files that must agree with no shared schema forcing it)? Add a section here with real file:line anchors, and either point at an existing spanning test or write one. A seam entry with no spanning test and no noted reason is not finished.
