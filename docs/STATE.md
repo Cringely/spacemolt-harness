@@ -14,7 +14,7 @@ _Refreshed 2026-08-02 at session close. Boot from this block + `docs/backlog.md`
 
 **FLEET FLIGHT (#591). F1 IS CLOSED. F2 IS THE NEXT MOVE.** F0 steer restore (#495) done. F1 needed #543 and #526; both now closed (PR #47, #68). PR #72 merged 2026-08-02 (9719daa, issue #690 strand evidence). F2 (#593, launch scout+corsair) was held only by F1, nothing blocks it. F3: #571 landed, #534/#569/#592 remain. F4 exit: 3 pilots / 24h / zero strands. Live: 1 of 3 flying (`miner`); scout and corsair registered, unlaunched.
 
-**STRAND GUARDS LIVE, DETECTION GAPPED.** PR #72 fixed the producer: executor refuses non-movement actions when fuel hits the floor. Detection gap remains: `isStranded()` credits only MOVEMENT actions, so a `mine` refused by the guard produces zero evidence. Low-fuel episode (5/130) overnight; stall-monitor alert fired 0. **F4's "zero strands" is checkable but loose:** tag application awaits each new guard, "no in-flight plan, undocked, fuel-capped" unconfirmed. Reflex gated on `docked` (reflex.ts:103); plan-budget ceiling does NOT suppress alerts (runs before ceiling). Logs truncated at 04:17:29Z restart.
+**STRAND GUARDS LIVE, EVIDENCE NOW TAGGED.** PR #68 added the refusal: executor blocks `mine` at the reserve floor. PR #72 (9719daa) tagged that block `fuelReserveBlock`; `isStranded()` now credits it alongside the movement+regex path, closing the prior zero-evidence gap. Not automatic: each new guard must tag itself at its call site; #72 removed a worse shape, a distant action-name allowlist. **Open, unconfirmed:** whether `isStranded()` sees no in-flight plan, undocked (reflex gated on `docked`, reflex.ts:103, can't fire), fuel-capped. Plan-budget ceiling does NOT suppress the alert (runSteward runs first). Logs truncated at 04:17:29Z restart.
 
 **LIVELOCK (1,3 FIXED; 2 IN-FLIGHT; 4 PARTIAL).** (1) Executor starvation #543, PR #47 merged. (2) Planner buys what station doesn't stock, #669, PR #73 under review. (3) Fuel urgency measured as percent not range, #670, PR #54, inert until configured per-agent. (4) Reflex terminal give-up #672, PR #50; deferred.
 
@@ -24,7 +24,7 @@ _Refreshed 2026-08-02 at session close. Boot from this block + `docs/backlog.md`
 
 **BACKLOG. 187→163, P0 at zero.** Regenerated from GitHub Issues SSOT. Prior distribution (P1/P2/P3/unlabeled) needs recalculation from the new 163 total; old numbers from 187-issue count are stale.
 
-**THEN, in order.** #669 (planner re-buy, PR #73 in review) → #690 (strand detector gap, gates F4 tightness) → #593 (F2 launch) → #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
+**THEN, in order.** #669 (planner re-buy, PR #73 in review) → #593 (F2 launch) → #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
 
 ## Standing operational facts
 
