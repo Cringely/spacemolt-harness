@@ -635,49 +635,65 @@ async function installModBlock(
 }
 
 // refuel target precondition guard (issue #595): target selects ship-to-ship
-// transfer mode, and the vendored reference is explicit that mode has a hard
-// module precondition -- both the OpenAPI param description
-// (docs/game-reference/upstream/openapi-v2.json:44505, "Requires a Refueling
-// Pump module for transfers") and the prose (docs/game-reference/upstream/
-// docs/travel.md:62, "target=<player> transfers fuel to another ship at your
-// POI (requires a Refueling Pump module)") agree. Invariant: a non-"fleet"
-// target is impossible without a Refueling Pump fitted -- never send a
-// guaranteed no_refueling_pump call.
+// transfer mode, which the vendored reference requires the RECIPIENT be
+// present at the caller's own location for (fuel.md:235, a rescuer "must be
+// at your POI"; travel.md:62, target=<player> "transfers fuel to another
+// ship at your POI"). Invariant: a non-"fleet" target must name someone
+// actually nearby -- never send a transfer request for a party you cannot
+// see, and never fabricate a target from prose.
 //
 // Live miss: the planner emitted `refuel{id:"fuel_cell", target:"full"}` from
 // a steer reading "Refuel to full" -- the English word landed in a
-// ship-to-ship param the pilot had no module to back. Recovery only came from
-// a human re-steer to `refuel{quantity:73}` (2026-08-01T23:03:33Z, also 3x on
+// ship-to-ship param naming nobody real. Recovery only came from a human
+// re-steer to `refuel{quantity:73}` (2026-08-01T23:03:33Z, also 3x on
 // 2026-07-28).
 //
-// Why this guards on FIT DATA, not the string: accounts.md:33 documents
-// usernames as 3-24 chars, any script, digits, spaces, punctuation, emoji --
-// "full" is a syntactically legal username, so no string shape can separate
-// the two (the issue's own framing: "a value heuristic cannot distinguish
-// 'full' from a legitimate username"). Module presence is decidable instead.
-// We do NOT have a captured type/name string for a fitted Refueling Pump
-// (no fixture shows one), so matching on the module's identity would repeat
-// the exact guess installModBlock's comment above explicitly declines to make
-// for the skill gate. What IS captured: the Refueling Pump sits in a utility
-// slot (fuel.md:178, "(utility slot)"), and slot occupancy is the same
-// verified `modules[].slot` field installModBlock's slot check already reads.
-// Zero fitted utility modules means no Refueling Pump can be fitted --
-// structurally certain, the same "true whichever way" guarantee as the grid
-// floor above -- so that is the only state this blocks. Any utility slot
-// occupied is ambiguous (module identity unverified) and fails open, letting
-// the game's own no_refueling_pump answer rule on it.
-function refuelTargetBlock(step: PlanStep, preStatus: StatusSnapshot | null): StepResult | null {
+// REVISION (PR #61 review): the shipped version of this guard blocked on
+// "zero utility-slot modules fitted," reasoning that the Refueling Pump the
+// game requires (fuel.md:178, a utility-slot module) could not be present
+// with none fitted. That reasoning does not hold: FittedModule's own VERIFIED
+// live capture (test/fixtures/spacemolt-probe-2026-07-12.json, cited in the
+// comment above installModBlock) shows a MINING LASER also reporting slot
+// "utility" -- ships.md's slot table (weapon/defense/utility) is contradicted
+// by the game's own answer, and live capture outranks vendored prose per this
+// repo's own precedence rule. The production pilot is a miner, so its mining
+// laser keeps utilityFitted >= 1 permanently -- that guard could never fire
+// for the one ship it was built to protect. Caught in review, not shipped.
+// Module IDENTITY is also not decidable from anything this repo holds: no
+// fixture captures a Refueling Pump's type/type_id, and the OpenAPI's Module
+// schema (openapi-v2.json:20172) declares both as bare `type: "string"` with
+// no enum and no fuel-transfer-specific stat field to key on instead (checked
+// before writing this version -- see spacemolt#686 for the live-capture
+// follow-up that would settle it and unblock an identity-based check for the
+// CALLER's own Refueling Pump precondition, which this guard does not verify).
+//
+// What IS decidable: presence, right now, the exact question the scan
+// nearby-membership guard (issue #368, targetLocalityBlock above) already
+// answers by substring-testing a fresh api.getNearby() listing -- this
+// mirrors that pattern. A refuel target is a name the planner can only have
+// learned from that same listing (the digest's Nearby section); a target
+// absent from it was invented or stale, the exact doomed class "full" fell
+// into. This does not verify the CALLER's Refueling Pump -- that half stays
+// with the game's own no_refueling_pump answer -- but it closes the observed
+// defect without guessing equipment identity, and it can fire for a miner.
+async function refuelTargetBlock(api: GameApi, step: PlanStep): Promise<StepResult | null> {
   const target = (step.params as { target?: unknown }).target;
   if (typeof target !== "string" || target === "" || target === "fleet") return null; // no transfer requested -> no guard
-  if (preStatus?.modules === undefined) return null; // UNKNOWN fitted set -> fail open
+  if (!api.getNearby) return null; // no capability to consult -> fail open
 
-  const utilityFitted = preStatus.modules.filter((m) => m.slot === "utility").length;
-  if (utilityFitted === 0) {
+  let nearby: string;
+  try {
+    nearby = await api.getNearby();
+  } catch {
+    return null; // query failed -> UNKNOWN -> fail open, same convention as targetLocalityBlock
+  }
+  if (!nearby.trim()) return null; // empty listing is ambiguous, never a verdict (issue #94's rule)
+
+  if (!nearby.includes(target)) {
     const reason =
-      `refuel target=${target} blocked: ship-to-ship fuel transfer requires a Refueling Pump ` +
-      `module fitted (a utility-slot module), and you have none. For a normal tank refill, ` +
-      `drop target and call refuel{quantity=...} (or refuel{} to auto-fill while docked); ` +
-      `target:"fleet" reads fleet fuel status without a pump.`;
+      `refuel target=${target} blocked: ship-to-ship fuel transfer needs the recipient AT YOUR POI, ` +
+      `and '${target}' is not on your current Nearby list. Pick a target straight off that list, drop ` +
+      `target for a normal tank refill (refuel{quantity=...}), or use target:"fleet" to read fleet fuel status.`;
     return guardBlock(reason);
   }
   return null;
@@ -1128,9 +1144,10 @@ export async function executeTick(
   }
 
   // refuel target precondition guard (issue #595) -- see refuelTargetBlock
-  // above. No query needed: preStatus already carries the fitted set.
+  // above. Spends a free get_nearby query, only on a refuel step naming a
+  // non-"fleet" target (the common no-target station refuel pays nothing).
   if (step.action === "refuel") {
-    const block = refuelTargetBlock(step, preStatus);
+    const block = await refuelTargetBlock(api, step);
     if (block) return block;
   }
 
