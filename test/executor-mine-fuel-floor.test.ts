@@ -63,6 +63,9 @@ describe("mine fuel-floor guard (#526)", () => {
       resultText: "fuel 19/130 is at or below the configured reserve floor -- mining further risks stranding. " +
         "Refuel now if docked, or travel_to/jump toward a known station with fuel before continuing to mine.",
       guard: true,
+      // issue #690: tags this block as strand-relevant fuel evidence -- see
+      // executor.ts's StepResult doc comment.
+      fuelReserveBlock: true,
     });
     expect(calls.length).toBe(0); // no mine request was made
   });

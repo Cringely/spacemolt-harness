@@ -124,8 +124,18 @@ describe("Layer 3: per-agent rolling plan-budget ceiling", () => {
     const runawayPlan: Plan = { goal: "mine forever", steps: [{ action: "mine", params: {}, until: "cargo_full" }] };
     store.savePlan("a1", runawayPlan, []);
     const planner = new MockPlanner([runawayPlan]);
+    // fuelReservePct pinned WELL below the pinned fuel level (issue #690): the
+    // undocked wake threshold is max(fuelPct, fuelReservePct) (wake.ts), and the
+    // #526 mine fuel-floor guard (executor.ts) shares that same reserve floor by
+    // default -- so leaving it at AGENT_DEFAULTS (25) would ALSO guard-block
+    // this fixture's `mine` step every tick (5/100 < 25%), contradicting this
+    // test's own "mine always succeeds" premise and, since #690, feeding the
+    // strand steward's ceiling-EXEMPT re-steer (runSteward is deliberately
+    // placed ahead of the ceiling gate) into this window's wake count. Set low
+    // enough that fuel=5/100 clears it, so only the fuelPct-driven low_fuel wake
+    // this test actually exercises fires.
     const config: AgentConfig = {
-      ...baseConfig, fuelPct: 20, maxPlansPerWindow: maxPlans, planBudgetWindowMinutes: windowMinutes,
+      ...baseConfig, fuelPct: 20, fuelReservePct: 1, maxPlansPerWindow: maxPlans, planBudgetWindowMinutes: windowMinutes,
     };
     const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => now });
 

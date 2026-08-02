@@ -189,10 +189,13 @@ export function fuelBelowReserve(status: StatusSnapshot, reservePct: number): bo
 }
 
 // The behavioral strand predicate: undocked, below the fuel reserve, having hit
-// the fuel-blocked-movement threshold, with no refuelling base at the current
+// the fuel-blocked-attempt threshold, with no refuelling base at the current
 // POI. All four must hold -- a base here means the docked reflex can refuel (not
-// a strand), and the fuel-block streak is what separates "low but moving" from
-// "cannot move." Pure over the caller's already-computed inputs.
+// a strand), and the fuel-block streak is what separates "low but still able to
+// act" from "prevented from acting by the fuel floor" (issue #690: the streak
+// counts a fuel-refused `mine` the same as a fuel-refused `travel_to`/`jump` --
+// see agent.ts's fuelBlockedMoves producer for which refusals qualify). Pure
+// over the caller's already-computed inputs.
 export function isStranded(input: {
   docked: boolean;
   fuelBelowReserve: boolean;
