@@ -137,6 +137,21 @@ describe("spawn composer + runner (C3)", () => {
     }
   });
 
+  // Catches (#635): a work order minting a dedup-key with no guidance on the
+  // condition-only, no-severity-word shape — the wording half of the drift no
+  // code can enforce (the mechanical half, severity-word normalization, is
+  // enforced in fileFinding() itself — see test/scheduler-filing.test.ts's
+  // "severity-word near-match auto-bump" block, which is the test that
+  // actually proves the invariant; this one only proves the guidance text
+  // reached the prompt).
+  test("every work order names the dedup-key shape (condition-only, no severity word)", () => {
+    for (const j of JOBS) {
+      const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
+      expect(prompt).toContain("leave severity/priority");
+      expect(prompt).toContain("auto-normalizes a severity word");
+    }
+  });
+
   // Catches: an empty handoff crashing every ceremony. Not hypothetical:
   // STATE.md shipped 0 bytes to main in #375 (restored by #377).
   test("empty docs/STATE.md ⇒ prompt carries the MISSING marker and the spawn proceeds", async () => {

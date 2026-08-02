@@ -7,6 +7,14 @@
 //
 //   bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>
 //
+// #635: a headless spawn has no memory across cycles, so three cycles once
+// minted three spellings of one finding (a severity-word affix riding inside
+// the key). fileFinding() (src/scheduler/filing.ts) now catches that itself —
+// a create whose key differs from an OPEN machine-filed issue's key only by a
+// severity word (p0/blocker/…) bumps that issue instead of opening a new one.
+// Nothing here changed to support it: it is internal to fileFinding, so this
+// CLI's surface (flags, exit codes) is unaffected.
+//
 // Every created issue gets a fixed priority label (src/scheduler/filing.ts
 // DEFAULT_TRIAGE_LABEL) with no caller input — an earlier draft let the
 // caller escalate via `--priority`, but review (R7, PR #29) cut it: every
