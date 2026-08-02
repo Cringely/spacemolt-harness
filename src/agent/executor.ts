@@ -926,7 +926,7 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  */
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
-  learnedSparse?: LearnedSparseRule[],
+  learnedSparse?: LearnedSparseRule[], buyOrderAlreadyOpen?: boolean,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1089,6 +1089,35 @@ export async function executeTick(
 
   if (step.action === "travel_to") {
     return travelToTick(api, plan, cursor, step.params.system_id, preStatus);
+  }
+
+  // create_buy_order duplicate-order guard (issue #681, round 2). CORRECTED
+  // invariant: the pilot's FIRST create_buy_order for an item is the
+  // documented, correct remedy when a `buy` is blocked item_not_available
+  // (markets.md:86, "Place a create_buy_order instead and let sellers come
+  // to you") -- round 1 of this guard refused that legitimate first order
+  // (reviewer finding, PR #58) by keying on "a buy was ever blocked here"
+  // instead of on the order itself. Never post a SECOND create_buy_order for
+  // a (station, item) pair that already has one open: live evidence, the
+  // planner varied price_each across six posted orders (50, 60, 100, 50,
+  // 100, 60cr) for one item at one station in 90 minutes, none of them
+  // cancelling the last, locking ~21,800cr in duplicate escrow. A standing
+  // bid waits for a seller regardless of price, so a SECOND bid at a
+  // different price adds nothing but more escrow.
+  // buyOrderAlreadyOpen is computed in agent.ts from the persisted buy_order
+  // event stream (see learnBuyOrderOpened there) rather than queried here --
+  // executor.ts stays store-free, the same boundary every guard above
+  // already respects (api/plan/status/learnedSparse are all plain data or
+  // the live game client, never the event store itself). Ahead of the
+  // price-default block below: no point defaulting a price for an order
+  // that is refused outright.
+  if (step.action === "create_buy_order" && buyOrderAlreadyOpen) {
+    const itemId = (step.params as { item_id: string }).item_id;
+    const reason =
+      `create_buy_order for ${itemId} refused: an order for ${itemId} is already open at this ` +
+      `station -- posting another just escrows more credits behind the same wait, it does not fill ` +
+      `any faster. cancel_order first if you want to reprice, or let the existing order rest.`;
+    return guardBlock(reason);
   }
 
   // create_sell_order / create_buy_order price default (issue #94, extended to

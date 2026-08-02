@@ -466,6 +466,58 @@ describe("executeTick: create_buy_order price default (#316)", () => {
   });
 });
 
+// create_buy_order duplicate-order guard (issue #681, round 2). Round 1 keyed
+// on "a buy was ever blocked here" and refused the pilot's legitimate FIRST
+// order (task-reviewer finding on PR #58: a standing buy order is the
+// documented remedy for item_not_available, markets.md:86). The corrected
+// invariant refuses only a SECOND create_buy_order once one is already open
+// for the same (station, item) -- production locked ~21,800cr across six
+// dead orders for fuel_cell at one station, none of them cancelling the
+// last. buyOrderAlreadyOpen is agent.ts's fresh-per-tick verdict, computed
+// from the persisted buy_order stream -- see agent-buy-order-guard.test.ts
+// for the integration path that produces and clears it. Here it's driven
+// directly, matching this file's own convention (create_sell_order/
+// create_buy_order price tests above pass plain data into executeTick,
+// never a store).
+describe("executeTick: create_buy_order duplicate-order guard (#681)", () => {
+  test("buyOrderAlreadyOpen=true refuses the order and makes no API call", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "create_buy_order", params: { item_id: "fuel_cell", quantity: 85, price_each: 60 } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 }, undefined, undefined, true);
+    expect(r.kind).toBe("blocked");
+    expect((r as { reason: string }).reason).toContain("fuel_cell");
+    expect((r as { reason: string }).reason).toContain("already open at this station");
+    expect(calls.length).toBe(0); // the second escrow-locking call never goes out
+  });
+
+  test("the guard fires ahead of the price-default block: an unpriced duplicate order is refused for being a duplicate, not for price", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "create_buy_order", params: { item_id: "mystery_debris", quantity: 1 } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 }, undefined, undefined, true);
+    expect(r.kind).toBe("blocked");
+    expect((r as { reason: string }).reason).not.toContain("price_each");
+    expect(calls.length).toBe(0);
+  });
+
+  // The exact case round 1 got wrong: no order open yet (the FIRST attempt)
+  // must go through untouched, never refused.
+  test("buyOrderAlreadyOpen=false (the legitimate first order) lets an otherwise-valid order through unaffected", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "create_buy_order", params: { item_id: "palladium_ore", quantity: 28, price_each: 350 } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 }, undefined, undefined, false);
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "create_buy_order", params: { item_id: "palladium_ore", quantity: 28, price_each: 350 } }]);
+  });
+
+  test("buyOrderAlreadyOpen is scoped to create_buy_order only: a plain buy step is unaffected", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "buy", params: { id: "fuel_cell", quantity: 10 } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 }, undefined, undefined, true);
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "buy", params: { id: "fuel_cell", quantity: 10 } }]);
+  });
+});
+
 describe("executeTick: travel_to macro", () => {
   // VERIFIED 2026-07-10 (live find_route capture, SM-2 flight diagnosis --
   // see docs/STATE.md): { found, total_jumps, estimated_fuel, fuel_available,

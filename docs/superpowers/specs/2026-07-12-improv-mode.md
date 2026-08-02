@@ -145,6 +145,19 @@ Verify effects (never trust a success envelope):
   no-buyers sell block to one outcome class regardless of item, so cycling items still arms the
   backoff after 3. In plan-then-execute, both queries are unplannable, so the harness runs
   `analyze_market` and injects the Market intelligence section — issue #269.)
+- The buy-side mirror of "no buyers": a station that returns `item_not_available` on a `buy`
+  has NO SELLER here, at any price. Post a `create_buy_order` in response — that IS the correct,
+  documented remedy (a standing bid waits for a seller to show up, however long that takes) — but
+  do this ONCE per item per station. If you already have an order open for this item here, do NOT
+  post a second one at a different price hoping to speed up the fill; a duplicate bid just escrows
+  MORE credits behind the same wait, it does not fill any faster (live, 2026-08-01, #681: docked
+  where `fuel_cell` had no seller, six `create_buy_order` posts across 90 minutes at varying prices
+  — 50, 60, 100, 50, 100, 60cr — locked ~21,800cr across duplicate bids, none of them ever
+  cancelling the last). Before posting, check whether you already have one open; if you want a
+  different price, `cancel_order` the old one FIRST, then post the new one. (Also a §5
+  deterministic backstop: in plan-then-execute the executor refuses a SECOND `create_buy_order`
+  for a station+item pair that already has one open, tracked from your own successful order
+  placements and cleared the moment a `cancel_order` succeeds or the order fills — issue #681.)
 - Judge every trip by NET profit, not the sale price: fuel costs credits (2cr per fuel unit at
   the cheapest full-tank stations, more as a tank empties, plus any empire fuel tax), so run
   `find_route` and price the ROUND-TRIP fuel before you commit to a selling run. Fee facts: an
