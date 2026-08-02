@@ -26,6 +26,55 @@ export const CHAT_CHANNELS = ["local", "system", "faction", "private", "emergenc
 // SpacemoltHttp.call (src/client/http.ts), which drops the trailing slash.
 export const CATALOG_ACTION = "";
 
+// Fleet credit-gift ceiling (issue #703). Invariant: no single deposit gift
+// moves more than this many credits, whoever the recipient is. Enforced by the
+// `credits` field of the deposit entry below rather than by a caller, so it
+// binds EVERY driver that sends the action -- client.ts:771 and
+// mcp-game-api.ts:84 each safeParse this entry before the wire. It began life
+// as an executeTick guard, which bound only plan-then-execute; the improv/MCP
+// driver never calls executeTick at all, and mcp-game-api.ts:75-84 names
+// exactly this allowlist-plus-params check as the improv injection defense
+// (PR #82 review).
+//
+// The WHO half cannot follow it here: the fleet roster is runtime config from
+// agents.yaml, not a constant, so the "only a fleet pilot" check stays in
+// executor.ts and the improv briefing carries it in prose instead
+// (docs/superpowers/specs/2026-07-12-improv-mode.md section 4; seam #4 in
+// docs/wiki/seam-manifest.md, manifested in test/improv-parity.test.ts).
+//
+// Why a ceiling at all, given the roster check: the roster answers WHO, this
+// answers HOW MUCH, and only the second bounds the damage when the first is
+// satisfied by a name the planner was TOLD to use. Not hypothetical here -- the
+// game's own item_not_available error ships a filled-in create_buy_order
+// template, the pilot read that tool output as instruction and obeyed it six
+// times, and ~21,800cr went into duplicate escrow (issue #681). These pilots
+// also read a continuously-broadcasting emergency channel, so arbitrary text
+// reaches the planner every wake, and a gift is irreversible in a way an
+// escrowed order is not (cancel_order returns escrow; nothing returns a gift).
+//
+// Receipt for the number (simplicity rule 3): the live rescue need is a 27cr
+// bounty (#703) and a fuel-cell restock is tens of credits, so 5000 clears the
+// real use case by more than two orders of magnitude -- it never blocks the
+// thing it was built for -- while capping one call at ~2.5% of the miner's
+// 199,696cr wallet. Rejected simpler alternative: a percent-of-wallet cap,
+// which reads as more principled and is not -- it scales with exactly the
+// quantity it is meant to bound (25% of that wallet is ~50k), so it loosens as
+// the fleet gets richer. A fixed number does not.
+//
+// What the bound delivers, stated exactly, because the comment this replaced
+// claimed more (PR #82 review): one CALL moves at most 5000cr, and since
+// plan.ts refuses `repeat`/`until` on a gift step, one plan STEP is one call. A
+// plan may still hold up to 30 gift steps (PlanSchema's step cap), one per
+// tick, so the per-PLAN bound is 30x this -- the roster, not the ceiling, is
+// what keeps those credits inside our own fleet.
+//
+// Tradeoff of enforcing it in the schema rather than at the guard: a rejection
+// is a zod parse failure, so the planner reads it inside parse.ts's
+// invalid_union error text rather than through the executor's curated
+// guardBlock correction channel. Accepted -- binding both drivers beats a nicer
+// message on one of them.
+export const GIFT_CREDIT_CEILING = 5000;
+
 // The single source of truth for every game action agents may use.
 // Hand-curated subset of the full API; conformance-tested against the
 // OpenAPI spec (see test/registry-conformance.test.ts, Task 3).
@@ -213,16 +262,87 @@ export const REGISTRY: ActionDef[] = [
   // test/fixtures/openapi-slim.json and commands.md:432. Same subset choice as
   // withdraw: item_id + quantity required on our side (the one real use case --
   // deposit a specific item from cargo into personal storage before crafting),
-  // matching default source:"cargo" target:"self" (storage.md). credits/
-  // bucket/dest_bucket/message/items/target/source are real faction-gifting/
-  // bulk properties with no consumer here and are skipped as dead data, same
-  // reasoning as withdraw's comment above. Deposits always require docking
-  // (storage.md:46); mirrors withdraw's docked guard.
+  // matching default source:"cargo" target:"self" (storage.md).
+  // bucket/dest_bucket/items/source are real faction/bulk properties with no
+  // consumer here and stay skipped as dead data, same reasoning as withdraw's
+  // comment above. Deposits always require docking (storage.md:46).
+  //
+  // GIFT FORM (issue #703): target/credits/message are REOPENED. This comment
+  // used to skip them alongside the other four, and that was correct with ONE
+  // pilot -- a gift needs a second party, and there wasn't one. The fleet
+  // created the consumer: on 2026-08-02 the corsair pilot was detained by the
+  // Crimson Pact over a 27cr bounty it held 0 credits to pay, while the miner
+  // sat on ~199.7k. Waiting does not fix that (police.md:57, "The jail timer
+  // lifts the current detention, but the bounty itself is only cleared by
+  // payment" -- and crimson is the corsair's own empire, so it re-detains on
+  // the next dock there); a credit transfer does (police.md:56, "If your
+  // credits reach the bounty amount mid-sentence, it is paid automatically on
+  // your next action and you are released immediately"). trading.md:93 names
+  // this exact use: "Rescue operations ... credits reach them instantly
+  // wherever they respawn ... they don't even need to be online."
+  //
+  // There is NO send_gift endpoint to register: the prose docs' `send_gift` is
+  // a naming alias. All 286 paths in the vendored OpenAPI were checked and none
+  // contains "gift"; the real route is this one, and storage.md:37 says so in
+  // the transfer table -- "Cargo or storage | Another player | deposit_items
+  // with target: <player name> (a gift)". Per-property citations, all from
+  // docs/game-reference/upstream/openapi-v2.json (this path at :116199,
+  // x-is-mutation:true), cross-checked against the properties list for the same
+  // path in test/fixtures/openapi-slim.json:
+  //   target  (:116273) "Target: 'self' (personal storage), 'faction' (faction
+  //           storage), or a player name/ID (gift)"
+  //   credits (:116228) "For 'deposit' with target=<player name/id>: the amount
+  //           of credits to gift that player."
+  //   message (:116260) "Optional message when gifting to another player"
+  // The API's own required set is empty, so both forms conform.
+  //
+  // The two forms are mutually exclusive by REFINEMENT, not by convention: the
+  // spec scopes `credits` to target=<player>, and a call mixing the forms is a
+  // shape we have no captured example of -- no load-bearing unknowns. Rejected
+  // alternative: five independently-optional fields with exclusivity left to
+  // the executor, which would let a malformed deposit{} reach the game and
+  // spend the tick. The refinement wraps the object in a ZodEffects, so the two
+  // shape-readers (digest/ollama vocabulary, the conformance test) go through
+  // paramsObject() in registry/params-shape.ts.
+  //
+  // The gift itself is bounded in two places, split by what each place can
+  // know. HOW MUCH is right here, `.max(GIFT_CREDIT_CEILING)` on `credits`,
+  // because a constant needs no runtime config and this schema is the one thing
+  // both drivers parse (see the ceiling's receipt above). WHO is runtime config
+  // -- the fleet roster from agents.yaml -- so it stays in executor.ts's fleet
+  // credit-gift guard, and the improv briefing carries the same rule in prose
+  // for the driver that never reaches that guard. HOW OFTEN belongs to neither:
+  // `repeat`/`until` are siblings of `params` and invisible from inside a params
+  // refinement, so plan.ts refuses them on a gift step (issue #703, PR #82).
   { tool: "spacemolt_storage", name: "deposit", kind: "mutation", eventLabel: "Deposit to storage",
     params: z.object({
-      item_id: z.string(),
-      quantity: z.number().int().min(1),
-    }).strict() },
+      item_id: z.string().optional(),
+      quantity: z.number().int().min(1).optional(),
+      target: z.string().optional(),
+      credits: z.number().int().min(1).max(GIFT_CREDIT_CEILING).optional(),
+      message: z.string().optional(),
+    }).strict().superRefine((v, ctx) => {
+      const item = v.item_id !== undefined || v.quantity !== undefined;
+      const gift = v.target !== undefined || v.credits !== undefined || v.message !== undefined;
+      const fail = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+      // Each message is written as a correction the planner can act on, the
+      // same way the executor's guard reasons are: a plan rejected here comes
+      // back to the planner as this text (planner/parse.ts, planWithSingleRetry).
+      if (item && gift) {
+        fail("deposit takes EITHER the item form {item_id, quantity} OR the gift form " +
+          "{target, credits, message?} -- never both in one call");
+      } else if (item) {
+        if (v.item_id === undefined || v.quantity === undefined) {
+          fail("deposit item form needs BOTH item_id and quantity");
+        }
+      } else if (gift) {
+        if (v.target === undefined || v.credits === undefined) {
+          fail("deposit gift form needs BOTH target (the recipient's username) and credits");
+        }
+      } else {
+        fail("deposit needs either {item_id, quantity} (store an item) or {target, credits} (gift credits)");
+      }
+    }) },
   // craft / recycle (issue #221): the crafting & refining loop's two job-queue
   // mutations. VERIFIED against the vendored OpenAPI (docs/game-reference/
   // upstream/openapi-v2.json:33612 /api/v2/spacemolt/craft, x-is-mutation:true

@@ -29,6 +29,12 @@ store.onEvent = (e) => {
   console.log(`[${new Date(e.ts).toISOString()}] ${e.agentId} ${e.type}`, JSON.stringify(e.payload));
 };
 
+// The fleet roster (issue #703): every pilot username this harness runs. The
+// executor's credit-gift guard refuses a gift to anyone not on it, so it is
+// built ONCE here from the loaded config rather than per-agent -- the whole
+// point is that an agent knows its fleet-mates, not just itself.
+const fleetUsernames = config.agents.map((a) => a.username);
+
 const agents: Agent[] = [];
 for (const entry of config.agents) {
   // Build the client set (Batch B). The HTTP client is always present and logged
@@ -65,6 +71,7 @@ for (const entry of config.agents) {
       repeatBlockWindowMinutes: entry.repeatBlockWindowMinutes,
       reflex: entry.reflex,
       experiment: entry.experiment,
+      fleetUsernames,
     },
   });
   agent.start();

@@ -1013,6 +1013,11 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  * Both optional, same best-effort contract as the rest of this function: no
  * config and no measurement means the guard never fires, never a fabricated
  * block from missing data.
+ *
+ * `fleetUsernames` (issue #703) is this harness's own pilot roster, plain data
+ * from agents.yaml (see AgentConfig.fleetUsernames). It feeds the credit-gift
+ * guard below, and it is the ONE input here whose absence is a verdict rather
+ * than a pass -- see that guard's fail-closed receipt.
  */
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
@@ -1024,6 +1029,9 @@ export async function executeTick(
   // keeps its argument list unaffected; only agent.ts's own call site is
   // updated to pass it.
   itemUnavailableAtStation?: boolean,
+  // Issue #703: appended at the end for the same reason itemUnavailableAtStation
+  // was -- every existing positional call site keeps its argument list.
+  fleetUsernames?: readonly string[],
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1314,6 +1322,51 @@ export async function executeTick(
       `station -- posting another just escrows more credits behind the same wait, it does not fill ` +
       `any faster. cancel_order first if you want to reprice, or let the existing order rest.`;
     return guardBlock(reason);
+  }
+
+  // Fleet credit-gift guard (issue #703). Invariant: a deposit in its GIFT form
+  // (target + credits, see the registry entry) sends credits only to a username
+  // in THIS harness's own fleet. A gift is irreversible -- cancel_order returns
+  // a market escrow, nothing returns a gift -- so this is the WHO half of the
+  // bound, and it is here rather than in the schema for one reason: the roster
+  // is runtime config from agents.yaml, and a zod schema built at module load
+  // cannot read it.
+  //
+  // The HOW MUCH half deliberately is NOT here. GIFT_CREDIT_CEILING lives on the
+  // registry entry's `credits` field (actions.ts), because both drivers parse
+  // that schema and only ONE of them reaches this function -- the improv/MCP
+  // pilot calls McpGameApi.action directly and never runs executeTick (PR #82
+  // review). A per-call ceiling checked here would have guarded exactly half the
+  // capability it was written for. HOW OFTEN is a third place again: plan.ts
+  // refuses `repeat`/`until` on a gift step, which no params schema can see.
+  //
+  // fleetUsernames arrives as plain data (agent.ts reads it off AgentConfig,
+  // main.ts fills it from agents.yaml), the same store-free boundary
+  // buyOrderAlreadyOpen and itemUnavailableAtStation above already respect:
+  // no config object and no roster lookup enters this file.
+  //
+  // FAIL-CLOSED, and deliberately the only guard here that is. Everywhere else
+  // absence is never a verdict, because a fabricated block costs a replan while
+  // the game still answers the real question. That asymmetry inverts for a
+  // gift: the game will execute a transfer to whoever is named, so an unwired
+  // or empty roster means "no pilot is known to be in this fleet" and every
+  // gift is refused. A false block costs one replan; a false allow costs
+  // credits that do not come back.
+  if (step.action === "deposit") {
+    const gift = step.params as { target?: unknown; credits?: unknown };
+    if (typeof gift.target === "string") {
+      if (!fleetUsernames?.includes(gift.target)) {
+        // Correction first, roster after: the digest clips a blocked wake's
+        // detail at 200 chars, same ordering receipt as the jettison guard.
+        const roster = fleetUsernames?.length
+          ? `Fleet pilots: ${fleetUsernames.join(", ")}.`
+          : `No fleet roster is configured, so no gift target can be verified.`;
+        const reason =
+          `deposit gift refused: '${gift.target}' is not a pilot in this harness's fleet. Credit gifts ` +
+          `go only to a fleet pilot; to store an item instead, use deposit{item_id, quantity}. ${roster}`;
+        return guardBlock(reason);
+      }
+    }
   }
 
   // create_sell_order / create_buy_order price default (issue #94, extended to

@@ -7,6 +7,29 @@ export interface FieldShape {
 }
 
 /**
+ * The params OBJECT behind a registry entry, unwrapping the ZodEffects that a
+ * cross-field refinement adds (issue #703: `deposit` takes either the item form
+ * or the gift form, never both, which zod can only express as a refinement on
+ * the object). Every shape-reader goes through this rather than reaching for
+ * `.shape` itself, so the unwrap rule lives in one place -- today the digest /
+ * ollama vocabulary below and test/registry-conformance.test.ts.
+ *
+ * Honest about its limit: the returned object describes the FIELDS, not the
+ * refinement. A refined entry's fields are each individually optional, so a
+ * derived JSON schema will permit a form combination the zod parse then
+ * rejects -- with the refinement's own message, which is written to steer the
+ * planner (see the deposit entry in actions.ts). Throws on anything that is not
+ * an object at heart, same fail-loudly-on-drift contract as before.
+ */
+export function paramsObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
+  const inner = schema instanceof z.ZodEffects ? schema.innerType() : schema;
+  if (!(inner instanceof z.ZodObject)) {
+    throw new Error(`paramsObject: expected a ZodObject, got ${inner.constructor.name}`);
+  }
+  return inner as z.ZodObject<z.ZodRawShape>;
+}
+
+/**
  * Introspects the fixed vocabulary of zod primitives the registry actually
  * uses today (string, number, boolean, array-of-string, array-of-loosely-
  * typed-object, enum, optional-wrapped). Throws on anything else so registry
@@ -24,10 +47,7 @@ export interface FieldShape {
  * doesn't assert.
  */
 export function describeParamsShape(schema: z.ZodTypeAny): FieldShape[] {
-  if (!(schema instanceof z.ZodObject)) {
-    throw new Error(`describeParamsShape: expected a ZodObject, got ${schema.constructor.name}`);
-  }
-  return Object.entries(schema.shape).map(([name, field]) => {
+  return Object.entries(paramsObject(schema).shape).map(([name, field]) => {
     const zf = field as z.ZodTypeAny;
     const optional = zf instanceof z.ZodOptional;
     const inner = optional ? zf.unwrap() : zf;

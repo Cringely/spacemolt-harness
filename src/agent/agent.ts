@@ -122,6 +122,20 @@ export interface AgentConfig {
   // values. See config.ts's AGENT_DEFAULTS for the tuning receipts.
   repeatBlockThreshold?: number;
   repeatBlockWindowMinutes?: number;
+  // This harness's own pilot roster -- every username in agents.yaml, not just
+  // this agent's (issue #703). The executor's credit-gift guard needs it to
+  // decide whether a gift target is a fleet-mate or a name the planner read
+  // somewhere, and it fails CLOSED when it is absent, so an unwired harness
+  // refuses gifts rather than sending them (see the guard in executor.ts).
+  // Optional like every field above, so test-built AgentConfig literals need no
+  // update; main.ts always supplies it from the loaded config.
+  //
+  // AgentConfig rather than a new Agent constructor option: this is the data
+  // channel the executeTick call site already reads from, and a second
+  // constructor option carrying one string[] buys nothing. Fleet-wide data in a
+  // per-agent object is the one oddity, and it is a smaller one than a parallel
+  // channel.
+  fleetUsernames?: readonly string[];
 }
 
 // Layer 3 defaults (max_plans_per_window / plan_budget_window_minutes) live in
@@ -3184,7 +3198,7 @@ export class Agent {
     };
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
-      fuelReserveConfig, fuelPerJump, itemUnavailableAtStation,
+      fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.config.fleetUsernames,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of

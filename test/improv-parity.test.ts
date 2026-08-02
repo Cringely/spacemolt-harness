@@ -307,6 +307,22 @@ const SEAMS: Seam[] = [
     code: { file: "src/agent/executor.ts", marker: 'step.action === "create_buy_order" && buyOrderAlreadyOpen' },
     anchors: ["create_buy_order", /duplicate bid/i, /already have one open/i, /the old one FIRST/i],
   },
+  {
+    guard: "fleet credit-gift guard (#703: a `deposit` in gift form sends credits only to a " +
+      "username on this harness's own roster -- irreversible, and the pilot reads a broadcasting " +
+      "emergency channel. Split across three files by what each can know: the executor holds WHO " +
+      "(runtime config), the registry schema holds HOW MUCH (GIFT_CREDIT_CEILING, so BOTH drivers " +
+      "are bound -- the improv pilot never calls executeTick), plan.ts holds HOW OFTEN " +
+      "(repeat/until are invisible from inside a params refinement). PR #82 review)",
+    // The executor's WHO half. 'step.action === "deposit"' appears exactly once
+    // in executor.ts, so the marker vanishing is the roster check vanishing.
+    code: { file: "src/agent/executor.ts", marker: 'step.action === "deposit"' },
+    // One anchor per rule the model has to carry, since the improv driver
+    // reaches NONE of the executor's guards: what a gift is, that it cannot be
+    // undone, who may receive one, how much, how often.
+    anchors: ["CREDIT GIFT", /no cancel for a gift/i, /fleet roster/i,
+      /5000cr in a single gift/i, /never set up a standing gift/i],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {
