@@ -4,7 +4,7 @@ import { SpacemoltError, type V2Result } from "../src/client/http";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
 import type { Plan } from "../src/registry/plan";
 
-function stubApi(overrides?: Partial<{ status: StatusSnapshot; failWith: SpacemoltError }>) {
+function stubApi(overrides?: Partial<{ status: StatusSnapshot; failWith: SpacemoltError; nearby: string }>) {
   const calls: Array<{ name: string; params?: Record<string, unknown> }> = [];
   const status: StatusSnapshot = overrides?.status ?? {
     credits: 0, fuel: 50, maxFuel: 100, hull: 100, maxHull: 100,
@@ -18,6 +18,10 @@ function stubApi(overrides?: Partial<{ status: StatusSnapshot; failWith: Spacemo
     },
     async status() { return status; },
     async notifications() { return []; },
+    // Omitted when the test passes no nearby text -- the refuel target guard
+    // (#595) then has no capability to consult and must fail open, same
+    // convention as remote-poi-targeting.test.ts's #368 stub.
+    ...(overrides?.nearby !== undefined ? { async getNearby() { return overrides.nearby!; } } : {}),
   };
   return { api, calls };
 }
@@ -194,6 +198,88 @@ describe("executeTick", () => {
     const r = await executeTick(api, plan, { step: 0, iteration: 0 });
     expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
     expect(calls).toEqual([{ name: "mine", params: {} }]);
+  });
+
+  // refuel target precondition guard (issue #595): reproduces the recorded
+  // live failure verbatim -- refuel{id:"fuel_cell", target:"full"} where
+  // "full" names nobody in the fresh Nearby listing. Assert on the emitted
+  // params (calls.length === 0), not on a blocked outcome string, per the
+  // issue's ablation requirement: an outcome-text assertion passes for the
+  // wrong reason if the game's error string changes.
+  //
+  // PR #61 review corrected this guard's mechanism (see refuelTargetBlock's
+  // comment): the first version keyed on utility-slot occupancy, which a
+  // fitted mining laser also satisfies (client.ts's VERIFIED live capture) --
+  // structurally inert for the production miner. This version keys on
+  // nearby-membership instead, the same #368 pattern targetLocalityBlock
+  // already uses for scan, which does not depend on the ship's own fit at all.
+  test("refuel with a non-fleet target absent from the Nearby listing blocks without sending the API call", async () => {
+    const { api, calls } = stubApi({
+      status: { credits: 0, fuel: 57, maxFuel: 130, hull: 100, maxHull: 100, cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false },
+      nearby: "You see: Aurelia_Trader (docked).",
+    });
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { id: "fuel_cell", target: "full" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    expect((r as { guard?: boolean }).guard).toBe(true); // #571/#581: WE refused this, the game never saw it
+    expect(calls.length).toBe(0); // no refuel request was made
+  });
+
+  // target:"fleet" is a read (fleet fuel status), never a transfer -- the
+  // guard must never consult Nearby for it, whatever it shows (no getNearby
+  // capability at all here, and the call still goes through untouched).
+  test("refuel with target:fleet sends the call with no Nearby capability at all", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "fleet" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "fleet" } }]);
+  });
+
+  // Legitimate ship-to-ship refuel: the target names a real player the fresh
+  // Nearby listing actually shows -- the guard lets it through untouched.
+  test("refuel with a non-fleet target present in the Nearby listing sends the call (real rescue, not blocked)", async () => {
+    const { api, calls } = stubApi({
+      status: { credits: 0, fuel: 20, maxFuel: 130, hull: 100, maxHull: 100, cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false },
+      nearby: "You see: stranded_pilot (undocked, no fuel).",
+    });
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "stranded_pilot", quantity: 20 } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "stranded_pilot", quantity: 20 } }]);
+  });
+
+  // Fail-safe: no getNearby capability on the api at all -- the guard must
+  // not fabricate a block from a query it cannot make, same fail-open
+  // convention as the mine guard's unknown-modules test above. Ablation note:
+  // the guard has an explicit `!api.getNearby` early return AND a surrounding
+  // try/catch, and calling `undefined()` throws synchronously inside that
+  // try -- so the catch's fail-open alone already covers this case (verified
+  // by removing the explicit check, which changes nothing). What DOES turn
+  // this test red is the catch returning a block instead of null.
+  test("refuel with a non-fleet target and no getNearby capability is not short-circuited", async () => {
+    const { api, calls } = stubApi({
+      status: { credits: 0, fuel: 57, maxFuel: 130, hull: 100, maxHull: 100, cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false },
+      // nearby omitted -> no getNearby on the stub -> UNKNOWN
+    });
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "full" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "full" } }]);
+  });
+
+  // Fail-safe: an EMPTY Nearby listing is ambiguous ("nothing visible" vs a
+  // shape divergence), never a verdict (issue #94's rule) -- the guard must
+  // let the call through rather than block on a blank string.
+  test("refuel with a non-fleet target and an empty Nearby listing is not short-circuited", async () => {
+    const { api, calls } = stubApi({
+      status: { credits: 0, fuel: 57, maxFuel: 130, hull: 100, maxHull: 100, cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false },
+      nearby: "",
+    });
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "full" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "full" } }]);
   });
 
   // accept_mission precondition guard (live diagnosis 2026-07-12): the game

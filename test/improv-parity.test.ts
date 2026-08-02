@@ -84,6 +84,11 @@ const SEAMS: Seam[] = [
     anchors: [/phantom/i, /re-query|confirm/i],
   },
   {
+    guard: "refuel target precondition guard (#595: non-\"fleet\" target absent from a fresh get_nearby listing -> blocked wake)",
+    code: { file: "src/agent/executor.ts", marker: "refuelTargetBlock" },
+    anchors: [/Refueling Pump/i, /no_refueling_pump/i, /fill my own tank/i],
+  },
+  {
     guard: "tick-pacing settle (SM-12: pending accept skips one submission)",
     code: { file: "src/agent/executor.ts", marker: /settle: true/ },
     anchors: [/action pending/i, /wait one tick/i],
