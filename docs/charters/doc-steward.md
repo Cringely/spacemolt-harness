@@ -198,9 +198,12 @@ qualifies, flag it in the PR body for PM judgment rather than deciding by paddin
   EVIDENCE lines the report must carry, so a skipped run is visible instead of silent.
 - v1.5 (2026-08-02) — authored-report hardening. Three occurrences of a report claiming work its
   own diff didn't contain (PR #56 and #74 both listed regenerated roadmap SVGs absent from
-  `git diff --name-only`; a false "doc-size gate: green" in #41 and #47; a false "Vale
-  unavailable" twice; issue counts disagreeing with live state). An AUTHORED summary of a
-  measurement can drift from reality and still read as correct, where a PASTED measurement
+  `git diff --name-only`; #41, a steward pass, claimed the doc-size gate green while its own NOW
+  block ran 609 words over the 500 cap; #47, an implementer lane, reported a passing test count
+  before a 427-word decisions entry was trimmed under the 400-word cap in a follow-up commit; a
+  false "Vale unavailable" twice; issue counts disagreeing with live state). The class is any
+  agent reporting a number it measured before its last edit, steward or not. An AUTHORED
+  summary of a measurement can drift from reality and still read as correct, where a PASTED
   contradicts itself on its face. A prior fix sent as an in-context correction didn't hold; the
   identical claim came back the next PR, so the fix moves into the charter instead. Changes: the
   FILES field is now the verbatim `git diff origin/main...HEAD --stat` output, never an authored
