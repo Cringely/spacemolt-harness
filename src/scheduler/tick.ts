@@ -303,9 +303,15 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
             timedOut: outcome.timedOut,
             exitCode: outcome.exitCode,
           });
-        } catch {
+        } catch (err) {
           // A gh outage filing the ALARM must never abort the tick that is
           // trying to report the original failure — no-throw, like runJob.
+          // But silent was #558's own defect one level up, so log it: the
+          // thrown message is filing.ts run()'s own `gh <cmd> failed (exit
+          // N): <gh's stdout, capped 300 chars>` — never the PAT itself,
+          // which lives only in scheduler.ts's spawnSync env and is never
+          // returned into this message.
+          console.error(`gh call failed filing the failure-alarm for job ${job.id} — ${(err as Error).message}`);
         }
       }
     }

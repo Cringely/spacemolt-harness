@@ -221,7 +221,14 @@ describe("tick failure alarm (#558 part 2, integration)", () => {
     expect(r2.fired.find((f) => f.jobId === "council")).toEqual({ jobId: "council", result: "fail" });
     expect(calls.filter((c) => c.args[1] === "create").length).toBe(1); // still exactly one
     expect(issues.length).toBe(1); // no second issue minted
-    expect(calls.some((c) => c.args[1] === "comment" && c.args[2] === String(firstIssue))).toBe(true);
+    const bump = calls.find((c) => c.args[1] === "comment" && c.args[2] === String(firstIssue));
+    expect(bump).toBeDefined();
+    // Pins the fresh-reload fix at tick.ts:298: the bump's own body must carry
+    // the POST-attempt streak (2), not the stale tick-start value (1) the old
+    // `anchors` var would have read. Ablation: swap that `loadAnchors(...)`
+    // back to the stale `anchors` variable and this assertion goes red on
+    // "failStreak: 1" instead.
+    expect(bump!.body).toContain("failStreak: 2");
   });
 
   // Ablation checked and reported (does NOT go red): removing the
