@@ -30,7 +30,7 @@ Full reasoning for every choice lives in [docs/decisions.md](docs/decisions.md) 
 |---|---|
 | [AGENTS.md](AGENTS.md) | Canonical agent context: conventions and the context map |
 | [docs/STATE.md](docs/STATE.md) | Living handoff — where work stands, what's next, what's blocked |
-| [docs/milestones.md](docs/milestones.md) | The major-milestone timeline (M-01..M-39) — the "here's the journey" view; SSOT for the claude.ai milestone-tracker Artifact |
+| [docs/milestones.md](docs/milestones.md) | The major-milestone timeline (M-01..M-52) — the "here's the journey" view; SSOT for the claude.ai milestone-tracker Artifact |
 | [docs/decisions.md](docs/decisions.md) | The decision log (the educational core of the project) |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Approved design spec |
 | [docs/superpowers/plans/](docs/superpowers/plans/) | Implementation plans (full code, TDD task-by-task — TDD: test-driven development, write the test before the code that passes it) |
