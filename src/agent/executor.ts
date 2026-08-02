@@ -46,7 +46,24 @@ export type StepResult =
   | { kind: "plan_done"; resultText?: string }
   // `guard` marks a block THIS FILE decided BEFORE the call went out -- our own
   // precondition refusal, not the game's. See guardBlock below.
-  | { kind: "blocked"; reason: string; resultText?: string; guard?: true };
+  //
+  // `fuelReserveBlock` (issue #690) marks a guard block authored specifically
+  // because the ship is at or below the configured fuel-reserve floor --
+  // set ONLY at the one guard that actually computes that verdict (the
+  // mine fuel-floor guard below, via fuelUrgent). This is the producer-side
+  // fix for the strand detector's blind spot: agent.ts's fuelBlockedMoves
+  // counter used to require BOTH a MOVEMENT_ACTIONS step name AND a `/fuel/i`
+  // match on the free-text reason, so a fuel-refused `mine` (not movement)
+  // never counted, and the strand alert stayed silent through the entire #526
+  // incident. A step-name allowlist is the wrong shape for this (the issue's
+  // own point -- every future guard would have to remember to join it); this
+  // flag lets the guard that KNOWS it refused for fuel say so once, at the
+  // point of decision, so any current or future fuel-reserve guard counts for
+  // free. Deliberately NOT set on other guardBlock() sites whose reason text
+  // happens to contain "fuel" (e.g. the refuel-target-locality guard) --
+  // those are blocked for reasons unrelated to the ship being fuel-stranded,
+  // and counting them would be a false strand signal on a healthy pilot.
+  | { kind: "blocked"; reason: string; resultText?: string; guard?: true; fuelReserveBlock?: true };
 
 const RESULT_SNIPPET_LEN = 120;
 
@@ -83,8 +100,8 @@ function snippet(text: string | undefined): string | undefined {
 // travelToTick's no-route verdict (find_route already answered) and the buy-id
 // correction (a rewrite of the game's own invalid_item rejection) are real game
 // outcomes and stay unflagged.
-function guardBlock(reason: string): StepResult {
-  return { kind: "blocked", reason, resultText: reason, guard: true };
+function guardBlock(reason: string, extra?: { fuelReserveBlock?: true }): StepResult {
+  return { kind: "blocked", reason, resultText: reason, guard: true, ...extra };
 }
 
 // Invariant: a transient, self-resolving block must WAIT, never replan -- see
@@ -1151,7 +1168,11 @@ export async function executeTick(
       `fuel ${preStatus.fuel}/${preStatus.maxFuel} is at or below the configured reserve floor -- ` +
       `mining further risks stranding. Refuel now if docked, or travel_to/jump toward a known station ` +
       `with fuel before continuing to mine.`;
-    return guardBlock(reason);
+    // fuelReserveBlock: true (issue #690) -- this IS the fuel-reserve verdict
+    // (fuelUrgent, above), so tag it at the point of decision. See the
+    // StepResult doc comment for why this replaces a MOVEMENT_ACTIONS-style
+    // allowlist in the strand-evidence counter downstream.
+    return guardBlock(reason, { fuelReserveBlock: true });
   }
 
   if (step.action === "mine" && preStatus?.modules !== undefined && !hasMiningModule(preStatus)) {

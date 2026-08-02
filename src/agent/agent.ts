@@ -3287,18 +3287,35 @@ export class Agent {
       if (stationKey) this.clearOpenBuyOrders((r) => r.stationKey === stationKey);
     }
 
-    // stall-watcher v4 strand signal: count CONSECUTIVE fuel-blocked movement
-    // attempts here (the producer of blocks), so the count accrues even on ticks
-    // the wake-branch thrash gate would return first. A fuel-blocked movement is
-    // the ONLY thing that increments; every other outcome -- a successful move, a
-    // non-fuel block, a `wait`, OR any non-movement action (mine, dock, ...) --
-    // resets it. Resetting on ANY non-fuel-block outcome (not just movement ones)
-    // is deliberate: it keeps the count meaning "N fuel-blocked moves in a row
-    // with nothing else in between," so a stale-high count can't survive
-    // intervening activity and later assert a strand without a FRESH failed move.
+    // stall-watcher v4 strand signal: count CONSECUTIVE fuel-blocked attempts
+    // here (the producer of blocks), so the count accrues even on ticks the
+    // wake-branch thrash gate would return first. Two producers feed it, both
+    // meaning "the ship was prevented from acting because it is fuel-
+    // constrained," never "this specific action failed":
+    //   - a MOVEMENT_ACTIONS step the GAME itself refused for fuel (travel_to/
+    //     jump/travel have no structured error code from the game, so the
+    //     free-text reason is the only signal available -- regex stays the
+    //     least-bad option here).
+    //   - ANY step our OWN fuel-reserve guard refused (executor.ts's
+    //     `fuelReserveBlock` tag, issue #690). Producer-side by construction:
+    //     the guard that computed the fuel verdict tags its own result, so a
+    //     future fuel-reserve guard on some OTHER action counts for free --
+    //     no MOVEMENT_ACTIONS-style allowlist to remember to extend. Before
+    //     this, the mine fuel-floor guard (#526) blocked `mine` every tick
+    //     while undocked and starved, and this counter -- gated on
+    //     MOVEMENT_ACTIONS -- never moved off zero, so operator_alert{class:
+    //     stranded} read 0 for the entire 4h live incident (#526/#690).
+    // Every other outcome -- a successful move, a non-fuel-reserve block, a
+    // `wait`, or any action neither producer above flags -- resets it.
+    // Resetting on ANY non-matching outcome (not just movement ones) is
+    // deliberate: it keeps the count meaning "N fuel-blocked attempts in a
+    // row with nothing else in between," so a stale-high count can't survive
+    // intervening activity and later assert a strand without a FRESH refusal.
     if (step) {
       const fuelBlockedMove =
-        result.kind === "blocked" && MOVEMENT_ACTIONS.has(step.action) && /fuel/i.test(result.reason);
+        result.kind === "blocked" &&
+        ((MOVEMENT_ACTIONS.has(step.action) && /fuel/i.test(result.reason)) ||
+          result.fuelReserveBlock === true);
       this.fuelBlockedMoves = fuelBlockedMove ? this.fuelBlockedMoves + 1 : 0;
       // No dock-dead-end counter here (#551 / PR #32 review): that streak is
       // derived from the persisted action stream in maybeForceDockReroute
