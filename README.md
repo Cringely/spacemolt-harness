@@ -30,7 +30,7 @@ Full reasoning for every choice lives in [docs/decisions.md](docs/decisions.md) 
 |---|---|
 | [AGENTS.md](AGENTS.md) | Canonical agent context: conventions and the context map |
 | [docs/STATE.md](docs/STATE.md) | Living handoff — where work stands, what's next, what's blocked |
-| [docs/milestones.md](docs/milestones.md) | The major-milestone timeline (M-01..M-39) — the "here's the journey" view; SSOT for the claude.ai milestone-tracker Artifact |
+| [docs/milestones.md](docs/milestones.md) | The major-milestone timeline (M-01..M-53) — the "here's the journey" view; SSOT for the claude.ai milestone-tracker Artifact |
 | [docs/decisions.md](docs/decisions.md) | The decision log (the educational core of the project) |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Approved design spec |
 | [docs/superpowers/plans/](docs/superpowers/plans/) | Implementation plans (full code, TDD task-by-task — TDD: test-driven development, write the test before the code that passes it) |
@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-52).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-53).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -93,7 +93,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 Current work: F1 of fleet-flight (#591) gates closed (M-52, M-53). PR #72 merged strand-evidence guards (#690); PR #73 under review for planner re-buy defect (#669). Live-confirmed 2026-08-02: pilot docked at cargo_lanes, fuel 130/130, credits 203,572, zero restarts. Real defect found: pilot re-attempts buys at stations that can't fill. #526 (executor starvation) closed by M-52; F2 awaits dispatch. See M-52/M-53 in [docs/milestones.md](docs/milestones.md).
 
-The major-milestone timeline (M-01..M-52) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-53) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 

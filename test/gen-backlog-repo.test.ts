@@ -42,4 +42,17 @@ describe("gen-backlog.py repo target (#550)", () => {
     const m = genBacklogSrc.match(/^BACKLOG_REPO = "([^"]+)"/m);
     expect(m![1]).toBe(FILING_REPO);
   });
+
+  // Mojibake fix: on a Windows host, `subprocess.run(..., text=True)` decodes
+  // with locale.getpreferredencoding(False) (cp1252 here), not the UTF-8 `gh`
+  // actually emits, so an em-dash in an issue title corrupts to `â€"` and
+  // gets written to docs/backlog.md permanently by the later utf-8 file write.
+  // Ablated: with `encoding="utf-8"` dropped from this subprocess.run call
+  // (matching the pre-fix code), the regex below finds no match and this
+  // assertion goes red — confirmed 2026-08-02, then restored.
+  test("the gh issue list call decodes its output as utf-8, not the host locale default", () => {
+    const rawCall = genBacklogSrc.match(/raw = subprocess\.run\(([\s\S]*?)\)\.stdout/);
+    expect(rawCall).not.toBeNull();
+    expect(rawCall![1]).toMatch(/encoding="utf-8"/);
+  });
 });
