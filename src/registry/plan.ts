@@ -46,7 +46,49 @@ export const PlanSchema = z.object({
   // actually shown (digest.ts names this exact key in that block -- the
   // #355 seam, see docs/wiki/seam-manifest.md).
   instruction_done: z.boolean().optional(),
-}).strict();
+}).strict().superRefine((plan, ctx) => {
+  // A credit gift runs EXACTLY ONCE (issue #703, PR #82 review). `repeat` and
+  // `until` are siblings of `params`, so the registry's own params refinement
+  // cannot see them: the deposit entry bounds one CALL at GIFT_CREDIT_CEILING,
+  // and executor.ts re-enters the same step per iteration (`stepDone =
+  // iteration >= step.repeat`), so `repeat: 50` expresses 50 gifts through a
+  // bound written for one. `until` is worse than a multiplier -- both
+  // completion conditions read CARGO (cargo_full/cargo_empty) and a credit
+  // transfer never changes cargo, so the condition can never trip and the step
+  // re-gifts every tick until the game refuses for insufficient funds. Neither
+  // field has any legitimate reading on a gift: one gift moves one amount, once.
+  //
+  // Refused at ADMISSION rather than in the executor because this is the one
+  // place where the step's params and its repeat/until are visible together,
+  // and a plan refused here costs zero ticks and zero credits. The refinement
+  // sits on the whole plan rather than on the deposit branch of the step union
+  // so that PlanStepSchema stays a ZodUnion: test/instruct-gate.test.ts reads
+  // `PlanStepSchema.options[].shape.action.value` to re-derive the plannable
+  // vocabulary, and a ZodEffects member has no `.shape` (the #527 seam).
+  //
+  // The ITEM form keeps repeat/until untouched -- repeating a deposit of ore is
+  // real (the craft/recycle chain, #221), and a rule keyed on the action alone
+  // would take that down with it.
+  const steps = plan.steps as Array<{
+    action?: unknown; params?: unknown; repeat?: unknown; until?: unknown;
+  }>;
+  steps.forEach((step, i) => {
+    if (step.action !== "deposit") return;
+    if (step.repeat === undefined && step.until === undefined) return;
+    const target = (step.params as { target?: unknown } | undefined)?.target;
+    if (typeof target !== "string") return; // item form: repeat/until are fine
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["steps", i],
+      // Written as a correction the planner can act on, same contract as the
+      // registry refinement's messages and the executor's guard reasons.
+      message:
+        "a credit gift is a one-shot action: drop repeat/until from this deposit step and plan " +
+        "one step per gift. repeat re-sends the same gift once per tick, and until:cargo_full / " +
+        "cargo_empty never trip for a credit transfer, so the step would gift forever.",
+    });
+  });
+});
 
 export type Plan = z.infer<typeof PlanSchema>;
 export type PlanStep = z.infer<typeof PlanStepSchema>;

@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { executeTick, GIFT_CREDIT_CEILING } from "../src/agent/executor";
-import { getAction } from "../src/registry/actions";
+import { afterEach, describe, expect, test } from "bun:test";
+import { executeTick } from "../src/agent/executor";
+import { getAction, GIFT_CREDIT_CEILING } from "../src/registry/actions";
+import { SpacemoltMcp } from "../src/client/mcp";
+import { McpGameApi } from "../src/client/mcp-game-api";
+import { SpacemoltError } from "../src/client/http";
+import { startFakeMcpServer, type FakeMcpServer } from "./fake-mcp-server";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
-import type { Plan } from "../src/registry/plan";
+import { PlanSchema, type Plan } from "../src/registry/plan";
 
 // Issue #703. The incident: at 18:37Z on 2026-08-02 the corsair was detained by
 // the Crimson Pact over a 27cr bounty it held 0 credits to pay, while the miner
@@ -92,6 +96,95 @@ describe("deposit registry form (issue #703)", () => {
     expect(depositParams.safeParse({ target: MINER }).success).toBe(false);            // gift, no credits
     expect(depositParams.safeParse({ credits: 27 }).success).toBe(false);              // gift, no target
   });
+
+  // Breakage caught: an unbounded transfer to a real fleet-mate. The roster
+  // check answers WHO and cannot answer HOW MUCH, so without a ceiling one
+  // reasonable-looking step moves the entire 199,696cr wallet in a single tick.
+  // The bound sits on the SCHEMA (PR #82 review) rather than in executeTick
+  // because both drivers parse the schema and only one runs executeTick.
+  // BOTH directions are asserted: over-ceiling fails AND at-ceiling passes, so
+  // a `.max(GIFT_CREDIT_CEILING - 1)` or an off-by-one `.lt` cannot pass by
+  // failing everything. Asserting `success:false` alone would.
+  test("the schema refuses a gift over the per-call credit ceiling", () => {
+    const over = depositParams.safeParse({ target: MINER, credits: GIFT_CREDIT_CEILING + 1 });
+    expect(over.success).toBe(false);
+    const atCeiling = depositParams.safeParse({ target: MINER, credits: GIFT_CREDIT_CEILING });
+    expect(atCeiling.success).toBe(true);
+  });
+});
+
+// The point of siting the ceiling in the schema (PR #82 review). mcp-game-api.ts
+// states that the registry allowlist plus params validation IS the improv
+// injection defense -- and #703 put arbitrary-recipient credit transfers inside
+// that curated set. This driver never calls executeTick, so a ceiling checked
+// there would leave the claim false for the one capability that moves credits.
+describe("the improv/MCP driver is bound by the same ceiling (issue #703)", () => {
+  let server: FakeMcpServer;
+  afterEach(() => server?.stop());
+
+  // Breakage caught: the ceiling drifting back into executeTick (or into any
+  // other plan-then-execute-only site), which would re-open the MCP path
+  // silently -- every offline test of the guard would still pass. The wire-call
+  // count is asserted as well as the throw: a rejection AFTER the transport call
+  // has already gifted the credits satisfies the throw assertion alone.
+  test("an over-ceiling gift throws invalid_params before any transport call", async () => {
+    server = startFakeMcpServer();
+    const mcp = new SpacemoltMcp(server.url);
+    await mcp.handshake();
+    await mcp.login("Miner", "pw");
+    const api = new McpGameApi(mcp);
+    const callsBefore = server.calls.length;
+
+    const err: unknown = await api
+      .action("deposit", { target: MINER, credits: GIFT_CREDIT_CEILING + 1 })
+      .then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(SpacemoltError);
+    expect((err as SpacemoltError).code).toBe("invalid_params");
+    expect(server.calls.length).toBe(callsBefore);
+  });
+});
+
+// Plan admission (PR #82 review). `repeat` and `until` are siblings of `params`
+// on a plan step, so no params refinement can see them: the executor re-enters
+// the same step per iteration, which turns a per-call ceiling into a per-call
+// ceiling times 50, and `until` never terminates for a gift because both
+// completion conditions read cargo.
+describe("plan admission refuses a looping gift (issue #703)", () => {
+  const gift = { target: CORSAIR, credits: 27 };
+  const plan = (step: Record<string, unknown>) =>
+    PlanSchema.safeParse({ goal: "rescue the corsair", steps: [step] });
+
+  // Breakage caught: one plan step expressing up to 50 gifts through a bound
+  // written for one. The MESSAGE is asserted, not just the failure: a plan can
+  // fail admission for a dozen unrelated reasons (a bad param, an unknown
+  // action), so `success:false` alone would pass against a schema that rejected
+  // this step for the wrong reason and left the loop reachable by a valid one.
+  test("a gift step carrying repeat is rejected", () => {
+    const r = plan({ action: "deposit", params: gift, repeat: 50 });
+    expect(r.success).toBe(false);
+    expect(!r.success && r.error.issues[0]!.message).toContain("one-shot action");
+  });
+
+  // Breakage caught: the worse half. repeat is bounded at 50; `until` is not
+  // bounded at all for a gift, because cargo_full/cargo_empty can never trip on
+  // a credit transfer, so the step re-gifts every tick until the game refuses.
+  test("a gift step carrying until is rejected", () => {
+    const r = plan({ action: "deposit", params: gift, until: "cargo_full" });
+    expect(r.success).toBe(false);
+    expect(!r.success && r.error.issues[0]!.message).toContain("one-shot action");
+  });
+
+  // Breakage caught: a rule keyed on the ACTION instead of the gift FORM, which
+  // would refuse repeated item deposits and break the craft/recycle chain
+  // (#221, "Materials are escrowed from your station storage at enqueue"). Also
+  // catches a rule that refuses every gift: the lone gift step must still be
+  // admitted, or the rescue this whole capability exists for cannot be planned.
+  test("a lone gift step, and a repeated ITEM deposit, are both admitted", () => {
+    expect(plan({ action: "deposit", params: gift }).success).toBe(true);
+    expect(plan({
+      action: "deposit", params: { item_id: "iron_ore", quantity: 5 }, repeat: 3,
+    }).success).toBe(true);
+  });
 });
 
 describe("executor fleet credit-gift guard (issue #703)", () => {
@@ -109,25 +202,12 @@ describe("executor fleet credit-gift guard (issue #703)", () => {
     expect(calls).toEqual([]);
   });
 
-  // Breakage caught: an unbounded transfer to a real fleet-mate. The roster
-  // check answers WHO and cannot answer HOW MUCH, so without a ceiling one
-  // reasonable-looking step moves the entire 199,696cr wallet in a single tick.
-  test("refuses a gift over the per-call credit ceiling", async () => {
-    const { r, calls } = await runDeposit(
-      { target: MINER, credits: GIFT_CREDIT_CEILING + 1 }, FLEET,
-    );
-    expect(r.kind).toBe("blocked");
-    expect(r.kind === "blocked" && r.guard).toBe(true);
-    expect(r.kind === "blocked" && r.reason).toContain("per-gift ceiling");
-    expect(calls).toEqual([]);
-  });
-
-  // Breakage caught: a guard that refuses everything. Both refusal tests above
-  // pass against a blanket `deposit -> blocked`, and so does a guard that keys
+  // Breakage caught: a guard that refuses everything. The refusal test above
+  // passes against a blanket `deposit -> blocked`, and so does a guard that keys
   // on step.action alone and takes item deposits down with it -- which would
   // break the craft/recycle chain fleet-wide. The gift here sits EXACTLY at the
-  // ceiling, so a `>=` comparison typo is caught here rather than shipping as a
-  // silently one-credit-tighter bound.
+  // registry ceiling, so this also pins that the executor half stays silent
+  // about amounts: a ceiling re-added here would redden this test.
   test("lets an at-ceiling gift to a fleet-mate and an item deposit through", async () => {
     const atCeiling = await runDeposit({ target: CORSAIR, credits: GIFT_CREDIT_CEILING }, FLEET);
     expect(atCeiling.r.kind).toBe("plan_done");

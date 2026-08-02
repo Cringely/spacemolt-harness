@@ -293,33 +293,6 @@ function cargoQty(status: StatusSnapshot, itemId: string): number {
 // genuinely worthless unknown junk, and the digest rule still covers it.
 export const JETTISON_VALUE_FLOOR = 50;
 
-// Fleet credit-gift ceiling (issue #703). Invariant: no single deposit gift
-// moves more than this many credits, whoever the recipient is.
-//
-// Why a ceiling at all, given the roster check does the real work: the roster
-// answers WHO, this answers HOW MUCH, and only the second one bounds the damage
-// when the first is satisfied by a name the planner was TOLD to use. That is not
-// hypothetical here -- the game's own item_not_available error ships a
-// filled-in create_buy_order template, the pilot read tool output as
-// instruction and obeyed it six times, and ~21,800cr went into duplicate escrow
-// (issue #681). These pilots also read a continuously-broadcasting emergency
-// channel, so arbitrary text reaches the planner every wake. A gift is
-// irreversible in a way an escrowed order is not (cancel_order returns escrow;
-// nothing returns a gift), so the per-call bound is the control that survives a
-// planner saying something reasonable-sounding for a bad reason.
-//
-// Receipt for the number (simplicity rule 3): the live rescue need is a 27cr
-// bounty (#703) and a fuel-cell restock is tens of credits, so 5000 clears the
-// real use case by more than two orders of magnitude -- it never blocks the
-// thing it was built for -- while capping one call at ~2.5% of the miner's
-// 199,696cr wallet. Rejected simpler alternative: a percent-of-wallet cap,
-// which reads as more principled and is not -- it scales with exactly the
-// quantity it is meant to bound (25% of that wallet is ~50k), so it loosens as
-// the fleet gets richer. A fixed number does not. Rejected as too small: no
-// ceiling with roster-only, which bounds who but not how much, and a
-// compromised plan naming a real fleet-mate empties the wallet in one tick.
-export const GIFT_CREDIT_CEILING = 5000;
-
 // Mining-precondition fix (2026-07-12): a mine action is a guaranteed error
 // unless a mining laser is fitted. A module is a mining laser when the game
 // tags it type "mining" OR reports a positive mining_power -- either alone
@@ -1353,10 +1326,19 @@ export async function executeTick(
 
   // Fleet credit-gift guard (issue #703). Invariant: a deposit in its GIFT form
   // (target + credits, see the registry entry) sends credits only to a username
-  // in THIS harness's own fleet, and never more than GIFT_CREDIT_CEILING in one
-  // call. Sited here, at the last deterministic point before the transfer goes
-  // out, because a gift is irreversible -- cancel_order returns a market
-  // escrow, nothing returns a gift.
+  // in THIS harness's own fleet. A gift is irreversible -- cancel_order returns
+  // a market escrow, nothing returns a gift -- so this is the WHO half of the
+  // bound, and it is here rather than in the schema for one reason: the roster
+  // is runtime config from agents.yaml, and a zod schema built at module load
+  // cannot read it.
+  //
+  // The HOW MUCH half deliberately is NOT here. GIFT_CREDIT_CEILING lives on the
+  // registry entry's `credits` field (actions.ts), because both drivers parse
+  // that schema and only ONE of them reaches this function -- the improv/MCP
+  // pilot calls McpGameApi.action directly and never runs executeTick (PR #82
+  // review). A per-call ceiling checked here would have guarded exactly half the
+  // capability it was written for. HOW OFTEN is a third place again: plan.ts
+  // refuses `repeat`/`until` on a gift step, which no params schema can see.
   //
   // fleetUsernames arrives as plain data (agent.ts reads it off AgentConfig,
   // main.ts fills it from agents.yaml), the same store-free boundary
@@ -1382,13 +1364,6 @@ export async function executeTick(
         const reason =
           `deposit gift refused: '${gift.target}' is not a pilot in this harness's fleet. Credit gifts ` +
           `go only to a fleet pilot; to store an item instead, use deposit{item_id, quantity}. ${roster}`;
-        return guardBlock(reason);
-      }
-      if (typeof gift.credits === "number" && gift.credits > GIFT_CREDIT_CEILING) {
-        const reason =
-          `deposit gift refused: ${gift.credits}cr exceeds the ${GIFT_CREDIT_CEILING}cr per-gift ceiling. ` +
-          `Send ${GIFT_CREDIT_CEILING}cr or less -- a rescue needs the bounty or restock amount, ` +
-          `not the whole wallet.`;
         return guardBlock(reason);
       }
     }
