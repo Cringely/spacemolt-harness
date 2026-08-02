@@ -102,7 +102,9 @@ Both sides must agree on one thing no schema forces: the body reaches the script
 
 **How they drift.** Both sides are prose in different files read by different jobs. Rename the section on the producer side (or move reports out of the state dir) and the consumer's lookup finds nothing; stand-up silently falls back to bare backlog order forever, and the triage ceremony steers nobody. Loosen the consumer's staleness window and a week-old ranking outranks fresh epics.
 
-**Spanning test.** `test/seam-triage-ordering.test.ts` pins the section name on both sides, the reports path on the consumer, and the 48h fallback. A rename or a dropped fallback on either side fails it.
+**#654 addition — the consumer's read path.** Stand-up's `allowedTools` (`src/scheduler/jobs.ts`) carry no `Bash(ls *)`/`Bash(find *)`/`Bash(printenv *)`, so it has no way to resolve `$SCHEDULER_STATE_DIR` into a literal path on its own — every prior attempt was DENIED, and nine-plus cycles reported that denial as "council stalled" (#582, #654). The read path is now `scripts/read-latest-report.ts`, granted as `Bash(bun scripts/read-latest-report.ts *)`: it resolves the state dir itself and always emits `FOUND <file> mtime=…` or the literal sentinel `NO_MATCHING_REPORT_FOUND`, never silence. A THIRD file joins the seam: rename the script, or drop the grant from `jobs.ts`, and the charter's step-3 instruction points at a command stand-up can no longer run.
+
+**Spanning tests.** `test/seam-triage-ordering.test.ts` pins the section name on both sides, the reports path on the consumer, and the 48h fallback. `test/scheduler-spawn.test.ts` pins that stand-up's `allowedTools` and its work-order prose name the same `read-latest-report.ts` grant. `test/read-latest-report.test.ts` pins the script's own FOUND/NO_MATCHING_REPORT_FOUND contract. A rename or a dropped fallback/grant on any side fails at least one.
 
 ## 11. Strategy store-access description: work-order prose ↔ guardrails prose ↔ real transport (#114 A1, PR #425)
 
