@@ -303,15 +303,20 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
             timedOut: outcome.timedOut,
             exitCode: outcome.exitCode,
           });
-        } catch (err) {
+        } catch {
           // A gh outage filing the ALARM must never abort the tick that is
           // trying to report the original failure — no-throw, like runJob.
-          // But silent was #558's own defect one level up, so log it: the
-          // thrown message is filing.ts run()'s own `gh <cmd> failed (exit
-          // N): <gh's stdout, capped 300 chars>` — never the PAT itself,
-          // which lives only in scheduler.ts's spawnSync env and is never
-          // returned into this message.
-          console.error(`gh call failed filing the failure-alarm for job ${job.id} — ${(err as Error).message}`);
+          // But silent was #558's own defect one level up, so log it.
+          //
+          // Deliberately does NOT interpolate the caught message. filing.ts
+          // run() builds that message from the gh binary's own stdout, capped
+          // at 300 chars — and a PAT is 40-93 chars, so the cap bounds nothing
+          // that matters. Our PAT never flows into it (it lives only in
+          // scheduler.ts's spawnSync env), but what a third-party binary may
+          // print on an auth failure is not knowable from this repo, and
+          // security.md says log presence, not content. The job id is the
+          // actionable half anyway: it names which alarm could not file.
+          console.error(`gh call failed filing the failure-alarm for job ${job.id} — see the gh CLI / cron log for detail`);
         }
       }
     }
