@@ -120,9 +120,19 @@ const SM_DEDUP_MARKER_RE = /<!--\s*sm-dedup:([A-Za-z0-9._-]+)\s*-->/;
 // ablatable check for a probabilistic one; rejected for that reason).
 const SEVERITY_WORDS = new Set(["p0", "p1", "p2", "p3", "blocker", "critical"]);
 
+// Normalization also folds legacy separators and case (PR #62, third REVISE):
+// SM_DEDUP_MARKER_RE above reads underscore/dot keys back out of production
+// issue bodies on purpose (production issues may predate the kebab-case
+// tightening), and a legacy key may also carry mixed case since only
+// DEDUP_KEY_RE — governing NEW keys — is lowercase-only. Without folding both,
+// a legacy key can never normalize to the same string as a fresh kebab-case
+// key for the same condition (live case: Cringely/spacemolt#622, body carries
+// `pipeline_idle_wave_ready`). `+` collapses runs so `foo__bar` and `foo-bar`
+// land on the same normal form.
 function normalizeDedupKey(key: string): string {
   return key
-    .split("-")
+    .toLowerCase()
+    .split(/[-_.]+/)
     .filter((seg) => !SEVERITY_WORDS.has(seg))
     .join("-");
 }

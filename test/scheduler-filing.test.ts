@@ -349,6 +349,39 @@ describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
     const res = fileFinding(stub, tmp(), { ...finding(1), dedupKey: "core-harvest-unimplemented" });
     expect(res.outcome).toBe("created");
   });
+
+  // Catches (PR #62, third REVISE): normalizeDedupKey split ONLY on `-`, but
+  // SM_DEDUP_MARKER_RE (this file, line ~108) reads legacy underscore/dot keys
+  // back out of production issue bodies on purpose — its own comment says so.
+  // A legacy key never normalized to the same string as a fresh kebab-case key
+  // for the same condition, so this near-match check missed it and minted a
+  // duplicate. Live receipt: Cringely/spacemolt#622 is OPEN with body carrying
+  // `<!-- sm-dedup:pipeline_idle_wave_ready -->`. Ablation: reverting
+  // normalizeDedupKey to `.split("-")` turns this red — `pipeline_idle_wave_ready`
+  // survives as one unsplit token that can never equal the fresh key's
+  // filtered kebab segments.
+  test("a legacy underscore-separated dedup key on an OPEN issue bumps instead of creating a new issue (#622)", () => {
+    const dir = tmp();
+    const legacyBody =
+      "Scheduler pipeline sat idle past the wave-ready window.\n\n<!-- sm-dedup:pipeline_idle_wave_ready -->\nfiled-by: scheduler/standup cycle old-cycle\n";
+    const calls: GhCall[] = [];
+    const gh: GhRunner = (args) => {
+      const bodyIdx = args.indexOf("--body-file");
+      const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
+      calls.push({ args, body });
+      if (args[0] === "issue" && args[1] === "list") {
+        // findDedupMatch's exact-marker search never matches (different literal
+        // key by construction); findNearMatch's open-state fetch sees #622.
+        if (args.includes("--search")) return { stdout: "[]", exitCode: 0 };
+        return { stdout: JSON.stringify([{ number: 622, body: legacyBody }]), exitCode: 0 };
+      }
+      return { stdout: "", exitCode: 0 };
+    };
+    const res = fileFinding(gh, dir, { ...finding(1), dedupKey: "pipeline-idle-wave-ready" });
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(622);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+  });
 });
 
 // The body must reach the script as a SINGLE-LINE, newline-free argv token:
