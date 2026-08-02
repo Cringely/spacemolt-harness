@@ -4,15 +4,15 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-08-02 17:50Z (30 PRs merged since 2026-08-01; backlog 164 open; **P0 at zero**; **gate F1 CLOSED**, F2 blocked on #159 persona briefings). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-08-02 (30 PRs merged since 2026-08-01; backlog 164 open; **P0 at zero**; **gate F1 CLOSED, gate F2 CLOSED** — fleet launched 18:26Z, scout+corsair flying alongside miner, M-54). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-08-02 at 17:50Z. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
+_Refreshed 2026-08-02 post-launch (deploy verified 18:26Z). Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
 **#669 FIXED AND LIVE.** The overnight "empty panel" report was normal end-of-window behavior, not an incident. **PR #73 merged as `5b067fd`, closing #669** (pilot re-buys at stations proven empty, burning plan budget), auto-deployed, container `spacemolt-harness` up and healthy on that image. Same audit left open #696 (steer channel silent on instruction receipt), #697 (unused Escort purchase, abandoned mission), #698 (thrash-gate floor reset, unproven).
 
-**FLEET FLIGHT (#591). F1 CLOSED. F2 NEXT, NOT A SWITCH-FLIP.** F0 steer restore (#495) and F1 (#543, #526 strand safety) both done. F2 (#593, launch scout+corsair) needs persona briefing text (#159) first. F3: #571 landed, #534/#569/#592 remain. F4 exit: 3 pilots / 24h / zero strands. Live: 1 of 3 flying (`miner`); scout and corsair registered, unlaunched.
+**FLEET FLIGHT (#591). F2 CLOSED — 1 PILOT BECOMES 3.** Scout (`nebula`) and corsair (`crimson`) launched 2026-08-02 18:26Z alongside miner, closing #593 (image `dcb5c92`, container healthy, `RestartCount 0`, no auth/planner errors); both executed real actions within 6 minutes. The real blocker was two host secrets never provisioned, not the persona-briefing gap #593 had carried for weeks — #159 (persona briefings) stays open, parked. Honest limits: personas cover 2 of #159's 4 elements (no playstyle briefing content, no per-persona progress readout); corsair starts at 0cr, can't buy fuel if it runs low; cost triples by design (3x ChatGPT-quota draw, Anthropic unaffected). F3: #571 landed, #534/#569/#592 remain. F4 exit (3 pilots/24h/zero strands) not yet reached.
 
 **STRAND GUARDS LIVE, EVIDENCE TAGGED.** PR #68 blocks `mine` at the reserve floor; PR #72 (`9719daa`) tagged that block `fuelReserveBlock`, so `isStranded()` credits it alongside the movement+regex path. Each new guard must self-tag at its call site. Unconfirmed: whether `isStranded()` sees no in-flight plan, undocked (reflex gated on `docked`, reflex.ts:103), or fuel-capped.
 
@@ -24,11 +24,11 @@ _Refreshed 2026-08-02 at 17:50Z. Boot from this block + `docs/backlog.md` (GitHu
 
 **PRODUCTION CONFIG FACTS.** `max_plans_per_window: 12` in `agents.yaml` (schema default 36). `keep_fuel_above_jumps: 8` (estimate, not measured). Scheduler on LXC healthy (user `smsched`, cron every 10m).
 
-**MERGED, 30 PRs since 2026-08-01.** Behavior-changing: #69 closed #558 (ceremony run failures now surface through the filing channel), the fix that took P0 to zero; #73 merged `5b067fd`, closing #669, deployed; #77 fixed the backlog generator's encoding bug. **#67 and #71 closed as superseded, not merged**, both hand-edited the generated `docs/backlog.md` (#70: the prior steward pass).
+**MERGED, 30 PRs 2026-08-01–08-02.** Behavior-changing ones: M-53, M-54 in `docs/milestones.md`.
 
 **BACKLOG. 164 open issues, P0 at zero.** Regenerated from GitHub Issues SSOT.
 
-**THEN, in order.** #593 (F2 launch — blocked on #159 persona briefings, not a switch-flip) → #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
+**THEN, in order.** #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
 
 ## Standing operational facts
 
@@ -41,5 +41,7 @@ Not part of the live-status refresh above; persists across waves until it change
 - **Scheduler SSH is slow.** ~30-40s to connect to the scheduler LXC; cause still unknown, `UseDNS` already off.
 - **Codex review seat (#460).** `bun scripts/codex-review.ts <PR>`, advisory, run beside the Claude reviewer.
 - **#458 buy-guard detail.** `mine_resource` counts MINED only; a prior titanium buy wasted roughly 120k credits, and the guard is not yet merged.
+- **READ THIS BEFORE TOUCHING agents.yaml. DEPLOY ORDER: IMAGE FIRST, CONFIG SECOND. DO NOT INVERT.** The reflex config block is `.strict()` (`config.ts:174`) and `keep_fuel_above_jumps` (`config.ts:172`) has no `.default()`. Add the key to `agents.yaml` only AFTER the image deploys, never before, or the pilot crashes at config load. Production carries `keep_fuel_above_jumps: 8` (backup `agents.yaml.bak.20260801-140456`); that 8 is an unvalidated guess from observed 5-jump legs, not a measurement, and stays under observation.
+- **Reverse hazard, confirmed live 2026-08-02 (M-54).** An agent entry added to `agents.yaml` without its `<id>_password` provisioned and mounted crash-loops the whole container (`compose.yaml:100-110`), taking down every already-healthy pilot with it — secrets go in first, the agent block second, every time.
 
 ### (history: 2026-07-12 layers archived to docs/archive/STATE-2026-07-17.md; earlier to docs/archive/STATE-2026-07-13.md)
