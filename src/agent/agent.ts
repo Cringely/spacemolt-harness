@@ -3078,8 +3078,28 @@ export class Agent {
 
     // Issue #188: currently-valid learned sparse rules ride along as plain
     // data -- TTL-filtered here so the executor stays clockless.
+    //
+    // Issue #526: the mine-step fuel-floor guard's reserve. keepFuelAboveJumps
+    // stays opt-in (unset unless reflex config names it, same as the reflex
+    // itself) -- the jump-aware signal needs a measured fuelPerJump to mean
+    // anything, and a ship that's never jumped this session has none. The
+    // percent floor is NOT left unset the same way: it falls back through
+    // config.fuelReservePct (the existing undocked strand-prevention floor,
+    // wake.ts) to AGENT_DEFAULTS.fuelReservePct (25) so the guard has a real
+    // default out of the box -- an agents.yaml that predates this fix and
+    // never touched `reflex:` at all still gets a working floor, not a dead
+    // guard waiting on config nobody has set. lastMeasuredFuelPerJump is a
+    // local store read (no game call), same zero-token cost as the reflex's
+    // own use of it just above.
+    const fuelPerJump = this.store.lastMeasuredFuelPerJump(this.id, status?.shipClass);
+    const fuelReserveConfig = {
+      keepFuelAboveJumps: this.config.reflex?.keepFuelAboveJumps,
+      keepFuelAbovePct:
+        this.config.reflex?.keepFuelAbovePct ?? this.config.fuelReservePct ?? AGENT_DEFAULTS.fuelReservePct,
+    };
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
+      fuelReserveConfig, fuelPerJump,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of

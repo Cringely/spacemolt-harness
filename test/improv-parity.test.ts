@@ -287,6 +287,18 @@ const SEAMS: Seam[] = [
     anchors: ["ore_common", /display name/i],
   },
   {
+    guard: "mine fuel-floor guard (#526: a `mine` step refused once fuel reads below the reserve " +
+      "-- the persona's own 'keep fuel above N%' line was a request to the model, never an " +
+      "enforced constraint, and the pilot mined to 2/130 (1.5%) and stranded anyway. Shares " +
+      "reflex.ts's fuelUrgent check with the docked auto-refuel reflex above, so the two can't " +
+      "quietly diverge on the same ship state)",
+    code: { file: "src/agent/executor.ts", marker: "fuelReserveConfig?.keepFuelAboveJumps" },
+    // Anchors kept inside single source lines (the #148/#161/paid-border
+    // pattern -- the spec wraps prose at ~100 chars, so a phrase straddling
+    // that wrap never matches a literal-space regex).
+    anchors: [/burns no fuel/i, "no route home", /mine refusal/i],
+  },
+  {
     guard: "create_buy_order duplicate-order guard (#681 round 2: refuse a SECOND standing buy order " +
       "for a station+item pair that already has one open, tracked from the pilot's own order " +
       "placements and cleared on a successful cancel_order or a buy_filled notification; round 1 " +

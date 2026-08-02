@@ -63,7 +63,14 @@ describe("Agent failure classification", () => {
       async status() { return status; },
       async notifications() { return []; },
     };
-    store.savePlan("a1", { goal: "g", steps: [{ action: "mine", params: {}, repeat: 5 }] }, []);
+    // "dock", not "mine": this fixture predates issue #526's mine fuel-floor
+    // guard (executor.ts). At fuel 5/100 a `mine` step is now correctly
+    // refused by that guard regardless of backoff state -- the invariant
+    // under test here (backoff suppresses REPLAN but not step EXECUTION) is
+    // orthogonal to the fuel floor, so it needs an action the new guard
+    // doesn't gate. "dock" carries no fuel precondition and proves the same
+    // point: the saved plan's current step still reaches the API.
+    store.savePlan("a1", { goal: "g", steps: [{ action: "dock", params: {}, repeat: 5 }] }, []);
     const agent = new Agent({
       id: "a1", persona: "p", api, store,
       planner: alwaysThrows(new TransientPlannerError("down")),
@@ -73,7 +80,7 @@ describe("Agent failure classification", () => {
     await agent.runOnce(); // low_fuel wake -> replan attempted -> fails, backoff set (~30s from now=0)
     now += 1_000; // still inside the 30s backoff window
     await agent.runOnce(); // low_fuel wake fires again, backoff suppresses replan -> executes plan step instead
-    expect(calls).toEqual(["mine"]); // the saved plan kept running despite the failing planner
+    expect(calls).toEqual(["dock"]); // the saved plan kept running despite the failing planner
     const types = store.recentEvents("a1", 50).map((e) => e.type);
     expect(types.filter((t) => t === "planner_transient_error").length).toBe(1); // not retried during backoff
   });

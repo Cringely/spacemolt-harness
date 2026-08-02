@@ -80,6 +80,21 @@ export interface ReflexFire {
  * a call the game has already told us cannot succeed here spends the tick
  * for nothing and blocks whatever the plan itself could do instead.
  */
+// Issue #526: the same jumps-vs-percent urgency check evaluateReflex uses
+// below (issue #670) also has to drive an UNDOCKED consumer -- the mine-step
+// fuel-floor guard in executor.ts -- so it is extracted rather than
+// duplicated. One urgency computation feeding both the docked auto-refuel
+// reflex and the undocked mine guard means the two can never quietly drift
+// to different verdicts on the same ship state.
+export function fuelUrgent(
+  fuel: number, maxFuel: number, fuelPerJump: number | undefined,
+  keepAboveJumps: number | undefined, keepAbovePct: number | undefined,
+): boolean {
+  return keepAboveJumps != null && fuelPerJump != null && fuelPerJump > 0
+    ? Math.floor(fuel / fuelPerJump) < keepAboveJumps
+    : keepAbovePct != null && maxFuel > 0 && (fuel / maxFuel) * 100 < keepAbovePct;
+}
+
 export function evaluateReflex(
   status: StatusSnapshot | null, config: ReflexConfig, fuelPerJump?: number,
   planRemediesFuel?: boolean, planRemediesHull?: boolean,
@@ -87,10 +102,8 @@ export function evaluateReflex(
 ): ReflexFire | null {
   if (!status || !status.docked) return null;
   const { fuel, maxFuel, hull, maxHull } = status;
-  const fuelUrgent = config.keepFuelAboveJumps != null && fuelPerJump != null && fuelPerJump > 0
-    ? Math.floor(fuel / fuelPerJump) < config.keepFuelAboveJumps
-    : config.keepFuelAbovePct != null && maxFuel > 0 && (fuel / maxFuel) * 100 < config.keepFuelAbovePct;
-  if (fuelUrgent && !planRemediesFuel && !fuelGaveUpHere) {
+  if (fuelUrgent(fuel, maxFuel, fuelPerJump, config.keepFuelAboveJumps, config.keepFuelAbovePct)
+    && !planRemediesFuel && !fuelGaveUpHere) {
     return { action: "refuel", reason: "low_fuel" };
   }
   if (
