@@ -52,6 +52,17 @@ export const JOBS: JobDef[] = [
     // subcommands the charter's step 2 and this job's work order actually
     // use (list/view/checks to triage, comment to flag merge-ready) — no
     // issue read/write; issues route through file-finding.ts only.
+    //
+    // #654: `bun scripts/read-latest-report.ts *` is the ONE way this job can
+    // check council freshness. It has NO `Bash(ls *)`/`Bash(find *)`/
+    // `Bash(printenv *)` grant, and none is added here — those would still
+    // leave the agent needing to resolve $SCHEDULER_STATE_DIR into a literal
+    // path itself, which it structurally cannot do (that is the root cause
+    // of the false "council stalled" P0s: every prior lookup attempt was
+    // DENIED and the denial got reported as absence). The script resolves
+    // the state dir in Node, inside the child process, and always emits an
+    // unambiguous FOUND/NO_MATCHING_REPORT_FOUND — nothing left to
+    // misinterpret as a permission denial.
     allowedTools: [
       "Read",
       "Grep",
@@ -62,6 +73,7 @@ export const JOBS: JobDef[] = [
       "Bash(gh pr comment *)",
       "Bash(bun run scripts/repo-hygiene.ts)",
       "Bash(bun scripts/file-finding.ts *)",
+      "Bash(bun scripts/read-latest-report.ts *)",
     ],
   },
   {

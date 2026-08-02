@@ -403,6 +403,22 @@ describe("spawn composer + runner (C3)", () => {
     expect(prompt).toContain(`${grantedPrefix} steer <agentId> --text-b64`);
   });
 
+  // Catches (#654): stand-up's council-freshness command drifting out of sync
+  // with its actual grant, the same L-39 shape as the steer test above — a
+  // work order teaching a command the closed allowedTools list no longer
+  // matches is DENIED at run time while this offline test stays green.
+  test("stand-up's council-freshness command is covered by its own read-latest-report grant", () => {
+    const grant = "Bash(bun scripts/read-latest-report.ts *)";
+    expect(job("standup").allowedTools).toContain(grant);
+    const grantedPrefix = grant.slice("Bash(".length, -" *)".length); // "bun scripts/read-latest-report.ts"
+    const prompt = composePrompt(job("standup"), { charterText: "x", stateNow: "y", cycleId: "standup-1" });
+    expect(prompt).toContain(`${grantedPrefix} --glob '*-council-review.md'`);
+    // No job gets a general ls/find/printenv grant into the state dir — the
+    // whole point of #654 is that stand-up must never need to resolve
+    // $SCHEDULER_STATE_DIR itself.
+    expect(job("standup").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
+  });
+
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
   // Steward keeps bare Edit for its docs remit, and an on-disk charter edit
   // bypasses the commit-time D3 fence — the deny (deny wins over allow;

@@ -157,6 +157,7 @@ function workOrder(job: JobDef, cycleId: string): string {
     standup: [
       "Target: this 2h stand-up window — liveness, PRs, pipeline, blockers, hygiene, per your charter.",
       "Reporting channel: gh comments on the PRs you triage. Flag merge-ready with a PR comment; the PM merges. (#490: no issue-read/write grant — file an issue only via file-finding.ts.)",
+      "Council-ordering check (#654): `bun scripts/read-latest-report.ts --glob '*-council-review.md'` is the ONE way to look for a fresh council report — the WHOLE command on ONE LINE. You have no `ls`/`find`/`printenv` grant for `$SCHEDULER_STATE_DIR/reports/`; any attempt at those is DENIED, and a denial there is not evidence a report is missing. Read the result per your charter's step 3.",
     ],
     strategy: [
       "Target: this 6h strategy review window, per your charter (step-0 gate first).",

@@ -18,11 +18,19 @@ hours on a two-second job); absence of alarms is not evidence of health.
    `docs/charters/task-reviewer.md`).
 3. **Pipeline primed.** Nothing in flight + ordered work exists (council ordering first, then
    backlog epics per `docs/backlog.md`) → dispatch the next wave. An idle pipeline over an
-   ordered backlog is a bug, not a pause. "Council ordering" = the `## Triage` section of the
-   NEWEST report matching `*-council-review.md` under `$SCHEDULER_STATE_DIR/reports/` (seam:
-   docs/briefs/council-review.md §Triage defines the producer; the two files must agree). A
-   report with no Triage section, or none newer than 48h, means fall through to backlog-epic
-   order — stale ordering is no ordering.
+   ordered backlog is a bug, not a pause. Fetch it by running
+   `bun scripts/read-latest-report.ts --glob '*-council-review.md'` — the ONE grant you hold into
+   `$SCHEDULER_STATE_DIR/reports/` (#654: the script resolves the state dir itself, so there is no
+   need for `ls`/`find`/`printenv` there — none of those are in your allowedTools and all are
+   DENIED; a denial is not evidence a report is missing, this command is how you actually check).
+   "Council ordering" = the `## Triage` section of the NEWEST report matching
+   `*-council-review.md` (seam: docs/briefs/council-review.md §Triage defines the producer; the
+   two files must agree), read from that command's `FOUND <file> mtime=…` output. A
+   `NO_MATCHING_REPORT_FOUND` result, a report with no Triage section, or an mtime older than 48h
+   all mean the SAME thing: fall through to backlog-epic order, SILENTLY — stale ordering is no
+   ordering, and none of those three outcomes is evidence the council ceremony itself is stalled,
+   hung, or broken. **Never file a finding about council health from this signal alone** — you
+   cannot see the ceremony's own run result from here, only whether a fresh report exists.
 4. **Blockers surfaced.** Anything genuinely needing the operator: ONE line each. Everything
    else gets handled, not reported.
 5. **Repo hygiene.** Run `bun run scripts/repo-hygiene.ts`. It reaps dead agent worktrees and
@@ -86,3 +94,9 @@ tier (2026-07-13 council item 7). Escalate judgment calls, don't make them.
   scaffold-with-no-open-PR git state only), so the grant and the prohibition no longer contradict.
   Step 5 also now reports preserved worktrees, matching the script's new worktree merge/open-PR gate.
 - v1.4 (2026-07-19) — step 3's "council ordering" now names its artifact: the `## Triage` section of the newest council report in `$SCHEDULER_STATE_DIR/reports/`, with a 48h staleness fallback to backlog-epic order (operator-approved triage step; seam with docs/briefs/council-review.md §Triage).
+- v1.5 (2026-08-01) — step 3 now names the exact command for the council-ordering check,
+  `bun scripts/read-latest-report.ts --glob '*-council-review.md'` (#654), and states plainly that
+  a `NO_MATCHING_REPORT_FOUND`/stale result is grounds for the backlog-order fallback only, never
+  for filing a council-health finding. Fixes a false P0 this job filed nine-plus times ("council
+  stalled 48h+") by treating a permission-denied lookup as proof the report was missing — this job
+  never had a Bash grant that could resolve `$SCHEDULER_STATE_DIR` into a real path (#582).
