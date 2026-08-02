@@ -1,0 +1,6 @@
+# Drop box for agent working files: long findings, extracted diffs, intermediate notes.
+# Everything here is disposable and stays out of git. This file is the only tracked
+# entry, so the directory itself survives a clone while its contents never land in a
+# commit.
+*
+!.gitignore

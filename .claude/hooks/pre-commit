@@ -1,0 +1,94 @@
+#!/bin/sh
+# Git pre-commit hook — lints staged living-doc prose with Vale before it
+# reaches a commit.
+#
+# WHY A GIT HOOK, NOT ANOTHER CLAUDE CODE HOOK
+# lint-doc-prose.ts (PostToolUse, matcher Write|Edit) only sees direct tool
+# edits. The harness also encourages a multi-agent authoring pattern where
+# agents return OLD/NEW blocks to a scratchpad and an orchestrator applies
+# them with a script over Bash — that path never fires the Claude Code hook,
+# so a whole session's writes can reach a PR unlinted. Git already runs on
+# every commit regardless of how the file got edited (script-applied patch,
+# agent write, human hand-edit), and it costs nothing on the far more common
+# non-commit operations. A Bash-matcher Claude Code hook would instead have
+# to spawn a process on every Bash call, string-matching for `git commit` —
+# Bash is the hottest tool in a session, so that cost lands everywhere a git
+# hook doesn't.
+#
+# SCOPE
+# Only staged markdown (git diff --cached --diff-filter=ACM -- '*.md'). No
+# staged markdown is the common case and must stay fast: exit 0 before
+# touching Vale at all.
+#
+# CONTENT LINTED IS THE STAGED BLOB, NOT THE WORKING TREE
+# A file staged and then further edited must lint as staged, not as it now
+# sits on disk. Each staged file's index blob is extracted via `git show
+# ":$f"` into a scratch tree before Vale ever sees it.
+#
+# CONFIG RESOLUTION
+# Mirrors lint-doc-prose.ts's project-then-global order (see that file's
+# resolveValeConfig, lines ~85-87): a repo-vendored kit at
+# .claude/tools/prose-lint/.vale.ini first, then the machine-global kit at
+# $HOME/.claude/tools/prose-lint/.vale.ini. No env-var override here — that
+# candidate in lint-doc-prose.ts exists for its own CI callers, not this hook.
+#
+# ADVISORY, NEVER A GATE
+# `vale` missing from PATH, or no config reachable, degrades to a silent
+# no-op — same fail-open posture as the rest of the harness. Findings print
+# to stderr so `git commit` output shows them, but the exit code never
+# reflects them (see the ponytail note above the final `exit 0`).
+
+set -u
+
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# core.quotePath=false: its default (true) makes git emit non-ASCII paths as
+# a quoted C-style literal ("file_\303\251.md"), which `mkdir -p`/`git show`
+# would then treat as that literal string instead of the real path — quiet
+# failure, not an error. Overriding it here is local to this invocation.
+staged_md=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACM -- '*.md')
+[ -n "$staged_md" ] || exit 0
+
+vale_bin=$(command -v vale) || exit 0
+
+project_config="$hook_dir/../tools/prose-lint/.vale.ini"
+global_config="$HOME/.claude/tools/prose-lint/.vale.ini"
+
+if [ -f "$project_config" ]; then
+  config="$project_config"
+elif [ -f "$global_config" ]; then
+  config="$global_config"
+else
+  exit 0
+fi
+
+scratch_dir=$(mktemp -d) || exit 0
+trap 'rm -rf "$scratch_dir"' EXIT
+
+# Here-doc, not a pipe into `while` — a pipe puts the loop in a subshell in
+# some /bin/sh implementations, which would silently drop any state the loop
+# tries to keep.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  staged_file="$scratch_dir/$f"
+  mkdir -p "$(dirname -- "$staged_file")"
+  git show ":$f" >"$staged_file" 2>/dev/null || continue
+  # Vale (a native binary) renders the scratch path in whatever style the
+  # platform gives it — backslashes on Windows even though we built the path
+  # with forward slashes — so rewriting it back to "$f" reliably isn't
+  # portable. A header line naming the real staged path is simpler and
+  # always correct; the temp path underneath it is a Vale-internal detail.
+  findings=$("$vale_bin" --config "$config" --output=line "$staged_file" 2>/dev/null)
+  [ -n "$findings" ] || continue
+  echo "== $f ==" >&2
+  echo "$findings" >&2
+done <<EOF
+$staged_md
+EOF
+
+# ponytail: unconditional exit 0 — advisory only. The false-positive rate
+# measured against a real document (84 of 137 findings) is too high to gate
+# commits on today. Upgrade path, if that ever changes: a --strict opt-in
+# (flag or env var) that captures Vale's exit status per file and propagates
+# a non-zero exit instead of this line.
+exit 0

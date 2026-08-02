@@ -18,6 +18,15 @@
             "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/gh-chain-merge-gate.ts\""
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent-write-scope.ts\""
+          }
+        ]
       }
     ],
     "SessionStart": [
