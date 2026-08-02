@@ -281,6 +281,15 @@ const SEAMS: Seam[] = [
     code: { file: "src/planner/digest.ts", marker: "item ids are EXACT snake_case ids" },
     anchors: ["ore_common", /display name/i],
   },
+  {
+    guard: "create_buy_order duplicate-order guard (#681 round 2: refuse a SECOND standing buy order " +
+      "for a station+item pair that already has one open, tracked from the pilot's own order " +
+      "placements and cleared on a successful cancel_order or a buy_filled notification; round 1 " +
+      "wrongly refused the pilot's legitimate FIRST order by keying on a blocked buy instead of an " +
+      "open one, task-reviewer finding on PR #58)",
+    code: { file: "src/agent/executor.ts", marker: 'step.action === "create_buy_order" && buyOrderAlreadyOpen' },
+    anchors: ["create_buy_order", /duplicate bid/i, /already have one open/i, /the old one FIRST/i],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {
