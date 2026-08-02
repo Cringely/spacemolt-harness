@@ -4,27 +4,27 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-08-02 17:50Z (19 PRs merged 2026-08-01/02; backlog 164 open; **P0 at zero**; **gate F1 CLOSED**, F2 blocked on #159 persona briefings). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-08-02 17:50Z (30 PRs merged since 2026-08-01; backlog 164 open; **P0 at zero**; **gate F1 CLOSED**, F2 blocked on #159 persona briefings). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
 _Refreshed 2026-08-02 at 17:50Z. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
-**#669 FIXED AND LIVE.** The overnight "empty dashboard panel" report was normal end-of-window behavior, not an incident. **PR #73 merged as `5b067fd`, closing #669** (pilot re-buys at stations proven empty, burning plan budget), auto-deployed, container `spacemolt-harness` up and healthy on that image. Same audit left open #696 (steer channel silent on instruction receipt), #697 (unused Escort purchase, abandoned mission), #698 (thrash-gate floor reset, unproven).
+**#669 FIXED AND LIVE.** The overnight "empty panel" report was normal end-of-window behavior, not an incident. **PR #73 merged as `5b067fd`, closing #669** (pilot re-buys at stations proven empty, burning plan budget), auto-deployed, container `spacemolt-harness` up and healthy on that image. Same audit left open #696 (steer channel silent on instruction receipt), #697 (unused Escort purchase, abandoned mission), #698 (thrash-gate floor reset, unproven).
 
-**FLEET FLIGHT (#591). F1 CLOSED. F2 NEXT, NOT A SWITCH-FLIP.** F0 steer restore (#495) and F1 (#543, #526 strand safety) both done. F2 (#593, launch scout+corsair) needs persona briefing text from #159 first. F3: #571 landed, #534/#569/#592 remain. F4 exit: 3 pilots / 24h / zero strands. Live: 1 of 3 flying (`miner`); scout and corsair registered, unlaunched.
+**FLEET FLIGHT (#591). F1 CLOSED. F2 NEXT, NOT A SWITCH-FLIP.** F0 steer restore (#495) and F1 (#543, #526 strand safety) both done. F2 (#593, launch scout+corsair) needs persona briefing text (#159) first. F3: #571 landed, #534/#569/#592 remain. F4 exit: 3 pilots / 24h / zero strands. Live: 1 of 3 flying (`miner`); scout and corsair registered, unlaunched.
 
-**STRAND GUARDS LIVE, EVIDENCE TAGGED.** PR #68 blocks `mine` at the reserve floor; PR #72 (`9719daa`) tagged that block `fuelReserveBlock`, so `isStranded()` credits it alongside the movement+regex path. Each new guard must self-tag at its call site. Unconfirmed: whether `isStranded()` sees no in-flight plan, is undocked (reflex gated on `docked`, reflex.ts:103), or is fuel-capped.
+**STRAND GUARDS LIVE, EVIDENCE TAGGED.** PR #68 blocks `mine` at the reserve floor; PR #72 (`9719daa`) tagged that block `fuelReserveBlock`, so `isStranded()` credits it alongside the movement+regex path. Each new guard must self-tag at its call site. Unconfirmed: whether `isStranded()` sees no in-flight plan, undocked (reflex gated on `docked`, reflex.ts:103), or fuel-capped.
 
 **LIVELOCK (1, 2, 3 FIXED; 4 PARTIAL).** (1) Executor starvation #543, PR #47. (2) Planner buys what station doesn't stock, #669, **PR #73 merged `5b067fd`**. (3) Fuel urgency measured as percent not range, #670, PR #54, inert until configured per-agent. (4) Reflex terminal give-up #672, PR #50; deferred.
 
-**LIVE PILOT SNAPSHOT (captured 17:41-17:47Z today).** 203,572 credits, fuel 85/140, hull 120/120, cargo 0/40, undocked at `cargo_lanes_gas_cloud`. 606 missions completed (603 in this morning's audit), 546,266cr lifetime earned. Planner model: `gpt-5.6-terra`. `plan_budget_exceeded` fired at 17:47:41Z (maxPlans 12/60min), the ceiling working as designed. Zero `item_not_available` in 12 minutes of post-deploy logs: weak positive evidence only (short window, pilot not at the station where the livelock occurred). **#669 is not yet proven fixed in production.**
+**LIVE PILOT SNAPSHOT (captured 17:41-17:47Z today).** 203,572 credits, fuel 85/140, hull 120/120, cargo 0/40, undocked at `cargo_lanes_gas_cloud`. 606 missions completed (603 in this morning's audit), 546,266cr lifetime earned. Planner model: `gpt-5.6-terra`. `plan_budget_exceeded` fired at 17:47:41Z (maxPlans 12/60min), the ceiling working as designed. Zero `item_not_available` in 12 minutes post-deploy: weak evidence only (short window, pilot not at the livelock station). **#669 is not yet proven fixed in production.**
 
-**NEW: ACTIVE MISSIONS OVER CAP, OBSERVED NOT DIAGNOSED.** 7 active missions against a cap of 5. Six are `distress_response` at 0% progress with `visit_system` objectives (4 Nekkar, 1 Factory Belt, 1 Zibal), each expiring in ~1,000 ticks. The seventh, "Exotic Crystal Synthesis" (8,000cr reward), has sat at 0% for 21.9 hours. Cause (pilot-accepted vs. game-assigned) is a separate open investigation, not claimed here.
+**ACTIVE MISSIONS OVER CAP.** 7 active missions against a cap of 5. Six are `distress_response` at 0% progress with `visit_system` objectives (4 Nekkar, 1 Factory Belt, 1 Zibal), each expiring in ~1,000 ticks. The seventh, "Exotic Crystal Synthesis" (8,000cr reward), has sat at 0% for 21.9 hours. Cause is settled: the game auto-assigns these, no accept path (`agent.ts:905-916` logs, doesn't branch), filed as **#700**: the stale-mission advisory's 24h threshold can't fire before these expire.
 
-**PRODUCTION CONFIG FACTS.** `max_plans_per_window: 12` in live `agents.yaml` (schema default 36). `keep_fuel_above_jumps: 8` (estimate, not measured). Scheduler on LXC healthy (user `smsched`, cron every 10m).
+**PRODUCTION CONFIG FACTS.** `max_plans_per_window: 12` in `agents.yaml` (schema default 36). `keep_fuel_above_jumps: 8` (estimate, not measured). Scheduler on LXC healthy (user `smsched`, cron every 10m).
 
-**MERGED 2026-08-01/02 (19 PRs).** 2026-08-01: 9 PRs (#56-#68, core sync + steward passes + refuel/ceremony/fuel-floor fixes). 2026-08-02: #72 strand evidence, #73 #669 re-buy fix, #74/#75/#76 steward hardening, #77 backlog-generator UTF-8 fix. **#67 and #71 closed as superseded, not merged**, both hand-edited the generated `docs/backlog.md`; the real fix is #77.
+**MERGED, 30 PRs since 2026-08-01.** Behavior-changing: #69 closed #558 (ceremony run failures now surface through the filing channel), the fix that took P0 to zero; #73 merged `5b067fd`, closing #669, deployed; #77 fixed the backlog generator's encoding bug. **#67 and #71 closed as superseded, not merged**, both hand-edited the generated `docs/backlog.md` (#70: the prior steward pass).
 
 **BACKLOG. 164 open issues, P0 at zero.** Regenerated from GitHub Issues SSOT.
 
