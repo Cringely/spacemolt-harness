@@ -23,7 +23,12 @@ sounds right — that is the whole check.
 ## Checklist (run in order, every dispatch)
 
 1. **STATE.md `## NOW` block** — reconcile against what actually merged AND what is in flight
-   (dispatched-but-unmerged counts; the operator steers from this block).
+   (dispatched-but-unmerged counts; the operator steers from this block). Before submitting, diff
+   the new block against the PRs merged since the last refresh: confirm no block still describes
+   as broken something one of those PRs already fixed. A fresh session boots from this block, so a
+   stale one costs more than any other mistake this seat makes (#690: a block called the strand
+   "still not detectable" in the same pass that recorded the fixing PR as merged, though #690 was
+   already closed).
 2. **`docs/milestones.md`** — append/adjust milestone entries for what landed. An entry records
    WHAT merged, with its PR numbers; any Delivered/Lesson prose beyond cited facts falls under
    the no-invented-narrative rule above (the PR #200 fabrications started here). A gate flips to
@@ -108,9 +113,12 @@ sounds right — that is the whole check.
    which is this project's name for the thing it builds; and `ai-tells.EmDashUsage` fires
    throughout the existing docs, whose house style tolerates the em dash. Flag anything else.
    `Cringely.AblationOveruse` (added 2026-07-14) warns when one paragraph leans on "ablate" three
-   or more times; the jargon convention in AGENTS.md explains why. If the tool genuinely cannot
-   run, say so in the report with the command you tried and its output. Do not report the step as
-   done, and do not skip it in silence.
+   or more times; the jargon convention in AGENTS.md explains why. Paste the final vale command
+   and its output verbatim in the report: "lint clean" is a claim, a pasted zero-findings run is a
+   receipt. If the tool cannot run at all, paste the exact command and its exact error instead of
+   a characterization, and distinguish the two outcomes by name: "could not check" (tool errored)
+   is not the same report as "not applicable" (no doc files changed this pass). Do not report the
+   step as done, and do not skip it in silence.
 
 ## Value-density rule
 
@@ -124,7 +132,11 @@ One docs-only PR (branch `docs/*`). Your completion report is the five-field tem
 (SHIPPED / EVIDENCE / FINDINGS / BLOCKERS / FILES — team-structure.md, Communication protocol):
 150 words excluding evidence lines, and a report written as prose gets bounced unread. The
 EVIDENCE field carries the `steward-prep` output lines verbatim (backlog count, roadmap regen,
-size-gate status) — a report without them is a skipped step 7 and gets bounced. The PR
+size-gate status) — a report without them is a skipped step 7 and gets bounced. The FILES field
+carries the verbatim `git diff origin/main...HEAD --stat` output (three dots), never an authored
+list: a file you claim to have touched that is absent from this output contradicts itself on its
+face and needs no reviewer diligence to catch (#56, #74 both claimed regenerated roadmap SVGs a
+`git diff --name-only` run never contained). The PR
 body carries what was stale, what you changed, the Artifact-republish flag if milestones moved,
 size-gate status (fired / headroom), and any prose-lint false positive you chose not to fix —
 PR-body prose in the caveman-full register (team-structure.md compression rule: the template
@@ -184,3 +196,15 @@ qualifies, flag it in the PR body for PM judgment rather than deciding by paddin
   regen skipped by 3 consecutive passes): the regen moved from a prose checklist line to
   `scripts/steward-prep.ts` (step 7) — one command for backlog + roadmap + size gate, emitting
   EVIDENCE lines the report must carry, so a skipped run is visible instead of silent.
+- v1.5 (2026-08-02) — authored-report hardening. Three occurrences of a report claiming work its
+  own diff didn't contain (PR #56 and #74 both listed regenerated roadmap SVGs absent from
+  `git diff --name-only`; a false "doc-size gate: green" in #41 and #47; a false "Vale
+  unavailable" twice; issue counts disagreeing with live state). An AUTHORED summary of a
+  measurement can drift from reality and still read as correct, where a PASTED measurement
+  contradicts itself on its face. A prior fix sent as an in-context correction didn't hold; the
+  identical claim came back the next PR, so the fix moves into the charter instead. Changes: the
+  FILES field is now the verbatim `git diff origin/main...HEAD --stat` output, never an authored
+  list; step 8 requires pasting the final vale command and output verbatim, and distinguishes
+  "could not check" (tool errored) from "not applicable" (nothing to lint) by name; step 1 adds a
+  pre-submit diff of the `## NOW` block against PRs merged since the last refresh, so a fixed
+  issue can't merge into that block still described as broken (#690).
