@@ -4,23 +4,27 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-08-02 (credit-bleeding loop closed #681 via PR #58; gates F1 still blocked by #526; pilot stable at haven). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-08-02 (six PRs merged; backlog 187→159; P0 3→2; F1 still gated on #526). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-08-02 post-PR#58. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
+_Refreshed 2026-08-02 post-merge-cluster. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
-**FLEET FLIGHT (#591).** F0 steer restore (#495) done, F1 strand/trap fix gated on #526, F2 launch scout+corsair (#593), F3 loops end (#534/#569/#571, +#592 gap), F4 exit: 3 pilots/24h/zero strands. Live: 1 of 3 flying (`miner`, image `68525a7`); scout/corsair registered, unlaunched. F2 stays held until F1 merges: launching two more pilots into an uncharacterised trap multiplies the failure.
+**FLEET FLIGHT (#591).** F0 steer restore (#495) done; F1 strand/trap fix gated on #526; F2 launch scout+corsair (#593); F3 loops end (#534/#569/#571, +#592); F4 exit: 3 pilots/24h/zero strands. Live: 1 of 3 flying (`miner`); scout/corsair registered, unlaunched. F2 stays held until F1: launching two more pilots into an uncharacterised trap multiplies the failure rather than averaging it, and makes each strand harder to attribute.
 
-**PILOT RECOVERED.** `miner` was frozen 2026-07-31T20:00Z to 2026-08-01T16:51Z (28.5h) at `market_prime`, fuel 19/130, by a four-layer livelock. Deploy on 2026-08-01T16:49:29Z recreated the container on image 68525a7. Unfrozen by the deploy itself, not steers: first game action at 16:51:23Z was `travel_to{system_id:haven}` (fuel 19→18, jump cost 1). Operator steer at 16:51:30Z adjusted plan shape; second steer at 16:54:20Z supplied navigation. Docked 16:55:33Z, refueled 16:55:43Z. Current state: fuel 130/130, docked at haven/grand_exchange, 207,158 credits.
+**PRODUCTION.** `miner` healthy on image `c01a2ea`, 0 restarts, 209,032 credits, docked haven/grand_exchange. CI auto-deploys on merge (container up ~105s after PR #58 merged). `main` is ahead of the deployed image; that is normal between merges.
 
-**THE LIVELOCK (LAYERS 1,3 FIXED; LAYER 2 OPEN; LAYER 4 PARTIAL).** (1) Executor starvation, #543 (fixed PR #47): reflex deferred when plan carries remedy. (2) Planner impossible purchases, #669 (open): buys what station doesn't stock. (3) Fuel urgency mistyped, #670 (fixed PR #54): measured as percent, not range. Configured post-deploy in agents.yaml: `keep_fuel_above_jumps: 8`. (4) Reflex terminal give-up, #672 (fixed PR #50): per-station block stop. Deferred: plan-already-routing-to-fuel as remedy.
+**GATE F1 STATUS.** Needs #543 and #526 both closed. #543 done (PR #47). **#526 is the single remaining blocker** (unenforced fuel floor: the pilot mined itself to 2/130 and stranded). In flight now: guard drafted, one real regression open (`test/agent-failure-classes.test.ts:76`, because blocking a `mine` step changes plan-execution flow), tests and improv pairing still owed.
 
-**GATE F1 STATUS.** F1 (strand/trap fix) requires both #543 and #526 closed. PR #47 (layer 1) merged; PR #50 (layer 4 partial) merged. #526 (unenforced fuel floor: pilot mined itself to 2/130 and stranded, NOT a livelock) stays open, blocking F1.
+**DEPLOY ORDER: IMAGE FIRST, CONFIG SECOND. DO NOT INVERT.** The reflex config block is `.strict()` (`config.ts:174`) and `keep_fuel_above_jumps` (`config.ts:172`) has no `.default()`. Add the key to `agents.yaml` only AFTER the image deploys, never before, or the pilot crashes at config load. Production carries `keep_fuel_above_jumps: 8` (backup `agents.yaml.bak.20260801-140456`); that 8 is an unvalidated guess from observed 5-jump legs, not a measurement, and stays under observation.
 
-**CREDIT-BLEEDING LOOP, #681 (PR #58).** Planner placed six `create_buy_order` ops in 90 min, ~21.8k credits locked in dead escrow (item_not_available → escalate → never fills → replan). Guard: refuse `create_buy_order` when (station, item) pair already open, tracked from pilot's placement, cleared by `cancel_order` or `buy_filled`. Live now.
+**LIVELOCK (1,3 FIXED; 2 OPEN; 4 PARTIAL).** (1) Executor starvation #543, PR #47. (2) Planner buys what a station doesn't stock, #669, open. (3) Fuel urgency measured as percent not range, #670, PR #54, inert until configured per-agent. (4) Reflex terminal give-up #672, PR #50; deferred: plan-already-routing-to-fuel as remedy.
 
-**ALSO MERGED THIS CLUSTER.** PR #46 fixed merge-gate deadlock (#601); PR #38 deregistered `scan_poi` (#552); PR #45 bumped GitHub Actions. Reasons in `docs/decisions.md`. Also filed: #676 (stuck-detector alerts), #678 (station naming drift), #679 (reflex spent-tick timing). Closed: #601 (by hand).
+**MERGED 2026-08-02.** #56, #57 (core sync, 6 files), #58 (#681 credit loop: six `create_buy_order` posts in 90min locked ~21.8k in dead escrow; guard refuses a second order for an already-open station+item), #59 (agent-def `effort` key was `reasoning_effort`, silently ignored for months; regression test added), #60/#63 (steward), #61 (#595 refuel target; the first attempt was inert for a miner because a mining laser occupies a utility slot).
+
+**BACKLOG.** 187→159. 30 ceremony duplicates closed into 4 survivors; root cause is a dedup key regenerated per run (#635), fix in flight as PR #62. P0 now 2: **#558** (a failed ceremony surfaces nowhere; trimmed to that one part, in flight) and **#541** (core promotions, Leg 2 in flight). #557 closed on evidence (PR #29). New: #687 (filer stamps flat P2 on every finding, so root-cause work sits at routine priority).
+
+**IN FLIGHT.** PR #62 (ceremony dedup, in rework), PR #64 (#571 shortfall message, awaiting review). Fixes running for #526, #558, #654, #541.
 
 **THEN.** #526, #534, #535, #537, #538, #529 and the rest in `docs/backlog.md`.
 
