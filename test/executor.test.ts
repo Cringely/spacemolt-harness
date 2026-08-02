@@ -604,6 +604,38 @@ describe("executeTick: create_buy_order duplicate-order guard (#681)", () => {
   });
 });
 
+// Repeated-buy guard (issue #669). itemUnavailableAtStation is agent.ts's
+// fresh-per-tick, time-windowed verdict, computed from the persisted
+// item_unavailable stream -- see agent-item-unavailable-guard.test.ts for the
+// integration path that produces and self-expires it. Driven directly here,
+// same convention as the create_buy_order guard tests above.
+describe("executeTick: buy repeated-attempt guard (#669)", () => {
+  test("itemUnavailableAtStation=true refuses the buy and makes no API call", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "buy", params: { id: "fuel_cell", quantity: 50 } }] };
+    const r = await executeTick(
+      api, plan, { step: 0, iteration: 0 }, undefined, undefined, undefined, undefined, undefined, true,
+    );
+    expect(r.kind).toBe("blocked");
+    expect((r as { reason: string }).reason).toContain("fuel_cell");
+    expect((r as { reason: string }).reason).toContain("create_buy_order");
+    expect(calls.length).toBe(0); // the doomed live call never goes out
+  });
+
+  test("itemUnavailableAtStation is scoped to buy only: a create_buy_order step is unaffected", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = {
+      goal: "g",
+      steps: [{ action: "create_buy_order", params: { item_id: "fuel_cell", quantity: 50, price_each: 60 } }],
+    };
+    const r = await executeTick(
+      api, plan, { step: 0, iteration: 0 }, undefined, undefined, undefined, undefined, undefined, true,
+    );
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "create_buy_order", params: { item_id: "fuel_cell", quantity: 50, price_each: 60 } }]);
+  });
+});
+
 describe("executeTick: travel_to macro", () => {
   // VERIFIED 2026-07-10 (live find_route capture, SM-2 flight diagnosis --
   // see docs/STATE.md): { found, total_jumps, estimated_fuel, fuel_available,

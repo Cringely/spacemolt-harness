@@ -173,10 +173,17 @@ Verify effects (never trust a success envelope):
   where `fuel_cell` had no seller, six `create_buy_order` posts across 90 minutes at varying prices
   — 50, 60, 100, 50, 100, 60cr — locked ~21,800cr across duplicate bids, none of them ever
   cancelling the last). Before posting, check whether you already have one open; if you want a
-  different price, `cancel_order` the old one FIRST, then post the new one. (Also a §5
-  deterministic backstop: in plan-then-execute the executor refuses a SECOND `create_buy_order`
-  for a station+item pair that already has one open, tracked from your own successful order
-  placements and cleared the moment a `cancel_order` succeeds or the order fills — issue #681.)
+  different price, `cancel_order` the old one FIRST, then post the new one. Do not keep retrying
+  the plain `buy` itself either — once a station has told you `item_not_available` for an item,
+  resubmitting the exact same `buy` will not change the outcome; switch to `create_buy_order` or
+  move on (live, #669: 17 blocked `buy` retries for `fuel_cell` at one station in ~10 minutes, a
+  later episode burning the whole plan budget the same way). (Also a §5 deterministic backstop: in
+  plan-then-execute the executor refuses a SECOND `create_buy_order` for a station+item pair that
+  already has one open, tracked from your own successful order placements and cleared the moment a
+  `cancel_order` succeeds or the order fills — issue #681. A second, sibling backstop refuses a
+  repeated plain `buy` for a station+item pair already proven `item_not_available`, for a bounded
+  time window rather than permanently — there is no real "restocked" signal to clear on — issue
+  #669.)
 - Judge every trip by NET profit, not the sale price: fuel costs credits (2cr per fuel unit at
   the cheapest full-tank stations, more as a tank empties, plus any empire fuel tax), so run
   `find_route` and price the ROUND-TRIP fuel before you commit to a selling run. Fee facts: an
