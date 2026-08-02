@@ -2544,10 +2544,15 @@ export class Agent {
   // guard's own comment for why this is a TIME-WINDOWED memory rather than
   // the buy_order guard's open/close pair: item_not_available has no real
   // invalidation signal (no galaxy-wide stock query exists), so there is
-  // nothing to "clear" on success. Only ONE event kind is ever written here
-  // (a fresh proof of unavailability); staleness is handled entirely by the
-  // window check at the read site (executeOne below), which is what lets a
-  // stale record self-expire instead of latching permanently.
+  // nothing to "clear" on success. Only a GAME-CONFIRMED block writes this
+  // event -- the `result.guard` check below excludes the guard's OWN
+  // refusal, whose reason text also names item_not_available (it steers
+  // toward the same remedy). Without that exclusion a guard-refused attempt
+  // re-teaches its own precondition on every subsequent try, and the window
+  // never expires (review finding, PR #73). Staleness is otherwise handled
+  // entirely by the window check at the read site (executeOne below), which
+  // is what lets a record from a genuinely stale block self-expire instead
+  // of latching permanently.
   //
   // Detection matches the same message-prefix convention this file's own
   // buy-id correction already relies on (classifyGameError's caller,
@@ -2566,7 +2571,18 @@ export class Agent {
     action: string | undefined, params: unknown, result: StepResult, status: StatusSnapshot | null,
   ): void {
     if (action !== "buy") return;
-    if (result.kind !== "blocked" || !result.reason.includes("item_not_available")) return;
+    // guard: true means WE refused this call, not the game (executor.ts's
+    // guardBlock, same flag agent.ts already relies on elsewhere to tell the
+    // two apart -- see the emit("action", ...) comment below, issue #571/
+    // #581). This guard's own refusal text names item_not_available (it steers
+    // the planner toward the same remedy the original block did), so without
+    // this check a guard-refused attempt re-teaches its own precondition: the
+    // window keeps sliding forward on every subsequent attempt and never
+    // expires, exactly the permanent-block failure this memory exists to
+    // avoid (review finding, PR #73: reproduced with guard-blocks at
+    // ts=300000/600000 still refusing at ts=1860002, 31 minutes past the
+    // original block).
+    if (result.kind !== "blocked" || result.guard || !result.reason.includes("item_not_available")) return;
     const stationKey = status?.dockedAt;
     if (!stationKey) return;
     const itemId = (params as { id?: unknown } | undefined)?.id;

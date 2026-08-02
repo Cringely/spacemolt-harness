@@ -133,6 +133,55 @@ describe("Agent repeated-buy guard (#669)", () => {
     expect(calls).toEqual(["buy", "buy"]); // second attempt was NOT refused
   });
 
+  // Round-2 review finding (PR #73): the test above only proves expiry for a
+  // SINGLE original block followed directly by the post-window attempt -- it
+  // never issues a guard-refused attempt INSIDE the window, so it could not
+  // catch a producer that re-arms itself. It did not: learnItemUnavailable
+  // matched on the reason text alone (`.includes("item_not_available")`) with
+  // no check for `result.guard`, and the guard's own refusal text also names
+  // item_not_available (it steers toward the same remedy the original block
+  // named). Every guard-refused attempt re-emitted item_unavailable with a
+  // fresh timestamp, and the read side keeps only the LATEST event per key
+  // (store.ts's latestEventPerPayloadKey, `HAVING id = MAX(id)`), so each
+  // guard-block pushed the window's start forward -- a station could be
+  // blocked forever as long as the planner kept trying. This test constructs
+  // exactly that scenario: TWO guard-refused attempts land inside the
+  // original 30-minute window before the check at 31 minutes past the
+  // ORIGINAL block (not the last guard-block) -- the shape the reviewer
+  // reproduced live and the shape the test above cannot express.
+  test("guard-refused attempts inside the window do not re-arm it: the window still expires from the ORIGINAL block", async () => {
+    const status = dockedStatus();
+    const { api, calls } = makeApi(status, async (name) => {
+      if (name === "buy") throw new SpacemoltError("command_error", ITEM_NOT_AVAILABLE_MSG);
+      return { result: "ok" };
+    });
+    const store = new Store(":memory:");
+    // MockPlanner repeats its last (only) plan forever once its list is
+    // exhausted -- one entry drives every replan in this sequence, guard-
+    // refused replans included.
+    const planner = new MockPlanner([buyFuelCell]);
+    let now = 1;
+    const longHeartbeatConfig: AgentConfig = { ...config, heartbeatMinutes: 60 };
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: longHeartbeatConfig, now: () => now });
+
+    await agent.runOnce(); // no_plan -> replan
+    await agent.runOnce(); // buy #1: reaches the API, real game block, learns unavailable at ts=1
+    await agent.runOnce(); // blocked -> replan
+
+    now = 300_000; // 5 minutes after the original block
+    await agent.runOnce(); // buy attempt: guard-refused pre-call, no API call
+    await agent.runOnce(); // blocked -> replan
+
+    now = 600_000; // 10 minutes after the original block
+    await agent.runOnce(); // buy attempt: guard-refused pre-call, no API call
+    await agent.runOnce(); // blocked -> replan
+
+    now = 1_860_002; // 31 minutes past the ORIGINAL block (ts=1) -- past the 30-min window
+    await agent.runOnce(); // buy attempt: the window has expired -- must reach the API again
+
+    expect(calls).toEqual(["buy", "buy"]); // exactly two live calls: the original block and this one
+  });
+
   // Scoping proof: the guard is keyed on (station, item), not "any
   // item_not_available this pilot has ever hit" -- a DIFFERENT item at the
   // same station must still be allowed its own first attempt.
