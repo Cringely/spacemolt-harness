@@ -6,7 +6,7 @@ import { failureClass } from "../server/failures";
 import { FUEL_PRICE_FLOOR_CR, LISTING_FEE_BPS } from "../agent/net-trip";
 import { catalog } from "../catalog/catalog";
 import type { PlanContext, ChatMessage } from "./types";
-import type { FittedModule, LocationInfo, StatusSnapshot } from "../client/client";
+import type { ActiveMissionObjective, FittedModule, LocationInfo, StatusSnapshot } from "../client/client";
 
 // Prompt-injection boundary (SECURITY, security-baseline.md's "LLM output is
 // untrusted input" rule extended to LLM INPUT: game-sourced text is untrusted
@@ -897,6 +897,40 @@ const NON_MINING_OBJECTIVE_TYPES = new Set([
   "visit_system",
 ]);
 
+// Shortfall phrasing per objective type (issue #571): the completion-check
+// verdict below used one hardcoded "mine N more" hint for every objective,
+// including visit_system -- a target the planner (an LLM) reads as an
+// instruction, so telling it to mine a system-visit objective steered a real
+// pilot toward the wrong action -- the same class of harm as the game's own
+// filled-in error templates the planner has previously obeyed verbatim.
+// One phrasing per type the reference actually enumerates
+// (same citations as NON_MINING_OBJECTIVE_TYPES above: missions.md:47-49,
+// openapi-v2.json:90999 -> deliver_item, kill_player, visit_system; kill_pirate
+// per the #330 fixture). "mine" stays the default for an untyped objective
+// that carries an item_id, matching the deposit check's existing type-absent
+// default a few lines up -- most untyped fixtures observed so far ARE mining.
+// Any type string the reference does not name gets an honest "not
+// recognized" hint instead of a fabricated verb: silently falling back to
+// "mine" for an unknown type would just relocate this bug, not close it.
+function shortfallHint(o: ActiveMissionObjective, need: number): string {
+  switch (o.type) {
+    case "mine":
+      return `mine ${need} more`;
+    case "deliver_item":
+      return o.targetBase ? `deliver ${need} more to ${o.targetBase}` : `deliver ${need} more`;
+    case "kill_pirate":
+      return `kill ${need} more pirate${need === 1 ? "" : "s"}`;
+    case "kill_player":
+      return `kill ${need} more player${need === 1 ? "" : "s"}`;
+    case "visit_system":
+      return o.systemId ? `visit ${o.systemId}` : `visit the target system (system id not reported)`;
+    case undefined:
+      return o.itemId ? `mine ${need} more` : `${need} more needed -- objective type not reported, verify manually`;
+    default:
+      return `${need} more needed -- objective type "${o.type}" not recognized, verify manually`;
+  }
+}
+
 // Mission-progress bridge (issue #291): the deterministic
 // objective->progress->next-step block. Everything rendered is a parsed id or
 // number (client-side zod over openapi-v2's V2GameState.missions.active +
@@ -956,7 +990,8 @@ function renderMissionObjectiveCheck(
       if (o.completed) continue;
       if (o.required === undefined || o.current === undefined) { readinessKnown = false; continue; }
       if (o.current < o.required) {
-        unmet.push(`${o.itemId ?? o.type ?? "objective"} ${o.current}/${o.required} (mine ${o.required - o.current} more)`);
+        const need = o.required - o.current;
+        unmet.push(`${o.itemId ?? o.type ?? "objective"} ${o.current}/${o.required} (${shortfallHint(o, need)})`);
       }
     }
     if (unmet.length) {

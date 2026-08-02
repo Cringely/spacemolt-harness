@@ -373,3 +373,93 @@ describe("mission objective check rendering (#291)", () => {
     expect(buildDigest({ ...baseCtx, activeMissions: [] })).not.toContain("Mission objective check");
   });
 });
+
+// Shortfall phrasing by objective type (issue #571). The old code hardcoded
+// "mine N more" for every objective, including visit_system -- a target the
+// planner (an LLM) reads as an instruction, so the wrong verb is a wrong-action
+// bug, not a cosmetic one. Each test pins one objective type's failure mode;
+// the negative assertion `not.toContain("(mine ")` matches the exact
+// shortfall-hint parenthetical the old code produced for every type, so it
+// only fails if THAT phrase leaks back in -- it does not collide with the
+// unrelated "mining side ore" mission-priority prose the digest always renders.
+describe("shortfall phrasing by objective type (issue #571)", () => {
+  const baseCtx: PlanContext = {
+    persona: "p", goals: [], wake: { reason: "heartbeat" },
+    statusSummary: "s", recentEvents: [],
+  };
+
+  test("visit_system objective names the target system instead of saying mine", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-visit-1",
+        objectives: [{ type: "visit_system", required: 1, current: 0, completed: false, systemId: "Sol" }],
+      }],
+    });
+    expect(digest).toContain("visit_system 0/1 (visit Sol)");
+    expect(digest).not.toContain("(mine ");
+  });
+
+  test("visit_system objective with no reported system id says so, never guesses a name", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-visit-2",
+        objectives: [{ type: "visit_system", required: 1, current: 0, completed: false }],
+      }],
+    });
+    expect(digest).toContain("visit the target system (system id not reported)");
+    expect(digest).not.toContain("(mine ");
+  });
+
+  test("deliver_item objective says deliver and names the destination base", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-deliver-2",
+        objectives: [{
+          type: "deliver_item", itemId: "iron_ore", required: 50, current: 40, inCargo: 40,
+          completed: false, targetBase: "confederacy_central_command",
+        }],
+      }],
+    });
+    expect(digest).toContain("iron_ore 40/50 (deliver 10 more to confederacy_central_command)");
+    expect(digest).not.toContain("(mine ");
+  });
+
+  test("kill_pirate objective says kill, not mine", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-kill-1",
+        objectives: [{ type: "kill_pirate", required: 3, current: 1, completed: false }],
+      }],
+    });
+    expect(digest).toContain("kill_pirate 1/3 (kill 2 more pirates)");
+    expect(digest).not.toContain("(mine ");
+  });
+
+  test("kill_player objective says kill, not mine", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-kill-2",
+        objectives: [{ type: "kill_player", required: 1, current: 0, completed: false }],
+      }],
+    });
+    expect(digest).toContain("kill_player 0/1 (kill 1 more player)");
+    expect(digest).not.toContain("(mine ");
+  });
+
+  test("unrecognized objective type does not fabricate a mining instruction", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-unknown-1",
+        objectives: [{ type: "escort_convoy", required: 2, current: 0, completed: false }],
+      }],
+    });
+    expect(digest).toContain('objective type "escort_convoy" not recognized, verify manually');
+    expect(digest).not.toContain("(mine ");
+  });
+});
