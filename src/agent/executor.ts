@@ -634,6 +634,55 @@ async function installModBlock(
   return null;
 }
 
+// refuel target precondition guard (issue #595): target selects ship-to-ship
+// transfer mode, and the vendored reference is explicit that mode has a hard
+// module precondition -- both the OpenAPI param description
+// (docs/game-reference/upstream/openapi-v2.json:44505, "Requires a Refueling
+// Pump module for transfers") and the prose (docs/game-reference/upstream/
+// docs/travel.md:62, "target=<player> transfers fuel to another ship at your
+// POI (requires a Refueling Pump module)") agree. Invariant: a non-"fleet"
+// target is impossible without a Refueling Pump fitted -- never send a
+// guaranteed no_refueling_pump call.
+//
+// Live miss: the planner emitted `refuel{id:"fuel_cell", target:"full"}` from
+// a steer reading "Refuel to full" -- the English word landed in a
+// ship-to-ship param the pilot had no module to back. Recovery only came from
+// a human re-steer to `refuel{quantity:73}` (2026-08-01T23:03:33Z, also 3x on
+// 2026-07-28).
+//
+// Why this guards on FIT DATA, not the string: accounts.md:33 documents
+// usernames as 3-24 chars, any script, digits, spaces, punctuation, emoji --
+// "full" is a syntactically legal username, so no string shape can separate
+// the two (the issue's own framing: "a value heuristic cannot distinguish
+// 'full' from a legitimate username"). Module presence is decidable instead.
+// We do NOT have a captured type/name string for a fitted Refueling Pump
+// (no fixture shows one), so matching on the module's identity would repeat
+// the exact guess installModBlock's comment above explicitly declines to make
+// for the skill gate. What IS captured: the Refueling Pump sits in a utility
+// slot (fuel.md:178, "(utility slot)"), and slot occupancy is the same
+// verified `modules[].slot` field installModBlock's slot check already reads.
+// Zero fitted utility modules means no Refueling Pump can be fitted --
+// structurally certain, the same "true whichever way" guarantee as the grid
+// floor above -- so that is the only state this blocks. Any utility slot
+// occupied is ambiguous (module identity unverified) and fails open, letting
+// the game's own no_refueling_pump answer rule on it.
+function refuelTargetBlock(step: PlanStep, preStatus: StatusSnapshot | null): StepResult | null {
+  const target = (step.params as { target?: unknown }).target;
+  if (typeof target !== "string" || target === "" || target === "fleet") return null; // no transfer requested -> no guard
+  if (preStatus?.modules === undefined) return null; // UNKNOWN fitted set -> fail open
+
+  const utilityFitted = preStatus.modules.filter((m) => m.slot === "utility").length;
+  if (utilityFitted === 0) {
+    const reason =
+      `refuel target=${target} blocked: ship-to-ship fuel transfer requires a Refueling Pump ` +
+      `module fitted (a utility-slot module), and you have none. For a normal tank refill, ` +
+      `drop target and call refuel{quantity=...} (or refuel{} to auto-fill while docked); ` +
+      `target:"fleet" reads fleet fuel status without a pump.`;
+    return guardBlock(reason);
+  }
+  return null;
+}
+
 /**
  * Invariant: a `sell` envelope alone can't be trusted for success -- the only
  * ground truth is the target item's cargo quantity, queried via the SAME
@@ -1076,6 +1125,13 @@ export async function executeTick(
       `withdraw blocked: you must be DOCKED at a station with storage service. ` +
       `Plan dock first, then withdraw{item_id=...}.`;
     return guardBlock(reason);
+  }
+
+  // refuel target precondition guard (issue #595) -- see refuelTargetBlock
+  // above. No query needed: preStatus already carries the fitted set.
+  if (step.action === "refuel") {
+    const block = refuelTargetBlock(step, preStatus);
+    if (block) return block;
   }
 
   // Target-locality guard (issue #176) -- see targetLocalityBlock above. Sits

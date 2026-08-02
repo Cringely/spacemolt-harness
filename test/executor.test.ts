@@ -196,6 +196,72 @@ describe("executeTick", () => {
     expect(calls).toEqual([{ name: "mine", params: {} }]);
   });
 
+  // refuel target precondition guard (issue #595): reproduces the recorded
+  // live failure verbatim -- refuel{id:"fuel_cell", target:"full"} with no
+  // Refueling Pump fitted (empty utility slots) is a guaranteed
+  // no_refueling_pump. Assert on the emitted params (calls.length === 0), not
+  // on a blocked outcome string, per the issue's ablation requirement: an
+  // outcome-text assertion passes for the wrong reason if the game's error
+  // string changes.
+  test("refuel with a non-fleet target and no utility modules fitted blocks without sending the API call", async () => {
+    const { api, calls } = stubApi({ status: {
+      credits: 0, fuel: 57, maxFuel: 130, hull: 100, maxHull: 100,
+      cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false,
+      modules: [], // utility slots empty, matching the live incident's ship state
+    }});
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { id: "fuel_cell", target: "full" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    expect((r as { guard?: boolean }).guard).toBe(true); // #571/#581: WE refused this, the game never saw it
+    expect(calls.length).toBe(0); // no refuel request was made
+  });
+
+  // target:"fleet" is a read (fleet fuel status), never a transfer -- the
+  // guard must never require a pump for it, whatever the fitted set is.
+  test("refuel with target:fleet sends the call even with no modules fitted", async () => {
+    const { api, calls } = stubApi({ status: {
+      credits: 0, fuel: 57, maxFuel: 130, hull: 100, maxHull: 100,
+      cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false,
+      modules: [],
+    }});
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "fleet" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "fleet" } }]);
+  });
+
+  // Legitimate ship-to-ship refuel: a Refueling Pump occupies a utility slot,
+  // so a fitted utility module is the guard's fail-open signal -- it cannot
+  // verify the module's IDENTITY (no captured type/name string for a
+  // Refueling Pump exists in any fixture), so it lets a real rescuer's
+  // transfer through rather than block a legal action on a guess.
+  test("refuel with a non-fleet target and a fitted utility module sends the call (real rescuer, not blocked)", async () => {
+    const { api, calls } = stubApi({ status: {
+      credits: 0, fuel: 20, maxFuel: 130, hull: 100, maxHull: 100,
+      cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false,
+      modules: [{ typeId: "refueling_pump_i", type: "utility", slot: "utility", name: "Refueling Pump" }],
+    }});
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "stranded_pilot", quantity: 20 } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "stranded_pilot", quantity: 20 } }]);
+  });
+
+  // Fail-safe: when the fitted set is UNKNOWN (status.modules undefined), the
+  // guard must not fabricate a block from missing data -- same convention as
+  // the mine guard's unknown-modules test above.
+  test("refuel with a non-fleet target and unknown modules (undefined) is not short-circuited", async () => {
+    const { api, calls } = stubApi({ status: {
+      credits: 0, fuel: 57, maxFuel: 130, hull: 100, maxHull: 100,
+      cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false,
+      // modules omitted -> undefined -> UNKNOWN
+    }});
+    const plan: Plan = { goal: "g", steps: [{ action: "refuel", params: { target: "full" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toEqual([{ name: "refuel", params: { target: "full" } }]);
+  });
+
   // accept_mission precondition guard (live diagnosis 2026-07-12): the game
   // enforces "at least one of id/template_id" at runtime even though the
   // registered request shape marks both optional. An empty-param accept_mission

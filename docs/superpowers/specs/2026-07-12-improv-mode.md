@@ -60,6 +60,15 @@ Resources / survival:
 - refuel and repair work ONLY while docked. Watch fuel actively; before any multi-hop move,
   confirm you can reach a station and top up while docked. Never let fuel strand you between
   systems — an undocked ship at 0 fuel is dead (this happened live, 2026-07-12).
+- `refuel`'s `target` param means ONE thing: transfer fuel to another ship, and it needs a
+  Refueling Pump module fitted (a utility-slot module) or the game refuses it with
+  `no_refueling_pump`. Never pass `target` to mean "fill my own tank" — a normal refill at a
+  station takes NO target at all (`refuel{}` or `refuel{quantity=...}`); `target:"fleet"` only
+  reads fleet fuel status. A steer worded "refuel to full" is about your own tank, not a target —
+  live 2026-08-01, that phrasing produced `refuel{target:"full"}`, which the game read as a
+  ship-to-ship transfer attempt and blocked. (Also a §5 deterministic backstop: in plan-then-execute
+  the executor blocks a non-"fleet" `target` before the call when no utility module is fitted,
+  issue #595.)
 - Judge fuel urgency by JUMPS OF RANGE, never by percent of tank capacity. `find_route` to any
   destination reports `fuel_per_jump` (or `estimated_fuel`/`total_jumps` — divide) — that is your
   ship's real per-jump cost, and fuel ÷ that cost is how many jumps you actually have left. A tank
