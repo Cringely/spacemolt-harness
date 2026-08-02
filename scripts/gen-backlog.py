@@ -101,7 +101,7 @@ def repo_root():
     # is correct even when the script is invoked from a subdirectory.
     return subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=True).stdout.strip()
+        capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
 
 
 def main():
@@ -116,7 +116,7 @@ def main():
     raw = subprocess.run(
         ["gh", "issue", "list", "--repo", BACKLOG_REPO, "--state", "all", "--limit", "1000",
          "--json", "number,title,labels,state"],
-        capture_output=True, text=True, check=True).stdout
+        capture_output=True, text=True, encoding="utf-8", check=True).stdout
     issues = json.loads(raw)
     open_by_epic = {e: [] for e in EPIC_ORDER}
     done = []
