@@ -4,7 +4,7 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-08-02 (six PRs merged; backlog 187→159; P0 3→2; F1 still gated on #526). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-08-02 (seven PRs merged; backlog 187→159; P0 3→2; F1 still gated on #526). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
@@ -20,11 +20,11 @@ _Refreshed 2026-08-02 post-merge-cluster. Boot from this block + `docs/backlog.m
 
 **LIVELOCK (1,3 FIXED; 2 OPEN; 4 PARTIAL).** (1) Executor starvation #543, PR #47. (2) Planner buys what a station doesn't stock, #669, open. (3) Fuel urgency measured as percent not range, #670, PR #54, inert until configured per-agent. (4) Reflex terminal give-up #672, PR #50; deferred: plan-already-routing-to-fuel as remedy.
 
-**MERGED 2026-08-02.** #56, #57 (core sync, 6 files), #58 (#681 credit loop: six `create_buy_order` posts in 90min locked ~21.8k in dead escrow; guard refuses a second order for an already-open station+item), #59 (agent-def `effort` key was `reasoning_effort`, silently ignored for months; regression test added), #60/#63 (steward), #61 (#595 refuel target; the first attempt was inert for a miner because a mining laser occupies a utility slot).
+**MERGED 2026-08-02.** #56, #57 (core sync, 6 files), #58 (#681 credit loop: six `create_buy_order` posts in 90min locked ~21.8k in dead escrow; guard refuses a second order for an already-open station+item), #59 (agent-def `effort` key was `reasoning_effort`, silently ignored for months; regression test added), #60/#63/#65 (steward), #61 (#595 refuel target; the first attempt was inert for a miner because a mining laser occupies a utility slot), #64 (#571 mission shortfall naming: a visit_system objective wrongly showed "mine N more" in planner digest, steering the LLM to mine instead of visiting; shortfallHint now types each objective correctly).
 
 **BACKLOG.** 187→159. 30 ceremony duplicates closed into 4 survivors; root cause is a dedup key regenerated per run (#635), fix in flight as PR #62. P0 now 2: **#558** (a failed ceremony surfaces nowhere; trimmed to that one part, in flight) and **#541** (core promotions, Leg 2 in flight). #557 closed on evidence (PR #29). New: #687 (filer stamps flat P2 on every finding, so root-cause work sits at routine priority).
 
-**IN FLIGHT.** PR #62 (ceremony dedup, in rework), PR #64 (#571 shortfall message, awaiting review). Fixes running for #526, #558, #654, #541.
+**IN FLIGHT.** PR #62 (ceremony dedup, in rework). Fixes running for #526, #558, #654, #541.
 
 **THEN.** #526, #534, #535, #537, #538, #529 and the rest in `docs/backlog.md`.
 
