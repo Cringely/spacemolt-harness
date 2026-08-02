@@ -4,29 +4,27 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-08-02 (six PRs merged; backlog 187→159; P0 3→2; F1 still gated on #526). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-08-02 04:30Z (13 PRs merged; backlog 187→156; **P0 3→0**; **gate F1 CLOSED**). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-08-02 post-merge-cluster. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
+_Refreshed 2026-08-02 at session close. Nothing in flight: every dispatched agent finished and every open PR merged. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
-**FLEET FLIGHT (#591).** F0 steer restore (#495) done; F1 strand/trap fix gated on #526; F2 launch scout+corsair (#593); F3 loops end (#534/#569/#571, +#592); F4 exit: 3 pilots/24h/zero strands. Live: 1 of 3 flying (`miner`); scout/corsair registered, unlaunched. F2 stays held until F1: launching two more pilots into an uncharacterised trap multiplies the failure rather than averaging it, and makes each strand harder to attribute.
+**FLEET FLIGHT (#591). F1 IS CLOSED. F2 IS THE NEXT MOVE.** F0 steer restore (#495) done. F1 needed #543 and #526; both now closed (PR #47, PR #68). F2 (#593, launch scout+corsair) was held only by F1, so nothing blocks it. F3: #571 landed tonight, #534/#569/#592 remain. F4 exit: 3 pilots / 24h / zero strands. Live: 1 of 3 flying (`miner`); scout and corsair registered, unlaunched.
 
-**PRODUCTION.** `miner` healthy on image `c01a2ea`, 0 restarts, 209,032 credits, docked haven/grand_exchange. CI auto-deploys on merge (container up ~105s after PR #58 merged). `main` is ahead of the deployed image; that is normal between merges.
+**PRODUCTION.** `miner` healthy, 0 restarts. Verified live over SSH at 04:00Z on image `6146de9` (PR #64), container up 2 min after that merge. Four merges landed after that capture, so the image trails `main` until the next deploy. Normal between merges.
 
-**GATE F1 STATUS.** Needs #543 and #526 both closed. #543 done (PR #47). **#526 is the single remaining blocker** (unenforced fuel floor: the pilot mined itself to 2/130 and stranded). In flight now: guard drafted, one real regression open (`test/agent-failure-classes.test.ts:76`, because blocking a `mine` step changes plan-execution flow), tests and improv pairing still owed.
+**READ THIS BEFORE TOUCHING agents.yaml. DEPLOY ORDER: IMAGE FIRST, CONFIG SECOND. DO NOT INVERT.** The reflex config block is `.strict()` (`config.ts:174`) and `keep_fuel_above_jumps` (`config.ts:172`) has no `.default()`. Add the key to `agents.yaml` only AFTER the image deploys, never before, or the pilot crashes at config load. Production carries `keep_fuel_above_jumps: 8` (backup `agents.yaml.bak.20260801-140456`); that 8 is an unvalidated guess from observed 5-jump legs, not a measurement, and stays under observation.
 
-**DEPLOY ORDER: IMAGE FIRST, CONFIG SECOND. DO NOT INVERT.** The reflex config block is `.strict()` (`config.ts:174`) and `keep_fuel_above_jumps` (`config.ts:172`) has no `.default()`. Add the key to `agents.yaml` only AFTER the image deploys, never before, or the pilot crashes at config load. Production carries `keep_fuel_above_jumps: 8` (backup `agents.yaml.bak.20260801-140456`); that 8 is an unvalidated guess from observed 5-jump legs, not a measurement, and stays under observation.
+**THE STRAND IS GUARDED BUT STILL NOT DETECTABLE (#690, P1).** PR #68 stops the pilot mining below the fuel floor but does NOT fix the detector: `isStranded()` (`stall-monitor.ts:196`) credits only blocked MOVEMENT actions (`MOVEMENT_ACTIONS`, `agent.ts:211`), so a `mine` refused by the new guard produces zero strand evidence. That is why `operator_alert class=stranded` read 0 through the four-hour strand in #526. **F4's exit criterion is "zero strands", which is uncheckable until #690 lands.** Fix it before claiming F4.
 
 **LIVELOCK (1,3 FIXED; 2 OPEN; 4 PARTIAL).** (1) Executor starvation #543, PR #47. (2) Planner buys what a station doesn't stock, #669, open. (3) Fuel urgency measured as percent not range, #670, PR #54, inert until configured per-agent. (4) Reflex terminal give-up #672, PR #50; deferred: plan-already-routing-to-fuel as remedy.
 
-**MERGED 2026-08-02.** #56, #57 (core sync, 6 files), #58 (#681 credit loop: six `create_buy_order` posts in 90min locked ~21.8k in dead escrow; guard refuses a second order for an already-open station+item), #59 (agent-def `effort` key was `reasoning_effort`, silently ignored for months; regression test added), #60/#63 (steward), #61 (#595 refuel target; the first attempt was inert for a miner because a mining laser occupies a utility slot).
+**MERGED 2026-08-01/02 (13).** #56, #57 core sync · #58 (#681 escrow loop, ~21.8k credits locked by six `create_buy_order` posts) · #59 (agent-def key was `reasoning_effort`, silently ignored for months) · #60/#63/#65 steward · #61 (#595 refuel target) · #62 (#635 ceremony dedup, three review rounds) · #64 (#571 shortfall message) · #66 (#654 denied-vs-absent reader) · #68 (#526 fuel floor, closed F1) · #69 (#558 ceremony failure alarm, closed the last P0).
 
-**BACKLOG.** 187→159. 30 ceremony duplicates closed into 4 survivors; root cause is a dedup key regenerated per run (#635), fix in flight as PR #62. P0 now 2: **#558** (a failed ceremony surfaces nowhere; trimmed to that one part, in flight) and **#541** (core promotions, Leg 2 in flight). #557 closed on evidence (PR #29). New: #687 (filer stamps flat P2 on every finding, so root-cause work sits at routine priority).
+**BACKLOG. 187→156, P0 at zero.** 31 ceremony duplicates closed into 4 survivors; both root causes now fixed (#635 dedup key, #654 denied-as-absent). Distribution: P1 10, P2 97, P3 23, **26 with no priority label at all**. A P2 bucket holding 62% is a default, not a signal. Producer is `filing.ts`'s flat `DEFAULT_TRIAGE_LABEL`, filed as **#687**. The taxonomy also has no `type:*` axis, so every filer improvises.
 
-**IN FLIGHT.** PR #62 (ceremony dedup, in rework), PR #64 (#571 shortfall message, awaiting review). Fixes running for #526, #558, #654, #541.
-
-**THEN.** #526, #534, #535, #537, #538, #529 and the rest in `docs/backlog.md`.
+**THEN, in order.** #690 (strand detector, gates F4) → #593 (F2 launch) → #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
 
 ## Standing operational facts
 
