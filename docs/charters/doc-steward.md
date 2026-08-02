@@ -202,8 +202,8 @@ qualifies, flag it in the PR body for PM judgment rather than deciding by paddin
   block ran 609 words over the 500 cap; #47, an implementer lane, reported a passing test count
   before a 427-word decisions entry was trimmed under the 400-word cap in a follow-up commit; a
   false "Vale unavailable" twice; issue counts disagreeing with live state). The class is any
-  agent reporting a number it measured before its last edit, steward or not. An AUTHORED
-  summary of a measurement can drift from reality and still read as correct, where a PASTED
+  agent reporting a number it measured before its last edit, steward or not. An AUTHORED summary
+  of a measurement can drift from reality and still read as correct, where a PASTED measurement
   contradicts itself on its face. A prior fix sent as an in-context correction didn't hold; the
   identical claim came back the next PR, so the fix moves into the charter instead. Changes: the
   FILES field is now the verbatim `git diff origin/main...HEAD --stat` output, never an authored
