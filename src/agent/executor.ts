@@ -926,7 +926,7 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  */
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
-  learnedSparse?: LearnedSparseRule[],
+  learnedSparse?: LearnedSparseRule[], buyUnavailableHere?: boolean,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1089,6 +1089,29 @@ export async function executeTick(
 
   if (step.action === "travel_to") {
     return travelToTick(api, plan, cursor, step.params.system_id, preStatus);
+  }
+
+  // create_buy_order unfillable-bid guard (issue #681): a `buy` for this exact
+  // item was already blocked here as item_not_available -- no seller exists at
+  // this station, so a standing bid has no counterparty at any price. Live
+  // evidence: the planner varied price_each across six posted orders (50, 60,
+  // 100, 50, 100, 60cr) at one dead station in 90 minutes, treating a supply
+  // gap as a pricing problem and locking ~21,800cr in escrow that could never
+  // fill. Invariant: never post a create_buy_order for an item this station
+  // has already proven it does not sell. buyUnavailableHere is computed in
+  // agent.ts from the persisted buy_unavailable event stream (see
+  // learnBuyUnavailable there) rather than queried here -- executor.ts stays
+  // store-free, the same boundary every guard above already respects
+  // (api/plan/status/learnedSparse are all plain data or the live game
+  // client, never the event store itself). Ahead of the price-default block
+  // below: no point defaulting a price for an order that is refused outright.
+  if (step.action === "create_buy_order" && buyUnavailableHere) {
+    const itemId = (step.params as { item_id: string }).item_id;
+    const reason =
+      `create_buy_order for ${itemId} refused: a buy of ${itemId} was already blocked here ` +
+      `as unavailable (no seller at this station) -- a standing bid has no counterparty at ` +
+      `any price. cancel_order to release any already open, then try a different station.`;
+    return guardBlock(reason);
   }
 
   // create_sell_order / create_buy_order price default (issue #94, extended to

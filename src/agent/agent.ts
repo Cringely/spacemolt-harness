@@ -225,6 +225,14 @@ const MOVEMENT_ACTIONS = new Set(["travel_to", "jump", "travel"]);
 // long-lived pilot rather than growing with its lifetime.
 const REFLEX_FAILURE_LOOKBACK = 50;
 
+// Issue #681: bound on the buy_unavailable give-up read, same shape and same
+// sizing receipt as REFLEX_FAILURE_LOOKBACK directly above -- grouped by the
+// per-(stationKey, itemId) `key` payload field via latestEventPerPayloadKey,
+// so this bounds DISTINCT (station, item) pairs, not raw events, and the
+// production incident (six create_buy_order posts for one item at one
+// station in 90 minutes) is well inside a 50-pair window.
+const BUY_UNAVAILABLE_LOOKBACK = 50;
+
 // Deterministic server-failure retry (#431, live 2026-07-19: each travel 503
 // bought a full ~19.5k-char planner call whose new plan re-issued the
 // byte-identical step; second occurrence of the class after the 2026-07-13
@@ -2461,6 +2469,30 @@ export class Agent {
     this.emitStationObserved(systemId);
   }
 
+  // Buy-unavailable memory (issue #681): the invariant the create_buy_order
+  // guard (executor.ts) needs is "no seller exists for this item at this
+  // station" -- and the evidence for that already lands on this tick's own
+  // action event, a `buy` blocked with the game's item_not_available code
+  // (confirmed live 2026-08-01: "item_not_available: No one is selling Fuel
+  // Cell at this station..."). Persisted as its own narrow event, keyed
+  // `${stationKey}:${itemId}` for latestEventPerPayloadKey, same shape as
+  // reflex_failed (PR #50, issue #672). Fires ONLY on that exact game code --
+  // a buy blocked for any other reason (can't afford, invalid item) is not
+  // evidence a standing bid would fail too, and guardBlock refusals (guard:
+  // true) are OUR OWN precondition text, never the game's, so they can't
+  // carry a game error code and never match here.
+  private learnBuyUnavailable(
+    action: string | undefined, params: unknown, result: StepResult, status: StatusSnapshot | null,
+  ): void {
+    if (action !== "buy" || result.kind !== "blocked" || result.guard) return;
+    if (!/^item_not_available\b/i.test(result.reason)) return;
+    const stationKey = status?.dockedAt;
+    if (!stationKey) return;
+    const itemId = (params as { id?: unknown } | undefined)?.id;
+    if (typeof itemId !== "string" || itemId.length === 0) return;
+    this.emit("buy_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
+  }
+
   // The persisted event: the payload
   // is the FULL entry as of the change, so an ascending replay is last-write-
   // wins and the constructor needs no delta merge.
@@ -2964,9 +2996,29 @@ export class Agent {
       return;
     }
 
+    // Issue #681: whether THIS exact create_buy_order step targets an item
+    // this station already proved has no seller (a `buy` blocked here as
+    // item_not_available -- see learnBuyUnavailable below). Computed fresh
+    // per tick off the persisted buy_unavailable stream, the same
+    // no-in-memory-cache discipline as the reflex give-up read above
+    // (reflexGaveUpAt) -- that direct-query shape already proved cheap
+    // enough per tick, so a second cache/TTL apparatus for identical
+    // information (poi_incompatible's shape) would be a rejected, larger
+    // alternative. false for every other step: only create_buy_order pays
+    // for the query.
+    const buyOrderItemId = step?.action === "create_buy_order"
+      ? (step.params as { item_id?: unknown }).item_id : undefined;
+    const buyOrderStationKey = status?.dockedAt ?? null;
+    const buyUnavailableHere =
+      typeof buyOrderItemId === "string" && buyOrderStationKey !== null &&
+      this.store.latestEventPerPayloadKey(this.id, "buy_unavailable", "key", BUY_UNAVAILABLE_LOOKBACK)
+        .some((e) => (e.payload as { key?: unknown }).key === `${buyOrderStationKey}:${buyOrderItemId}`);
+
     // Issue #188: currently-valid learned sparse rules ride along as plain
     // data -- TTL-filtered here so the executor stays clockless.
-    let result = await executeTick(this.api, this.plan!, this.cursor, status, this.currentSparseRules());
+    let result = await executeTick(
+      this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyUnavailableHere,
+    );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of
     // a MOVEMENT step is retried deterministically -- replanning adds zero
@@ -3042,6 +3094,12 @@ export class Agent {
     // already fetched in runOnce -- no extra call) names the system the station
     // is in.
     this.learnStation(step?.action, result, status);
+
+    // Buy-unavailable memory (issue #681): see learnBuyUnavailable's own doc
+    // comment. Same seam as learnStation directly above -- the action, the
+    // outcome, and the pre-action station are all in hand here and nowhere
+    // else.
+    this.learnBuyUnavailable(step?.action, step?.params, result, status);
 
     // stall-watcher v4 strand signal: count CONSECUTIVE fuel-blocked movement
     // attempts here (the producer of blocks), so the count accrues even on ticks

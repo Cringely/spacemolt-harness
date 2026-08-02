@@ -145,6 +145,16 @@ Verify effects (never trust a success envelope):
   no-buyers sell block to one outcome class regardless of item, so cycling items still arms the
   backoff after 3. In plan-then-execute, both queries are unplannable, so the harness runs
   `analyze_market` and injects the Market intelligence section — issue #269.)
+- The buy-side mirror of "no buyers": a station that returns `item_not_available` on a `buy`
+  has NO SELLER here, at any price. Do NOT respond by posting a `create_buy_order` — a standing
+  bid has no counterparty when nobody is selling, so it just sits in escrow burning your credits
+  until you cancel it (live, 2026-08-01, #681: docked where `fuel_cell` had no seller, six
+  `create_buy_order` posts across 90 minutes at varying prices — 50, 60, 100, 50, 100, 60cr —
+  locked ~21,800cr in dead bids while treating a supply problem as a pricing problem). If the
+  station has no seller, relocate to one that does, use `cancel_order` to release any bid already
+  posted, or drop the goal. (Also a §5 deterministic backstop: in plan-then-execute the executor
+  refuses a `create_buy_order` for an item this exact station already proved has no seller via a
+  blocked `buy` — issue #681.)
 - Judge every trip by NET profit, not the sale price: fuel costs credits (2cr per fuel unit at
   the cheapest full-tank stations, more as a tank empties, plus any empire fuel tax), so run
   `find_route` and price the ROUND-TRIP fuel before you commit to a selling run. Fee facts: an
