@@ -10,7 +10,7 @@
 
 _Refreshed 2026-08-02 post-launch (deploy verified 18:26Z). Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`._
 
-**#669 FIXED AND LIVE.** The overnight "empty panel" report was normal end-of-window behavior, not an incident. **PR #73 merged as `5b067fd`, closing #669** (pilot re-buys at stations proven empty, burning plan budget), auto-deployed, container `spacemolt-harness` up and healthy on that image. Same audit left open #696 (steer channel silent on instruction receipt), #697 (unused Escort purchase, abandoned mission), #698 (thrash-gate floor reset, unproven).
+**#669 FIX DEPLOYED, NOT YET PROVEN IN PRODUCTION.** PR #73 merged as `5b067fd` (pilot re-buys at stations proven empty, burning plan budget), auto-deployed to container `spacemolt-harness` on image `5b067fd`, health green. The overnight "empty panel" report was normal end-of-window behavior, not an incident, but weak production evidence: a 12-minute window post-deploy with pilot not at a livelock station. Same audit left open #696 (steer channel silent on instruction receipt), #697 (unused Escort purchase, abandoned mission), #698 (thrash-gate floor reset, unproven).
 
 **FLEET FLIGHT (#591). F2 CLOSED — 1 PILOT BECOMES 3.** Scout (`nebula`) and corsair (`crimson`) launched 2026-08-02 18:26Z alongside miner, closing #593 (image `dcb5c92`, container healthy, `RestartCount 0`, no auth/planner errors); both executed real actions within 6 minutes. The real blocker was two host secrets never provisioned, not the persona-briefing gap #593 had carried for weeks — #159 (persona briefings) stays open, parked. Honest limits: personas cover 2 of #159's 4 elements (no playstyle briefing content, no per-persona progress readout); corsair starts at 0cr, can't buy fuel if it runs low; cost triples by design (3x ChatGPT-quota draw, Anthropic unaffected). F3: #571 landed, #534/#569/#592 remain. F4 exit (3 pilots/24h/zero strands) not yet reached.
 
@@ -26,7 +26,7 @@ _Refreshed 2026-08-02 post-launch (deploy verified 18:26Z). Boot from this block
 
 **MERGED, 30 PRs 2026-08-01–08-02.** Behavior-changing ones: M-53, M-54 in `docs/milestones.md`.
 
-**BACKLOG. 164 open issues, P0 at zero.** Regenerated from GitHub Issues SSOT.
+**BACKLOG. 169 open issues, P0 at zero.** Regenerated from GitHub Issues SSOT (165 on 2026-08-02 am, up 4 by filing new findings: #701, #702, #703, #704, #705).
 
 **THEN, in order.** #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
 
