@@ -14,17 +14,17 @@ _Refreshed 2026-08-02 at session close. Boot from this block + `docs/backlog.md`
 
 **FLEET FLIGHT (#591). F1 IS CLOSED. F2 IS THE NEXT MOVE.** F0 steer restore (#495) done. F1 needed #543 and #526; both now closed (PR #47, #68). PR #72 merged 2026-08-02 (9719daa, issue #690 strand evidence). F2 (#593, launch scout+corsair) was held only by F1, nothing blocks it. F3: #571 landed, #534/#569/#592 remain. F4 exit: 3 pilots / 24h / zero strands. Live: 1 of 3 flying (`miner`); scout and corsair registered, unlaunched.
 
-**THE STRAND IS GUARDED BUT STILL NOT DETECTABLE (#690, P1).** PR #68 stops mining below fuel floor; PR #72 guards non-movement actions. But `isStranded()` (stall-monitor.ts:196) credits only blocked MOVEMENT actions (agent.ts:211), so a `mine` refused produces zero strand evidence. Low-fuel episode (5/130) occurred 2026-08-02 05:18Z, stall-monitor alert fired 0. **F4's exit criterion is "zero strands", uncheckable until #690 lands.** The defect is isolated: reflex layer gated on `docked` (reflex.ts:103); plan-budget ceiling does NOT suppress strand alert (runs before ceiling gate, :1214 vs :1230). Container logs only back to 04:17:29Z (restart), so overnight steer question cannot be settled from logs.
+**STRAND GUARDS LIVE, DETECTION GAPPED.** PR #72 fixed the producer: executor refuses non-movement actions when fuel hits the floor. Detection gap remains: `isStranded()` credits only MOVEMENT actions, so a `mine` refused by the guard produces zero evidence. Low-fuel episode (5/130) overnight; stall-monitor alert fired 0. **F4's "zero strands" is checkable but loose:** tag application awaits each new guard, "no in-flight plan, undocked, fuel-capped" unconfirmed. Reflex gated on `docked` (reflex.ts:103); plan-budget ceiling does NOT suppress alerts (runs before ceiling). Logs truncated at 04:17:29Z restart.
 
 **LIVELOCK (1,3 FIXED; 2 IN-FLIGHT; 4 PARTIAL).** (1) Executor starvation #543, PR #47 merged. (2) Planner buys what station doesn't stock, #669, PR #73 under review. (3) Fuel urgency measured as percent not range, #670, PR #54, inert until configured per-agent. (4) Reflex terminal give-up #672, PR #50; deferred.
 
 **PRODUCTION CONFIG FACTS.** `max_plans_per_window: 12` in live `agents.yaml` (schema default is 36 only). `keep_fuel_above_jumps: 8` (guess from 5-jump legs, not measured). Scheduler on LXC verified healthy (user `smsched`, cron-driven every 10m, not root's crontab).
 
-**MERGED 2026-08-02 (2).** PR #72 (#690 strand evidence), PR #73 in-flight.
+**MERGED 2026-08-01/02 (13 + 1 in review).** 2026-08-01: PR #56/#57 core sync, #58 escrow loop, #59 agent-def key, #60/#63/#65 steward, #61 refuel target, #62 ceremony dedup, #64 shortfall message, #66 denied-vs-absent, #68 fuel floor. 2026-08-02: PR #72 strand evidence. In review: PR #73 issue #669 (re-buy at insufficient stations).
 
-**BACKLOG. 187→156, P0 at zero.** 31 ceremony duplicates → 4 survivors; both root causes fixed (#635, #654). Distribution: P1 10, P2 97, P3 23, **26 unlabeled**. Producer: `filing.ts` DEFAULT_TRIAGE_LABEL, filed #687.
+**BACKLOG. 187→163, P0 at zero.** Regenerated from GitHub Issues SSOT. Prior distribution (P1/P2/P3/unlabeled) needs recalculation from the new 163 total; old numbers from 187-issue count are stale.
 
-**THEN, in order.** #690 (strand detector, gates F4) → #669/#670 (livelock 2/3, PR #73 in review) → #593 (F2 launch) → #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
+**THEN, in order.** #669 (planner re-buy, PR #73 in review) → #690 (strand detector gap, gates F4 tightness) → #593 (F2 launch) → #687 (priority producer) → #534/#569/#592 (F3) → the rest in `docs/backlog.md`.
 
 ## Standing operational facts
 
