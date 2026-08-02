@@ -448,6 +448,46 @@ describe("strand guard", () => {
     for (let i = 0; i < 12; i++) { now += 2_000; await agent.runOnce(); }
     expect(alerts(store, "stranded").length).toBe(0);
   });
+
+  // Issue #690: the #526 mine fuel-floor guard (executor.ts) refuses `mine`
+  // while undocked and below the reserve floor, BEFORE any game call -- but
+  // `mine` is not in MOVEMENT_ACTIONS, so the old fuelBlockedMoves counter
+  // (agent.ts) never saw it. The live receipt: operator_alert{class:stranded}
+  // read 0 for the whole 4h strand in #526. This plan has no travel_to/jump
+  // step at all -- only `mine` -- to prove strand evidence no longer depends
+  // on which action the guard blocked.
+  test("issue #690: mine refused by the fuel-reserve guard counts as strand evidence, not just a blocked jump", async () => {
+    const store = new Store(":memory:");
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        // The guard blocks BEFORE the call -- if `mine` ever reaches here, the
+        // guard failed to fire and the test's premise is wrong.
+        if (name === "mine") throw new Error("mine reached the game api; the fuel-reserve guard did not block it");
+        return { result: "ok" };
+      },
+      async status(): Promise<StatusSnapshot> {
+        return {
+          credits: 100, fuel: 5, maxFuel: 130, hull: 95, maxHull: 95,
+          cargoUsed: 0, cargoCapacity: 100, docked: false, inTransit: false, systemId: "moonshadow",
+        };
+      },
+      async notifications() { return []; },
+    };
+    // A trailing refuel{} step suppresses evaluateWake's low_fuel branch
+    // (planRemediesFuel, agent.ts) so the plan actually EXECUTES the doomed
+    // mine -- the same construction strandApi's plan above uses for jump.
+    const minePlan: Plan = {
+      goal: "keep mining", steps: [{ action: "mine", params: {} }, { action: "refuel", params: {} }],
+    };
+    store.savePlan("a1", minePlan, []);
+    const planner = new MockPlanner([minePlan]);
+    let now = 0;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+
+    for (let i = 0; i < 12; i++) { now += 2_000; await agent.runOnce(); }
+
+    expect(alerts(store, "stranded").length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("dock dead-end guard (#551)", () => {
