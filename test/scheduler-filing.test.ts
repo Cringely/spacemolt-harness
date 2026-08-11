@@ -306,18 +306,29 @@ describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
     expect(calls.filter((c) => c.args[1] === "create").length).toBe(1);
   });
 
-  // The named residual gap (filing.ts's SEVERITY_WORDS comment): normalization
-  // strips a closed severity vocabulary, not general wording similarity. Two
-  // runs that genuinely disagree on wording still file twice — documented
-  // here so the boundary is a stated limit, not a silently-broken promise.
-  test("a genuinely different WORDING for the same condition still files as two issues", () => {
+  // This test used to assert the OPPOSITE, and the change is deliberate. It
+  // pinned the residual gap #635 named and declined to close: "two runs that
+  // genuinely disagree on wording still file twice". Measured against the live
+  // backlog on 2026-08-11 that gap turned out to be the entire problem — the
+  // severity strip collapses 0 of 170 open keys — so tier 3 (isNearDuplicate,
+  // filing.ts) now closes it deterministically, and `core-harvest-unimplemented`
+  // vs `core-harvest-job-unimplemented` collapses at Jaccard 0.75.
+  //
+  // The boundary moved; it did not disappear, and this pins where it sits now.
+  // Below the 0.6 floor two findings that merely share a word still file twice.
+  // Ablation: dropping the threshold to 0.2 turns the second half red.
+  test("wording variants of one condition collapse; genuinely different findings still file twice", () => {
     const dir = tmp();
     const { gh } = statefulGh();
     const first = fileFinding(gh, dir, { ...finding(1), dedupKey: "core-harvest-unimplemented" });
-    const second = fileFinding(gh, dir, { ...finding(2), dedupKey: "core-harvest-job-unimplemented" });
+    const reworded = fileFinding(gh, dir, { ...finding(2), dedupKey: "core-harvest-job-unimplemented" });
     expect(first.outcome).toBe("created");
-    expect(second.outcome).toBe("created");
-    expect(second.issue).not.toBe(first.issue);
+    expect(reworded.outcome).toBe("bumped");
+    expect(reworded.issue).toBe(first.issue);
+
+    const unrelated = fileFinding(gh, dir, { ...finding(3), dedupKey: "core-dashboard-auth-missing" });
+    expect(unrelated.outcome).toBe("created");
+    expect(unrelated.issue).not.toBe(first.issue);
   });
 
   // Catches: near-match reaching past OPEN into closed issues — a closed

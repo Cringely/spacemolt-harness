@@ -27,3 +27,6 @@ agents.yaml
 # Ephemeral agent worktrees — never tracked; also keeps code-context from
 # embedding N duplicate copies of the whole tree (WSL CPU runaway, 2026-07-17)
 .claude/worktrees/
+
+# scripts/groom-report.ts last-run cluster set (machine-local, never committed)
+.groom-state/
