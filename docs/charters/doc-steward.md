@@ -46,6 +46,19 @@ sounds right — that is the whole check.
    cluster taught a transferable principle (incident → principle → discipline → why, per the
    template there). DO NOT PAD: most clusters teach nothing new, and writing a lesson anyway
    dilutes the curriculum. Cross-link to the decisions.md entry instead of retelling the story.
+
+   **Before writing any new lesson, run `grep -n '^## L-' docs/wiki/engineering-lessons.md` and
+   paste the output in your report.** Then quote the heading of the closest existing lesson and
+   say in one line why yours is not that lesson. If it IS that lesson, amend the existing entry
+   instead of adding a second. Two reasons this is a required step rather than advice. A diff
+   shows only added lines, so a duplicate lesson is invisible to a reviewer reading the diff and
+   to every gate we run. And the listing also gives you the next free number: PR #87 added an
+   `L-42` while an `L-42` already existed, because the numbering is not contiguous and headings
+   use both `## L-n —` and `## L-n:` forms, so a grep for one form silently misses the other.
+
+   Same pass, do not prescribe a remedy the issue you cite has already rejected. Read the LATEST
+   comments on a cited issue, not just its body. A lesson whose fix was refuted on the issue it
+   links to is worse than no lesson, because the citation makes it look checked.
 6. **decisions.md cross-references** — fix any pointers the cluster's changes broke or created.
 7. **Mechanical PR-prep — one command, after all doc edits: `bun scripts/steward-prep.ts`.**
    It regenerates `docs/backlog.md` (via `scripts/gen-backlog.py`), regenerates the road-to-fleet
