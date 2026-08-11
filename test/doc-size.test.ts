@@ -213,13 +213,15 @@ describe.skipIf(!docsPresent)("STATE.md: the NOW handoff block stays a handoff",
 });
 
 describe.skipIf(!lessonsPresent)("engineering-lessons.md: one number, one lesson", () => {
-  // Headings use THREE delimiters in the wild: "## L-11 — title", "## L-42: title"
-  // and "## L-50. title". A matcher anchored on any one of them silently misses
-  // the others, which is exactly how the collision below got in: PR #87 added an
-  // "## L-42 —" while "## L-42:" already existed, and the reviewer's grep for
-  // "## L-42 " returned nothing, reading as "the number is free."
+  // Deliberately delimiter-AGNOSTIC. Headings use at least "## L-11 — title",
+  // "## L-42: title" and "## L-50. title", and enumerating the known set is the
+  // very bug this test exists to catch, one level up: PR #87 added an "## L-42 —"
+  // while "## L-42:" already existed, because a grep for "## L-42 " found nothing
+  // and read as "the number is free." An earlier draft of this matcher listed the
+  // three delimiters; review injected a duplicate using a fourth and both tests
+  // stayed green, because the heading never reached the matcher at all.
   const numbers = () =>
-    [...readFileSync(LESSONS, "utf8").matchAll(/^##\s*L-(\d+)\s*[—:.-]/gm)].map((m) => m[1]);
+    [...readFileSync(LESSONS, "utf8").matchAll(/^##\s*L-(\d+)\b/gm)].map((m) => m[1]);
 
   test("no two lessons share an L-number", () => {
     const seen = numbers();
