@@ -33,7 +33,7 @@
 // - job/cycle identity comes from the scheduler-written active-cycle.json,
 //   never from CLI flags — otherwise fresh minted cycle ids bypass the
 //   (a)(4) flood cap.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface GhResult {
@@ -112,12 +112,13 @@ const SM_DEDUP_MARKER_RE = /<!--\s*sm-dedup:([A-Za-z0-9._-]+)\s*-->/;
 // carried ("P0 BLOCKER"). Stripping these as whole hyphen-segments lets
 // `core-harvest-unimplemented-p0` and `p0-core-harvest-unimplemented` normalize to
 // the same `core-harvest-unimplemented`, closing the EXACT drift #635 recorded.
-// It is deliberately NOT a general similarity matcher: two runs that pick genuinely
-// different words for the same condition (`core-harvest-unimplemented` vs
-// `core-harvest-job-unimplemented`) still mint two issues — that residual gap needs
-// judgment no regex can supply, and is named as such rather than silently claimed
-// fixed (a rung-2 gate here would need fuzzy matching, which trades a mechanical,
-// ablatable check for a probabilistic one; rejected for that reason).
+// Stripping it is necessary and, as of 2026-08-11, measured to be nowhere near
+// sufficient: against the live backlog this normalization collapses none of the
+// 170 open keys. The residual gap it names below — two runs picking genuinely
+// different words for the same condition — turned out to BE the whole problem,
+// so it is now closed deterministically by isNearDuplicate (tier 3) rather than
+// left to judgment. That is still a mechanical, ablatable check: fixed word
+// lists and a fixed threshold, no model in the loop.
 const SEVERITY_WORDS = new Set(["p0", "p1", "p2", "p3", "blocker", "critical"]);
 
 // Normalization also folds legacy separators and case (PR #62, third REVISE):
@@ -135,6 +136,118 @@ function normalizeDedupKey(key: string): string {
     .split(/[-_.]+/)
     .filter((seg) => !SEVERITY_WORDS.has(seg))
     .join("-");
+}
+
+/**
+ * Reads a prior key back out of an issue body. Exported because
+ * scripts/groom-report.ts must read the marker exactly the way the filer
+ * writes it — one seam, not two regexes that drift apart.
+ */
+export function readDedupKey(body: string): string | undefined {
+  return body.match(SM_DEDUP_MARKER_RE)?.[1];
+}
+
+// --- tier 3: deterministic near-match over the SAME fetched payload ---------
+//
+// Measured gap (2026-08-11, live dump of every open marker-bearing
+// machine-filed issue in Cringely/spacemolt): the #635 normalization above
+// collapses ZERO of the 170 keys. It folds separators and strips severity
+// words, and neither is the drift that actually happened. A headless spawn has
+// no memory of last cycle, so it re-words the same standing condition every
+// run — `pr-83-red-ci-8d`, `pr-83-red-ci-hung-8-days`, `pr-83-red-ci-stalled`,
+// `pr83-red-ci-8days-unresolved`, and 15 more, all one red CI. A producer fix
+// that ships and then collapses nothing is worse than an absent one, because
+// the backlog reads as covered.
+//
+// What varies between those keys is exactly two things: how long the condition
+// has been broken, and how annoyed this cycle is about it. Both are strippable
+// as whole segments. What must NOT be stripped is the entity the finding is
+// about — #618 (`pr-40-red-ci-merge`) is a different, real finding, and an
+// earlier cut of this rule that treated `40` as just another number merged it
+// into the PR #83 pile. Hence the anchor set, checked before any similarity.
+
+// Age-of-condition and annoyance words. Segment-exact, never substring: a key
+// segment `staleness` is not the word `stale`.
+const STALENESS_WORDS = new Set([
+  "still",
+  "again",
+  "unresolved",
+  "unfixed",
+  "unaddressed",
+  "stalled",
+  "stuck",
+  "hung",
+  "overdue",
+  "stale",
+  "urgent",
+  "days",
+  "day",
+  "hours",
+  "hrs",
+  "week",
+  "weeks",
+  "now",
+  "ongoing",
+  "persists",
+  "continues",
+]);
+
+// A bare duration segment: `7`, `8d`, `9h`, `4days`, `2weeks`. The number is the
+// age of the condition, which changes by construction on every cycle.
+const BARE_DURATION_RE = /^\d{1,2}(d|h|day|days|hour|hours|w|week|weeks)?$/;
+
+// `pr-83`, `pr83`, `issue-114`, `gh-40`. Anchored on \b so a bare number
+// elsewhere in the key is NOT an anchor — only an entity word plus its digits.
+const ENTITY_ANCHOR_RE = /\b(pr|issue|gh)[-_.]?(\d{1,4})\b/g;
+
+/**
+ * Segment-overlap floor for a tier-3 bump. 0.6 was measured against the live
+ * dump, not picked: it collapses the 13 real clusters while leaving #618
+ * (PR #40) and every cross-entity pair alone. Lowering it merges unrelated
+ * `red-ci` findings; raising it splits the PR-83 pile back apart.
+ */
+export const NEAR_MATCH_JACCARD = 0.6;
+
+/** The entity words a key names, normalized so `pr-83` and `pr83` are one anchor. */
+export function entityAnchors(key: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of key.toLowerCase().matchAll(ENTITY_ANCHOR_RE)) out.add(`${m[1]}${m[2]}`);
+  return out;
+}
+
+/** The key's meaning-bearing segments: anchors, severity, staleness and durations removed. */
+export function keySegments(key: string): Set<string> {
+  const out = new Set<string>();
+  for (const seg of key.toLowerCase().replace(ENTITY_ANCHOR_RE, " ").split(/[-_. ]+/)) {
+    if (!seg) continue;
+    if (SEVERITY_WORDS.has(seg) || STALENESS_WORDS.has(seg) || BARE_DURATION_RE.test(seg)) continue;
+    out.add(seg);
+  }
+  return out;
+}
+
+const setsEqual = (a: Set<string>, b: Set<string>): boolean =>
+  a.size === b.size && [...a].every((x) => b.has(x));
+
+/**
+ * Two dedup keys name the same finding when their entity anchors are EQUAL
+ * (which covers "both name nothing") and their remaining segments overlap at
+ * NEAR_MATCH_JACCARD or better.
+ *
+ * The anchor test runs first and is absolute, not a weighting: a key about
+ * PR #40 and a key about PR #83 are different findings no matter how similar
+ * the rest of the words are. Two keys that reduce to no segments at all never
+ * match — an empty-vs-empty Jaccard is 0 here on purpose, so a pathological
+ * key made entirely of noise words cannot swallow the backlog.
+ */
+export function isNearDuplicate(a: string, b: string): boolean {
+  if (!setsEqual(entityAnchors(a), entityAnchors(b))) return false;
+  const sa = keySegments(a);
+  const sb = keySegments(b);
+  let intersection = 0;
+  for (const x of sa) if (sb.has(x)) intersection++;
+  const union = sa.size + sb.size - intersection;
+  return union > 0 && intersection / union >= NEAR_MATCH_JACCARD;
 }
 
 // Scheduler-owned filing identity: runJob (spawn.ts) writes this file at each
@@ -265,10 +378,27 @@ interface NearMatchHit {
 }
 
 // gh issue list defaults to 30 results; raised to cover the realistic
-// machine-filed volume (92 open at review time) without unbounded pagination.
-// ponytail: a hardcoded ceiling, not a config knob — a repo whose machine-filed
-// backlog outgrows this needs a design revisit, not a bigger constant.
-const NEAR_MATCH_FETCH_LIMIT = 200;
+// machine-filed volume without unbounded pagination. 400 because the live
+// backlog carried 170 open marker-bearing machine-filed issues on 2026-08-11,
+// and a limit that silently truncates makes the scan miss the very duplicate
+// it exists to catch. ponytail: a hardcoded ceiling, not a config knob — a
+// repo that outgrows this needs a design revisit, not a bigger constant, and
+// the `truncated` signal below is how anyone finds out it happened.
+const NEAR_MATCH_FETCH_LIMIT = 400;
+
+/**
+ * How the near-match scan went. The distinction is the whole point: a clean
+ * miss and a scan that could not read its own input both produce "no bump",
+ * and if they produce the same bytes downstream nobody ever learns the scan
+ * broke. That is the #654 denial-as-absence class, and it is recorded here
+ * rather than inferred.
+ */
+type NearMatchFetch = "ok" | "truncated" | "unparseable";
+
+interface NearMatchResult {
+  issue?: number;
+  fetch: NearMatchFetch;
+}
 
 // The auto-bump half of #635 (PR #62 review, finding 1): fileFinding() must
 // catch the severity-affix drift itself, not depend on an agent searching
@@ -279,7 +409,7 @@ const NEAR_MATCH_FETCH_LIMIT = 200;
 // fetch. OPEN only (unlike findDedupMatch's open+recently-closed): a
 // near-match to something closed >30d ago should file fresh, same
 // philosophy the exact-match window already encodes.
-function findNearMatch(gh: GhRunner, dedupKey: string): number | undefined {
+function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
   const stdout = run(gh, [
     "issue",
     "list",
@@ -296,18 +426,61 @@ function findNearMatch(gh: GhRunner, dedupKey: string): number | undefined {
   try {
     hits = JSON.parse(stdout) as NearMatchHit[];
   } catch {
-    return undefined; // unparseable answer → no near-match, caller mints fresh rather than crash
+    return { fetch: "unparseable" }; // no near-match, caller mints fresh rather than crash
   }
+  // `null`/`5`/`{}` all survive JSON.parse and would throw on iteration — same
+  // schema-tolerance posture as loadCounter, and it must degrade LOUDLY.
+  if (!Array.isArray(hits)) return { fetch: "unparseable" };
+  // A full page means the backlog may extend past what we just scanned, so a
+  // miss from here is "not found in the first 400", not "not present".
+  const fetch: NearMatchFetch = hits.length >= NEAR_MATCH_FETCH_LIMIT ? "truncated" : "ok";
   const wanted = normalizeDedupKey(dedupKey);
   for (const hit of hits) {
-    // Same schema-tolerance posture as loadCounter/readActiveCycle: a hit
-    // missing/mistyping `body` (a partial gh answer, not a real production
-    // shape) degrades to "no key here" rather than throwing mid-scan.
+    // A hit missing/mistyping `body` (a partial gh answer, not a real
+    // production shape) degrades to "no key here" rather than throwing mid-scan.
     if (typeof hit.body !== "string") continue;
-    const candidateKey = hit.body.match(SM_DEDUP_MARKER_RE)?.[1];
-    if (candidateKey !== undefined && normalizeDedupKey(candidateKey) === wanted) return hit.number;
+    const candidateKey = readDedupKey(hit.body);
+    if (candidateKey === undefined) continue;
+    // Tier 2 (exact normalized equality, #635) then tier 3 (anchored segment
+    // overlap). Tier 2 is kept rather than folded in: it still catches a pair
+    // whose segments reduce to nothing at all, where tier 3 declines by design.
+    if (normalizeDedupKey(candidateKey) === wanted || isNearDuplicate(candidateKey, dedupKey))
+      return { issue: hit.number, fetch };
   }
-  return undefined;
+  return { fetch };
+}
+
+/**
+ * Per-filing side channel, appended beside the cycle counters this module
+ * already owns. It carries the key, what happened to it, the issue number, and
+ * how the near-match scan went.
+ *
+ * Deliberately NOT a field on FindingOutcome: the CLI's stdout is read by the
+ * SPAWNED AGENT, not by the scheduler, so anything put there reaches the run
+ * log only if the agent volunteers it — the exact failure class that got
+ * `--priority` cut (see DEFAULT_TRIAGE_LABEL above). A file the filer writes
+ * itself needs no agent cooperation.
+ */
+// NOT named `filing-*`: the per-cycle counters are `filing-<job>-<cycle>.json`,
+// and a log file sharing that prefix silently joins every readdir that counts
+// counters (it broke the cap test's "exactly one counter file" assertion on the
+// first cut of this change).
+export const FILING_LOG_FILE = "finding-log.jsonl";
+
+export interface FilingLogEntry {
+  ts: string;
+  jobId: string;
+  cycleId: string;
+  key: string;
+  outcome: FindingOutcome["outcome"];
+  issue: number | null;
+  /** "skipped" = an exact-key match or the cap path pre-empted the scan. */
+  nearMatch: "skipped" | NearMatchFetch;
+}
+
+function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
+  mkdirSync(stateDir, { recursive: true });
+  appendFileSync(join(stateDir, FILING_LOG_FILE), `${JSON.stringify(entry)}\n`);
 }
 
 export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput): FindingOutcome {
@@ -323,6 +496,23 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   const provenance = `filed-by: scheduler/${jobId} cycle ${cycleId}`;
   const marker = `<!-- sm-dedup:${dedupKey} -->`;
   const body = `${rawBody.trimEnd()}\n\n${marker}\n${provenance}\n`;
+
+  const record = (
+    outcome: FindingOutcome["outcome"],
+    issue: number | undefined,
+    nearMatch: FilingLogEntry["nearMatch"],
+  ): FindingOutcome => {
+    appendFilingLog(stateDir, {
+      ts: new Date().toISOString(),
+      jobId,
+      cycleId,
+      key: dedupKey,
+      outcome,
+      issue: issue ?? null,
+      nearMatch,
+    });
+    return { outcome, issue };
+  };
 
   // (a)(4): over the cap, everything folds into ONE per-cycle summary issue.
   if (counter.count >= FINDINGS_PER_CYCLE_CAP) {
@@ -351,7 +541,7 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
     }
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return { outcome: "capped", issue: counter.summaryIssue ?? undefined };
+    return record("capped", counter.summaryIssue ?? undefined, "skipped");
   }
 
   // (a)(1)+(a)(3): dedup across open and recently-closed; a match is bumped.
@@ -361,14 +551,15 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   // what makes the fix mechanical rather than a convention the agent might
   // skip: `core-harvest-unimplemented-p0` bumps the issue already filed under
   // `p0-core-harvest-unimplemented` with no agent search step in between.
-  const nearMatchIssue = match ? undefined : findNearMatch(gh, dedupKey);
-  const bumpTarget = match?.number ?? nearMatchIssue;
+  const near: NearMatchResult | undefined = match ? undefined : findNearMatch(gh, dedupKey);
+  const nearMatch: FilingLogEntry["nearMatch"] = near?.fetch ?? "skipped";
+  const bumpTarget = match?.number ?? near?.issue;
   if (bumpTarget !== undefined) {
     const scratch = writeScratchBody(stateDir, body);
     run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return { outcome: "bumped", issue: bumpTarget };
+    return record("bumped", bumpTarget, nearMatch);
   }
 
   // (a)(2): label + provenance on every created issue. Priority label too
@@ -389,5 +580,5 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   ]);
   counter.count += 1;
   saveCounter(stateDir, jobId, cycleId, counter);
-  return { outcome: "created", issue: parseIssueNumber(stdout) };
+  return record("created", parseIssueNumber(stdout), nearMatch);
 }
