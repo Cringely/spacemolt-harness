@@ -8,15 +8,15 @@
 
 ## NOW, live status
 
-_Refreshed 2026-08-11. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-02 wave detail moved down to "Recent history"; nothing was dropped._
+_Refreshed 2026-08-11 post-merge. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-02 wave detail moved down to "Recent history"; nothing was dropped._
 
-**MERGE FREEZE, 8 DAYS. THIS FILE WAS THE BLOCKER.** Nothing merged since PR #82 (`9f1da3d`, 2026-08-02 19:50Z). PR #83 sat red on exactly one assertion: `doc-size` and `test` both failed "the NOW block is at most 500 words" (it stood at 531), while `verify`, `gitleaks` and `CodeQL` stayed green throughout. This refresh is that fix. Queued behind it: #81 (steward reconciliation), #84 (dependabot bump). Ceremonies filed the same red CI nine times (#807, #804, #802, #796, #782, #779, #778, #772, #768), which is the grooming problem in miniature.
+**MERGE FREEZE BROKEN. PRs #83–#86 landed.** PR #83 (2026-08-11 09:21) fixed the NOW block staleness contradiction (#702). PR #84 (10:37) is a routine dependabot bump. PR #85 (10:44) shipped the deterministic tier-3 dedup + read-only groom-report (closes #635): keys pair on entity anchors + Jaccard ≥0.6 remaining segments after stripping durations/staleness adjectives; producer caught 36 of 169 re-filings, consumer reports 13 clusters / 41 collapsible issues. Measured live against the real backlog, 0 filings prevented by the baseline (#635 normalizer already in tree). PR #86 (10:33) is a steward pass, backlog measured at 281 open issues at that point.
 
-**ALL THREE PILOTS STALLED (2026-08-11).** Container `spacemolt-harness` runs image `9f1da3d`, up 8 days, health green: a healthy container with stuck pilots. Today's audit filed five findings. #812 goal-items, one item's exact match starves every other item's family match, so scout never sees a scanner price. #813 normalize-plan validates a travel POI against pre-`travel_to` surroundings, discarding valid cross-system plans. #814 `plannerHealth` is never written to the event store, so no ceremony report can surface planner degradation. #815 `/instruct` returns 204 during planner backoff and the steer is never acted on. #816 gap analysis against agent-harness-core. Steers went out to all three pilots today; UNPROVEN that any landed, because #815 says the channel is inert in exactly the state the pilots are in.
+**ALL THREE PILOTS STALLED (diagnosed 2026-08-11 before merges).** Audit filed five pilot-blocking findings (#812–#816): goal-item exact-match starvation (#812), normalize-plan cross-system rejection (#813), missing planner-health instrumentation (#814), `/instruct` 204 return during backoff (#815), gap analysis vs core (#816). Steers dispatched same day; landing status UNPROVEN pending #815 fix.
 
-**BACKLOG. 280 open, P0 zero, P1 17, machine-filed 172.** Duplication is the problem, not volume: nine issues for the one red CI above, and four (#808, #790, #767, #773) that each independently inferred the same wrong root cause for a single incident. The fix has two halves. A dedupe and grooming ceremony treats the pile; the producer is `scripts/file-finding.ts`, which files without first checking whether the finding already exists.
+**BACKLOG NOW 280 open (post-dedupe, expected to drop with groom-report deployed).** P0 zero, P1 17, machine-filed 172. Duplication was the blocker; the fix ships in PR #85 with measured clusters. Groom-report (`scripts/groom-report.ts`) is read-only, no automation yet.
 
-**THEN, in order.** Merge #83, then #81. Then the pilot-blocking five (#812-#815). Then the dedupe ceremony plus a pre-file check in `file-finding.ts`. Then #687 (priority producer) and #534/#569/#592 (fleet-flight F3). Rest in `docs/backlog.md`.
+**THEN, in order.** The pilot-blocking five (#812–#816) unblock flight test. Then #687 (priority producer) and #534/#569/#592 (fleet-flight F3). Then standing ceremonial work (deadman-watchdog wiring, core-harvest implementation). Rest in `docs/backlog.md`.
 
 ## Recent history, 2026-08-02 fleet-launch wave
 
