@@ -124,6 +124,23 @@ describe("tier-3 near-match: the live PR #83 pile", () => {
     expect(isNearDuplicate("pr-83-red-ci-stalled", "red-ci-stalled")).toBe(false);
   });
 
+  // Catches: the `union > 0` guard's own doc comment going unenforced — "a
+  // pathological key made entirely of noise words cannot swallow the
+  // backlog." Both keys here reduce to the empty segment set (only staleness
+  // words survive stripping), so 0/0 is NaN in JS, which already fails
+  // `>= NEAR_MATCH_JACCARD` on its own — the guard is what stops a DIFFERENT
+  // bug (inverting it to short-circuit true on an empty union) from making
+  // every all-noise key match every other one. Matcher note: `toBe(false)` is
+  // strict, so it would not have passed a `false`-shaped bug silently — the
+  // gap was that nothing exercised two all-noise keys at all.
+  // Ablation performed: changed `union > 0 && ...` to `union === 0 || ...`
+  // in isNearDuplicate — this test alone went red; reverted after confirming.
+  test("two keys that reduce to nothing (only staleness/duration words) never match each other", () => {
+    expect(keySegments("stalled-8d")).toEqual(new Set());
+    expect(keySegments("overdue-now")).toEqual(new Set());
+    expect(isNearDuplicate("stalled-8d", "overdue-now")).toBe(false);
+  });
+
   // Catches: two things at once, both live. Anchorless keys must still collapse
   // (the "or both empty" half of the rule), and clustering must be TRANSITIVE —
   // these ten do not all pair with each other, they chain through intermediate
@@ -310,6 +327,36 @@ describe("filing side channel (LOUD degradation, #654 class)", () => {
     // Same outcome, same issue-less result — and distinguishable anyway.
     expect(logLines(dirBroken)[0]!.nearMatch).toBe("unparseable");
     expect(logLines(dirClean)[0]!.nearMatch).toBe("ok");
+  });
+
+  // Catches: findNearMatch's `!Array.isArray(hits)` guard going unenforced. A
+  // JSON-encoded STRING (`"oops"`) is valid JSON, so JSON.parse succeeds and
+  // hits does not throw the try/catch below — it is also ITERABLE (a for-of
+  // over a string walks its characters), so without the guard the loop just
+  // runs over single-character "hits" (each missing `.body`), finds no match,
+  // and returns `{ fetch: "ok" }` — the guard is what stops a malformed-but-
+  // parseable gh answer from being silently reported as a clean miss instead
+  // of the #654 "denial-as-absence" class the sibling test above names. A
+  // null/number/object payload would instead throw on `.length` or the
+  // for-of and fail loudly on its own; the string case is the one that
+  // degrades silently, so it is the one that needs a guard-specific test.
+  // Matcher note: asserting only `.outcome` (`"created"` either way, since no
+  // bump is ever found) is the blind spot here — it would stay green with the
+  // guard deleted. The assertion has to land on `nearMatch`.
+  // Ablation performed: deleted the `if (!Array.isArray(hits)) return {
+  // fetch: "unparseable" };` line in findNearMatch — nearMatch flipped from
+  // "unparseable" to "ok" and this test went red; reverted after confirming.
+  test("a near-match answer that parses to a non-array is recorded as unparseable, not silently scanned", () => {
+    const gh: GhRunner = (args) => {
+      if (args[0] === "issue" && args[1] === "list") {
+        return { stdout: args.includes("--search") ? "[]" : JSON.stringify("oops"), exitCode: 0 };
+      }
+      if (args[0] === "issue" && args[1] === "create") return { stdout: "https://x/y/issues/1\n", exitCode: 0 };
+      return { stdout: "", exitCode: 0 };
+    };
+    const dir = tmp();
+    expect(fileFinding(gh, dir, finding("pr-83-red-ci-stalled")).outcome).toBe("created");
+    expect(logLines(dir)[0]!.nearMatch).toBe("unparseable");
   });
 
   // Catches: a full page read as a complete backlog. At the ceiling a miss means
