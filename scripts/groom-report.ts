@@ -23,7 +23,6 @@
 // duplicated.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { FILING_REPO, MACHINE_LABEL, isNearDuplicate, readDedupKey } from "../src/scheduler/filing";
 
@@ -99,12 +98,16 @@ function loadSeen(file: string): number[] {
 }
 
 function main(): void {
-  // Beside the scheduler's other state when run on the scheduler host; a stable
-  // per-host temp path otherwise, so a workstation run still has a "last run"
-  // to compare against without writing into the repo.
+  // Beside the scheduler's other state when run on the scheduler host, and a
+  // gitignored directory inside the checkout otherwise. NOT a fixed path under
+  // the OS temp dir: that is world-writable, so a predictable name there is a
+  // symlink another local user can pre-create and have this script clobber
+  // (CodeQL js/insecure-temporary-file, flagged on the first cut of this
+  // script). Resolved from the script's own location so the file is the same
+  // one whatever directory the operator runs from.
   const seenFile = process.env.SCHEDULER_STATE_DIR
     ? join(process.env.SCHEDULER_STATE_DIR, "groom-report-seen.json")
-    : join(tmpdir(), "spacemolt-groom-report-seen.json");
+    : join(import.meta.dir, "..", ".groom-state", "seen.json");
 
   const res = spawnSync(
     "gh",
