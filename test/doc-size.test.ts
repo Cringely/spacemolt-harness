@@ -31,8 +31,10 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 const DECISIONS = join(root, "docs/decisions.md");
 const STATE = join(root, "docs/STATE.md");
+const LESSONS = join(root, "docs/wiki/engineering-lessons.md");
 
 const docsPresent = existsSync(DECISIONS) && existsSync(STATE);
+const lessonsPresent = existsSync(LESSONS);
 
 // --- caps -------------------------------------------------------------------
 
@@ -207,6 +209,27 @@ describe.skipIf(!docsPresent)("STATE.md: the NOW handoff block stays a handoff",
     // learn where the project stands. Past ~500 words it stops being status and
     // starts being history, and history has a file (docs/milestones.md).
     expect(words).toBeLessThanOrEqual(STATE_NOW_WORD_CAP);
+  });
+});
+
+describe.skipIf(!lessonsPresent)("engineering-lessons.md: one number, one lesson", () => {
+  // Headings use THREE delimiters in the wild: "## L-11 — title", "## L-42: title"
+  // and "## L-50. title". A matcher anchored on any one of them silently misses
+  // the others, which is exactly how the collision below got in: PR #87 added an
+  // "## L-42 —" while "## L-42:" already existed, and the reviewer's grep for
+  // "## L-42 " returned nothing, reading as "the number is free."
+  const numbers = () =>
+    [...readFileSync(LESSONS, "utf8").matchAll(/^##\s*L-(\d+)\s*[—:.-]/gm)].map((m) => m[1]);
+
+  test("no two lessons share an L-number", () => {
+    const seen = numbers();
+    expect(seen.filter((n, i) => seen.indexOf(n) !== i)).toEqual([]);
+  });
+
+  test("the heading matcher still matches, so the duplicate check cannot pass vacuously", () => {
+    // Without this, any change that breaks the regex empties the list above and
+    // the duplicate test goes green forever while checking nothing.
+    expect(numbers().length).toBeGreaterThan(20);
   });
 });
 
