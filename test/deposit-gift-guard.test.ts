@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { executeTick } from "../src/agent/executor";
+import { Agent, type AgentConfig } from "../src/agent/agent";
+import { MockPlanner } from "../src/planner/mock";
+import { Store } from "../src/store/store";
 import { normalizeGiftTargets, type FleetPilot } from "../src/agent/normalize-plan";
 import { clipUntrusted, UNTRUSTED_TEXT_SNIPPET_LEN } from "../src/planner/digest";
 import { getAction, GIFT_CREDIT_CEILING } from "../src/registry/actions";
@@ -35,6 +38,22 @@ const ROSTER: FleetPilot[] = [
   { id: "corsair", username: CORSAIR },
 ];
 const ROSTER_USERNAMES = ROSTER.map((p) => p.username);
+
+// Two rosters that are legal but hostile, because nothing in config.ts forbids
+// either. agents.yaml ids are operator-chosen and in-game usernames are
+// player-chosen, drawn from two namespaces that never check each other -- so one
+// pilot's id CAN be another pilot's username, and the agents array carries no
+// uniqueness refine so two pilots CAN share an id. Both shapes are the ones
+// where a plausible simplification of normalizeGiftTargets stops being merely
+// wrong and starts moving credits to the wrong pilot.
+const COLLIDING_ROSTER: FleetPilot[] = [
+  { id: CORSAIR, username: MINER }, // this pilot's ID is the corsair's USERNAME
+  { id: "corsair", username: CORSAIR },
+];
+const DUPLICATE_ID_ROSTER: FleetPilot[] = [
+  { id: "corsair", username: CORSAIR },
+  { id: "corsair", username: SCOUT },
+];
 
 /** A one-step gift plan, the shape Agent.replan hands the normalizer. */
 const giftPlan = (params: Record<string, unknown>) =>
@@ -329,5 +348,123 @@ describe("gift target resolution at plan admission (issue #788)", () => {
     expect(shown.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN + 1); // +1: the clip's ellipsis
     for (const pilot of ROSTER_USERNAMES) expect(shown).toContain(pilot);
     expect(shown).toContain(`${CORSAIR}.`); // the LAST name, the one that used to be cut
+  });
+
+  // Breakage caught: collapsing the normalizer's two ORDERED lookups into the
+  // one-pass form `fleet.find((p) => p.id === raw || p.username === raw)`, which
+  // is correct on every roster that has no collision and pays the WRONG pilot on
+  // one that does. Both names here are real fleet usernames, so the guard cannot
+  // discriminate -- it accepts either -- and `r.kind` would read plan_done under
+  // the bug. `rewrites` and the target ON THE WIRE are what separate them: a
+  // correct target must leave untouched, never round-trip through an id lookup.
+  test("a target that is already a username is never resolved to someone else", async () => {
+    const { plan, rewrites } = normalizeGiftTargets(
+      giftPlan({ target: CORSAIR, credits: 27 }), COLLIDING_ROSTER,
+    );
+    expect(rewrites).toEqual([]);
+
+    const fleet = COLLIDING_ROSTER.map((p) => p.username);
+    const { r, calls } = await runDeposit(plan.steps[0]!.params, fleet);
+    expect(r.kind).toBe("plan_done");
+    expect(calls).toEqual([{ name: "deposit", params: { target: CORSAIR, credits: 27 } }]);
+  });
+
+  // Breakage caught: swapping the exactly-one-match filter for `.find()`, which
+  // turns an ambiguous id into a coin flip on a transfer nothing reverses. The
+  // resolved params are asserted as well as `rewrites`, and the guard verdict as
+  // well as the normalizer: under `.find()` the target resolves to whichever
+  // entry was declared first, and a resolved username SATISFIES the guard, so
+  // the credits leave. Ambiguity has to mean "leave it alone", which lands the
+  // step on the fail-closed guard -- the safe direction, at the cost of one
+  // replan.
+  test("a duplicate id resolves nothing and falls through to the guard", async () => {
+    const { plan, rewrites } = normalizeGiftTargets(
+      giftPlan({ target: "corsair", credits: 27 }), DUPLICATE_ID_ROSTER,
+    );
+    expect(rewrites).toEqual([]);
+    expect(plan.steps[0]!.params).toEqual({ target: "corsair", credits: 27 });
+
+    const fleet = DUPLICATE_ID_ROSTER.map((p) => p.username);
+    const { r, calls } = await runDeposit(plan.steps[0]!.params, fleet);
+    expect(r.kind).toBe("blocked");
+    expect(calls).toEqual([]);
+  });
+
+  // Breakage caught: widening the guard's accept set to usernames-OR-ids, the
+  // one-liner the decision log rejects. This is the normalizer-bypassed path and
+  // it is reachable in production, not hypothetical: resolution happens at plan
+  // ADMISSION, so a plan persisted before this fix holds the raw id and a
+  // restart replays it straight into executeTick with the roster wired. The
+  // existing off-roster test cannot cover this -- its target ("Helpful
+  // Stranger") is on neither half of the pair, so it stays blocked under exactly
+  // the widening that would let an id through. The id used here IS on the
+  // roster's id half, which is what makes the two cases different.
+  test("a raw agent id reaching the guard unresolved is still refused", async () => {
+    const { r, calls } = await runDeposit({ target: "corsair", credits: 27 }, ROSTER_USERNAMES);
+    expect(r.kind).toBe("blocked");
+    expect(r.kind === "blocked" && r.reason).toContain("'corsair'");
+    expect(calls).toEqual([]);
+  });
+});
+
+// Issue #788, the SEAM the three tests above cannot see. They hand executeTick a
+// username array directly, so they exercise the normalizer and the guard while
+// stubbing out the one hop that connects them: AgentConfig.fleetRoster is a
+// {id, username} pair, and Agent's constructor derives the guard's flat accept
+// set from it. Nothing in the suite constructed an Agent with a fleetRoster --
+// `git grep fleetUsernames origin/main -- test/` returns nothing -- so that
+// derivation was untested. Measured, not asserted: with that map inverted to
+// `.map((p) => p.id)`, the full suite reports 1800 pass / 1 fail and the one
+// failure is the test below. Exercised end-to-end for the same reason the #681
+// round-2 guard is: the defect would live in the seam, not in either half.
+describe("the roster reaches the guard as usernames, end to end (issue #788)", () => {
+  const config: AgentConfig = {
+    fuelPct: 20, hullPct: 30, heartbeatMinutes: 15, wakeNotificationTypes: ["combat", "chat"],
+    stallThreshold: 5, subscriptionCooldownMinutes: 60, fleetRoster: ROSTER,
+  };
+
+  // Breakage caught: Agent's constructor mapping fleetRoster to the WRONG half
+  // of the pair. Asserting the full `calls` array rather than the plan's params
+  // is what discriminates: the normalizer resolves `corsair` to "Corvus Marrek"
+  // regardless, so the persisted plan looks correct under either mapping. Only
+  // whether the deposit REACHED the game separates them -- with the ids as the
+  // accept set, the resolved username is refused by the guard and `calls` is
+  // empty. An assertion on r.kind alone would be blind for the same reason the
+  // guard is: both halves are internally consistent, just about different sets.
+  test("a gift addressed by agent id is delivered to that pilot's username", async () => {
+    const { api, calls } = stubApi();
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([giftPlan({ target: "corsair", credits: 27 })]);
+    const agent = new Agent({ id: "miner", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce(); // no_plan -> replan, which normalizes the gift target
+    await agent.runOnce(); // the deposit step executes
+
+    expect(calls).toEqual([{ name: "deposit", params: { target: CORSAIR, credits: 27 } }]);
+  });
+
+  // Breakage caught: the derivation widened to `flatMap((p) => [p.username,
+  // p.id])` -- the accept-set one-liner the decision log rejects, written at the
+  // one site where BOTH halves are in scope. Nothing else in the suite can see
+  // it. The delivery test above passes under it (the normalizer resolves the id
+  // anyway, so the wire value is right for the wrong reason), and the guard-only
+  // test in the block above never runs agent.ts at all. It takes an id the
+  // normalizer REFUSES to resolve -- the duplicate -- to put a raw id in front
+  // of the widened set, and then the harness sends "corsair" to a game that
+  // resolves targets against real player names (openapi-v2.json:116273), which
+  // is a stranger's wallet, not a fleet-mate's.
+  test("a widened accept set cannot deliver an unresolvable id to the game", async () => {
+    const { api, calls } = stubApi();
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([giftPlan({ target: "corsair", credits: 27 })]);
+    const agent = new Agent({
+      id: "miner", persona: "p", api, store, planner,
+      config: { ...config, fleetRoster: DUPLICATE_ID_ROSTER }, now: () => 1,
+    });
+
+    await agent.runOnce();
+    await agent.runOnce();
+
+    expect(calls).toEqual([]);
   });
 });
