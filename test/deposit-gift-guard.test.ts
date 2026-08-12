@@ -399,50 +399,51 @@ describe("gift target resolution at plan admission (issue #788)", () => {
     expect(shown).not.toContain(LONG_TARGET); // the echo was clipped, not passed through
   });
 
-  // NOT a desired behavior. This pins a known CEILING so the number cannot rot
-  // in a comment, which is the same failure class as a stale ablation receipt.
+  // Breakage caught: any clause appended to the guard's message. This is the
+  // tightest budget in the suite -- THREE characters -- so it reddens on a
+  // message edit long before the real fleet is anywhere near the limit, which is
+  // what makes it a tripwire rather than a restatement of the code.
   //
-  // The fit the two cases above pin is a property of the CURRENT three-pilot
-  // fleet, not of the message. Measured against the real strings: the fixed text
-  // plus a clipped 25-char echo puts the roster's first character at 90, three
-  // maximum-length usernames run 60 more (ends 150, fits), four run 117 (ends
-  // 207, outside the 200-char window). The fourth pilot is the one that vanishes.
+  // Every figure below was measured by running the real guard and taking
+  // `reason.indexOf(lastPilot) + lastPilot.length` against the digest's 200-char
+  // window, not computed from a model of the message. An arithmetic model of
+  // this message has now been wrong twice, in both directions.
   //
-  // What makes this worth a test rather than a comment is the SHAPE of the
-  // failure, not the arithmetic. At four pilots the guarantee does not simply
-  // end -- it becomes CONDITIONAL ON THE TARGET, which is planner-authored and
-  // therefore the one input an attacker or a confused model controls. A short
-  // target still fits (ends 198). The long target from the case above does not.
-  // So the roster would reach the planner in exactly the situations where the
-  // planner is behaving, and vanish in the situations the correction channel
-  // exists for. Both halves are asserted here because the conditional is the
-  // finding; asserting only the overflow would read as "N=4 is broken" and
-  // invite a fix that widens the short-target case and leaves the real one.
+  //   three production usernames, clipped echo -> roster ends 149, 51 to spare
+  //   three MAXIMUM-length usernames           -> roster ends 180, 20 to spare
+  //   four maximum-length, short target        -> roster ends 197,  3 to spare
+  //   four maximum-length, long target         -> roster ends 206,  6 OVER
   //
-  // When a fourth pilot joins agents.yaml this test goes red. The fix is to stop
-  // echoing the roster whole: elide to the nearest few, or clip the roster the
-  // way the target is clipped. No test can read agents.yaml, so this assertion is
-  // the only thing standing between a fourth pilot and a silent return of the
-  // #703-era defect.
-  test("KNOWN CEILING: at four pilots the roster's fit becomes target-dependent", async () => {
+  // The deployed fleet is the first row, which is where decisions.md's "~50
+  // characters spare" comes from. The worst case that still fits is the third.
+  //
+  // The fourth row is the ceiling, recorded here and deliberately NOT asserted.
+  // At four maximum-length pilots the guarantee does not simply end, it becomes
+  // conditional on the target -- and `target` is planner-authored, so the roster
+  // would arrive whenever the planner is behaving and vanish in exactly the
+  // situations the correction channel exists for. That is worth knowing and it
+  // is not worth a test: an assertion on the overflow fires when someone SHORTENS
+  // the message (drop 8 characters of fixed text and 206 falls inside the
+  // window), so it would be a red for a strict improvement.
+  //
+  // What this test does NOT provide: nothing mechanical connects it to the real
+  // fleet. `agents.yaml` is gitignored (.gitignore:23) and absent from the
+  // worktree, and the roster below is hardcoded, so adding a fourth pilot leaves
+  // this test green. When a fourth pilot joins, the message has to stop echoing
+  // the roster whole -- elide to the nearest few, or clip the roster the way the
+  // target is clipped -- and the only thing that will prompt that is a person
+  // reading this. Also recorded in the seam manifest under seam 2.
+  test("the guard message keeps three characters of slack at four pilots", async () => {
     const fourMaxLen = [
       "Quintessa Rockhopper-III", "Bartholomew Sternwind-Jr",
       "Persephone Vandergraff-X", "Maximilian Thornebury-IV",
     ];
     for (const u of fourMaxLen) expect(u.length).toBe(24);
-    const lastPilot = fourMaxLen[3]!;
-    const clipOf = async (target: string) => {
-      const { r } = await runDeposit({ target, credits: 27 }, fourMaxLen);
-      expect(r.kind).toBe("blocked");
-      return clipUntrusted(r.kind === "blocked" ? r.reason : "");
-    };
 
-    // A well-behaved target: the whole roster still arrives, at 198 of 200.
-    expect(await clipOf("Helpful Stranger")).toContain(lastPilot);
-
-    // A hostile one: the clip holds the echo to 25, and the roster still ends at
-    // 207. The last pilot is cut, exactly as all three were before #788.
-    expect(await clipOf(LONG_TARGET)).not.toContain(lastPilot);
+    const { r } = await runDeposit({ target: "Helpful Stranger", credits: 27 }, fourMaxLen);
+    expect(r.kind).toBe("blocked");
+    const shown = clipUntrusted(r.kind === "blocked" ? r.reason : "");
+    expect(shown).toContain(fourMaxLen[3]!); // the last pilot, at 197 of 200
   });
 
   // Breakage caught: collapsing the normalizer's two ORDERED lookups into the
