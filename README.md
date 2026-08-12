@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-54).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-55).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -93,7 +93,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 Current work: fleet-flight (#591) F1 and F2 both closed (M-52, M-53, M-54). Scout and corsair launched 2026-08-02 18:26Z alongside the miner, closing #593; all three pilots ran real actions the same window. The real blocker turned out to be two host secrets never provisioned, not the persona-briefing gap #593 had carried for weeks. Personas remain minimal (two of #159's four elements; #159 stays open, parked); the corsair starts at 0 credits. F3 (#534/#569/#592) is next. See M-54 in [docs/milestones.md](docs/milestones.md).
 
-The major-milestone timeline (M-01..M-54) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-55) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 
