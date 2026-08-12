@@ -187,3 +187,96 @@ export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): 
 
   return { ok: true, plan: { ...plan, steps: newSteps }, rewrites };
 }
+
+/** One pilot this harness runs: the agents.yaml `id` and the in-game `username`. */
+export interface FleetPilot {
+  id: string;
+  username: string;
+}
+
+/**
+ * Rewrites a credit gift addressed by harness AGENT ID into the in-game
+ * USERNAME the game and the executor's fleet credit-gift guard both speak
+ * (issue #788).
+ *
+ * The live failure: the planner wrote `deposit {target: "corsair", credits: N}`
+ * -- the short name agents.yaml and the operator use for a pilot -- while the
+ * guard checks membership against roster USERNAMES ("Corvus Marrek"). Every
+ * attempt was refused and cost one replan, which blocked the one rescue path
+ * (#703) for two pilots sitting at 1cr and 4cr.
+ *
+ * Invariant restored: a `deposit` step's `target`, at the moment executeTick
+ * reads it, holds an in-game roster username. Same file and same plan-admission
+ * moment as normalizePlanLocations because it is the same failure class -- a
+ * label where the wire wants an identifier -- and the SM-3 receipt there already
+ * settled it: name/id confusion is eliminated deterministically at admission,
+ * not re-prompted away.
+ *
+ * A SEPARATE exported function rather than another LOCATION_PARAMS row: a gift
+ * target is not a location, its referents come from config rather than
+ * surroundings, and the rejection semantics are opposite. normalizePlanLocations
+ * hard-rejects an unresolvable ref and spends a second planner call; this one
+ * NEVER rejects -- an unresolved target passes through untouched to the
+ * fail-closed guard in executor.ts, which is the right place for it and costs
+ * no extra LLM call.
+ *
+ * Enumerated inputs: `plan.steps` and `fleet`, both arguments, no cached state.
+ *
+ * Matching is exact and case-sensitive, deliberately. No capture shows a
+ * case-varied or fuzzy target, and in-game usernames are player-chosen, so any
+ * loosening here hands a hostile player named `corvus marrek` a valid route to
+ * an irreversible transfer. Every unmatched variant costs exactly one replan
+ * against a guard designed to accept that cost.
+ */
+export function normalizeGiftTargets(
+  plan: Plan,
+  fleet?: readonly FleetPilot[],
+): { plan: Plan; rewrites: PlanRewrite[] } {
+  if (!fleet?.length) return { plan, rewrites: [] };
+
+  const rewrites: PlanRewrite[] = [];
+  const newSteps: PlanStep[] = [];
+
+  for (let i = 0; i < plan.steps.length; i++) {
+    const step = plan.steps[i]!;
+    const params = step.params as Record<string, unknown>;
+    const raw = params["target"];
+    // Keyed on the ACTION, not on the param name: `refuel` also takes a
+    // `target` (a nearby ship, plus the magic value "fleet"), and a roster
+    // rewrite there would corrupt a fuel transfer. This is the executor
+    // guard's own gate, copied so the two halves cannot disagree about which
+    // steps are in scope.
+    if (step.action !== "deposit" || typeof raw !== "string") {
+      newSteps.push(step);
+      continue;
+    }
+
+    // Username first, and this early return is what makes "a correct value is
+    // never rewritten" a structural property rather than a coincidence. The
+    // tempting one-pass form -- find((p) => p.id === raw || p.username === raw)
+    // -- is correct on every non-colliding roster and silently redirects the
+    // gift to the WRONG fleet-mate on one where an agent's id equals another
+    // agent's username.
+    if (fleet.some((p) => p.username === raw)) {
+      newSteps.push(step);
+      continue;
+    }
+
+    const matches = [...new Set(fleet.filter((p) => p.id === raw).map((p) => p.username))];
+    // Receipt for the `!== 1` rather than a first-match pick: config.ts's
+    // agents array carries no uniqueness refine, so duplicate ids ARE
+    // representable, and picking the first would be a coin flip on a transfer
+    // nothing reverses. Ambiguity resolves to "leave it alone" and meets the
+    // fail-closed guard, which is the safe direction.
+    if (matches.length !== 1) {
+      newSteps.push(step);
+      continue;
+    }
+
+    const username = matches[0]!;
+    rewrites.push({ step: i, action: step.action, param: "target", from: raw, to: username });
+    newSteps.push({ ...step, params: { ...params, target: username } } as PlanStep);
+  }
+
+  return { plan: { ...plan, steps: newSteps }, rewrites };
+}

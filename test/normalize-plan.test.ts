@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizePlanLocations } from "../src/agent/normalize-plan";
+import { normalizeGiftTargets, normalizePlanLocations, type FleetPilot } from "../src/agent/normalize-plan";
 import type { Surroundings } from "../src/planner/types";
 import type { Plan } from "../src/registry/plan";
 
@@ -192,5 +192,34 @@ describe("normalizePlanLocations", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.plan).toEqual(plan);
     expect(result.rewrites).toEqual([]);
+  });
+});
+
+describe("normalizeGiftTargets (issue #788)", () => {
+  const roster: FleetPilot[] = [
+    { id: "miner", username: "Rockhopper Kess" },
+    { id: "corsair", username: "Corvus Marrek" },
+  ];
+
+  // Breakage caught: the username-first early return collapsing into one pass.
+  // `fleet.find((p) => p.id === raw || p.username === raw)` reads as a harmless
+  // simplification and is correct on every non-colliding roster -- but on one
+  // where an agent's id equals another agent's username it redirects a
+  // correctly-addressed gift to the WRONG fleet-mate. `rewrites` is the
+  // discriminating assertion, and toEqual([]) rather than a length check: the
+  // collapsed form records a no-op self-rewrite (from "Corvus Marrek" to
+  // "Corvus Marrek"), so asserting the params object alone would pass it, the
+  // rewritten value being identical to the input. This is why an ordinary
+  // roster catches an edit whose harmful outcome needs a rare config.
+  test("a target that is already a roster username is never rewritten", () => {
+    const plan: Plan = {
+      goal: "fund the corsair",
+      steps: [{ action: "deposit", params: { target: "Corvus Marrek", credits: 27 } }],
+    };
+    const result = normalizeGiftTargets(plan, roster);
+    expect(result.rewrites).toEqual([]);
+    expect(result.plan.steps[0]).toEqual({
+      action: "deposit", params: { target: "Corvus Marrek", credits: 27 },
+    });
   });
 });
