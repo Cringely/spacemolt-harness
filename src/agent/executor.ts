@@ -1015,9 +1015,9 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  * block from missing data.
  *
  * `fleetUsernames` (issue #703) is this harness's own pilot roster, plain data
- * from agents.yaml (see AgentConfig.fleetUsernames). It feeds the credit-gift
- * guard below, and it is the ONE input here whose absence is a verdict rather
- * than a pass -- see that guard's fail-closed receipt.
+ * from agents.yaml (agent.ts derives it from AgentConfig.fleetRoster). It feeds
+ * the credit-gift guard below, and it is the ONE input here whose absence is a
+ * verdict rather than a pass -- see that guard's fail-closed receipt.
  */
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
@@ -1340,10 +1340,21 @@ export async function executeTick(
   // capability it was written for. HOW OFTEN is a third place again: plan.ts
   // refuses `repeat`/`until` on a gift step, which no params schema can see.
   //
-  // fleetUsernames arrives as plain data (agent.ts reads it off AgentConfig,
-  // main.ts fills it from agents.yaml), the same store-free boundary
-  // buyOrderAlreadyOpen and itemUnavailableAtStation above already respect:
-  // no config object and no roster lookup enters this file.
+  // fleetUsernames arrives as plain data (agent.ts derives it from
+  // AgentConfig.fleetRoster, main.ts fills that from agents.yaml), the same
+  // store-free boundary buyOrderAlreadyOpen and itemUnavailableAtStation above
+  // already respect: no config object and no roster lookup enters this file.
+  //
+  // This guard AUTHORIZES; it never rewrites (issue #788). A planner that
+  // addresses a fleet-mate by its agents.yaml id ("corsair") instead of its
+  // username ("Corvus Marrek") is translated one layer up, at plan admission
+  // (normalizeGiftTargets, agent/normalize-plan.ts), so the resolved username
+  // is what gets persisted and executed. Widening the accept set here to
+  // usernames-OR-ids was the tempting one-liner and is the regression this
+  // note exists to prevent: the value still SENT to the game would be
+  // "corsair", which the game resolves against real player names/IDs
+  // (openapi-v2.json:116273, "a player name/ID (gift)") -- trading a clean
+  // harness block for credits gifted to a stranger who holds that name.
   //
   // FAIL-CLOSED, and deliberately the only guard here that is. Everywhere else
   // absence is never a verdict, because a fabricated block costs a replan while
@@ -1356,14 +1367,29 @@ export async function executeTick(
     const gift = step.params as { target?: unknown; credits?: unknown };
     if (typeof gift.target === "string") {
       if (!fleetUsernames?.includes(gift.target)) {
-        // Correction first, roster after: the digest clips a blocked wake's
-        // detail at 200 chars, same ordering receipt as the jettison guard.
+        // Correction, then ROSTER, then the item-deposit fallback. The old
+        // order put the roster last and the arithmetic was wrong (issue #788):
+        // the digest clips a blocked wake's detail at UNTRUSTED_TEXT_SNIPPET_LEN
+        // = 200 (digest.ts, applied by clipPlanContext and quoteUntrusted), and
+        // the message ran 229 chars with the roster starting at 169 -- so the
+        // planner has only ever seen "...Fleet pilots: Rockhopper Kess, " and
+        // never the rest of its own fleet. Roster second puts it whole inside
+        // the clip (149 chars at a maximum-length target, ~50 to spare), and
+        // the clause that truncates first is now the least load-bearing one.
+        //
+        // The echoed target is clipped at 24 because config.ts bounds a
+        // username at `.max(24)`: a longer string cannot BE a fleet username,
+        // and echoing it in full is the one input that can push the roster
+        // back past the clip (the registry's `target` is unbounded, and it is
+        // planner-authored text). No import of clipUntrusted from digest.ts --
+        // digest.ts already imports from this file, so that edge would cycle.
+        const shown = gift.target.length > 24 ? `${gift.target.slice(0, 24)}…` : gift.target;
         const roster = fleetUsernames?.length
           ? `Fleet pilots: ${fleetUsernames.join(", ")}.`
           : `No fleet roster is configured, so no gift target can be verified.`;
         const reason =
-          `deposit gift refused: '${gift.target}' is not a pilot in this harness's fleet. Credit gifts ` +
-          `go only to a fleet pilot; to store an item instead, use deposit{item_id, quantity}. ${roster}`;
+          `deposit gift refused: '${shown}' is not a pilot in this harness's fleet. ${roster} ` +
+          `Credit gifts go only to a fleet pilot; to store an item instead, use deposit{item_id, quantity}.`;
         return guardBlock(reason);
       }
     }

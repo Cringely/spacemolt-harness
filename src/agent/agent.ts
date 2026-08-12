@@ -15,7 +15,7 @@ import {
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
 import { evaluateReflex, reflexGaveUpAt, type ReflexConfig, type ReflexFailureRecord } from "./reflex";
-import { normalizePlanLocations, type PlanRewrite } from "./normalize-plan";
+import { normalizePlanLocations, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
 import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
@@ -122,7 +122,7 @@ export interface AgentConfig {
   // values. See config.ts's AGENT_DEFAULTS for the tuning receipts.
   repeatBlockThreshold?: number;
   repeatBlockWindowMinutes?: number;
-  // This harness's own pilot roster -- every username in agents.yaml, not just
+  // This harness's own pilot roster -- every pilot in agents.yaml, not just
   // this agent's (issue #703). The executor's credit-gift guard needs it to
   // decide whether a gift target is a fleet-mate or a name the planner read
   // somewhere, and it fails CLOSED when it is absent, so an unwired harness
@@ -132,10 +132,18 @@ export interface AgentConfig {
   //
   // AgentConfig rather than a new Agent constructor option: this is the data
   // channel the executeTick call site already reads from, and a second
-  // constructor option carrying one string[] buys nothing. Fleet-wide data in a
+  // constructor option carrying one roster buys nothing. Fleet-wide data in a
   // per-agent object is the one oddity, and it is a smaller one than a parallel
   // channel.
-  fleetUsernames?: readonly string[];
+  //
+  // Issue #788: this was `fleetUsernames?: readonly string[]` and is now the
+  // id+username PAIR, because the planner addresses a fleet-mate by its
+  // agents.yaml id and the guard's accept set is usernames. ONE roster field,
+  // never two: the normalizer's output range and the guard's accept set are
+  // derived from this same array by construction, which is the whole safety
+  // argument. A second roster field can drift from this one, and a drifted pair
+  // is the only shape that could produce a rewrite the guard then refuses.
+  fleetRoster?: readonly FleetPilot[];
 }
 
 // Layer 3 defaults (max_plans_per_window / plan_budget_window_minutes) live in
@@ -377,6 +385,13 @@ export class Agent {
   private planner: Planner;
   private fallbackPlanner?: Planner;
   private config: AgentConfig;
+  // The usernames half of config.fleetRoster, the exact shape executeTick's
+  // credit-gift guard takes (issue #788 -- executor.ts stays roster-lookup-free
+  // by its own stated boundary, so it gets the flat accept set, never the pair).
+  // Cache receipt (simplicity rule 5): the sole input is opts.config, assigned
+  // once in the constructor below and never reassigned, so this is provably
+  // immutable for the object's lifetime -- no staleness path exists.
+  private readonly fleetUsernames?: readonly string[];
   private now: () => number;
 
   private inbox: string[] = [];
@@ -653,6 +668,7 @@ export class Agent {
     this.planner = opts.planner;
     this.fallbackPlanner = opts.fallbackPlanner;
     this.config = opts.config;
+    this.fleetUsernames = opts.config.fleetRoster?.map((p) => p.username);
     this.now = opts.now ?? Date.now;
     // crash recovery: resume persisted plan mid-step. lastPlanAt starts at
     // now() so a restart doesn't fire an immediate heartbeat that would
@@ -2254,6 +2270,21 @@ export class Agent {
         }
       }
 
+      // Fleet-gift id->username resolution (issue #788), the same name/id
+      // failure class as the block above and handled the same deterministic way.
+      // OUTSIDE that `if (surroundings)` block on purpose: a fleet roster has
+      // nothing to do with surroundings and must still resolve when the
+      // surroundings gather returned nothing. AFTER it so the retry-reparsed
+      // plan is covered too. BEFORE savePlan below, which is the whole reason
+      // this runs at admission rather than per-tick in the executor: the
+      // RESOLVED username is what gets persisted, rendered on the dashboard,
+      // and replayed after a restart. Never rejects -- an unresolvable target
+      // passes through to the executor's fail-closed guard, so no second
+      // planner call is spent.
+      const gifts = normalizeGiftTargets(plan, this.config.fleetRoster);
+      plan = gifts.plan;
+      rewrites = [...rewrites, ...gifts.rewrites];
+
       this.plan = plan;
       this.cursor = { step: 0, iteration: 0 };
       this.planState = "running";
@@ -3198,7 +3229,7 @@ export class Agent {
     };
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
-      fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.config.fleetUsernames,
+      fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of

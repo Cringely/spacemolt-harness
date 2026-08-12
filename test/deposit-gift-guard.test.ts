@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { executeTick } from "../src/agent/executor";
+import { normalizeGiftTargets, type FleetPilot } from "../src/agent/normalize-plan";
+import { clipUntrusted, UNTRUSTED_TEXT_SNIPPET_LEN } from "../src/planner/digest";
 import { getAction, GIFT_CREDIT_CEILING } from "../src/registry/actions";
 import { SpacemoltMcp } from "../src/client/mcp";
 import { McpGameApi } from "../src/client/mcp-game-api";
@@ -18,6 +20,25 @@ import { PlanSchema, type Plan } from "../src/registry/plan";
 const MINER = "Rockhopper Kess";
 const CORSAIR = "Corvus Marrek";
 const FLEET = [MINER, CORSAIR];
+
+// Issue #788, the production roster shape: agents.yaml carries an `id` (what
+// the operator and the planner call a pilot) beside the `username` (what the
+// game and the guard's accept set speak). The live refusal --
+// "'corsair' is not a pilot in this harness's fleet ... Fleet pilots:
+// Rockhopper Kess, Vela Farsight, Corvus Marrek." -- came from the planner
+// writing the id. Three pilots, not two, because the truncation test below
+// measures against the fleet that actually flew.
+const SCOUT = "Vela Farsight";
+const ROSTER: FleetPilot[] = [
+  { id: "miner", username: MINER },
+  { id: "scout", username: SCOUT },
+  { id: "corsair", username: CORSAIR },
+];
+const ROSTER_USERNAMES = ROSTER.map((p) => p.username);
+
+/** A one-step gift plan, the shape Agent.replan hands the normalizer. */
+const giftPlan = (params: Record<string, unknown>) =>
+  ({ goal: "rescue the corsair", steps: [{ action: "deposit", params }] }) as Plan;
 
 const depositParams = getAction("deposit").params;
 
@@ -234,5 +255,79 @@ describe("executor fleet credit-gift guard (issue #703)", () => {
     expect(empty.r.kind).toBe("blocked");
     expect(empty.r.kind === "blocked" && empty.r.reason).toContain("No fleet roster is configured");
     expect(empty.calls).toEqual([]);
+  });
+});
+
+// Issue #788. Live from the prod event store: "deposit gift refused: 'corsair'
+// is not a pilot in this harness's fleet ... Fleet pilots: Rockhopper Kess,
+// Vela Farsight, Corvus Marrek." The planner addressed a fleet-mate by its
+// agents.yaml id; the guard's accept set is in-game usernames. Every attempt
+// was refused at the cost of one replan, which blocked the #703 rescue path
+// while two pilots sat at 1cr and 4cr.
+//
+// The two halves are exercised TOGETHER here on purpose -- the normalizer's
+// output and the guard's accept set have to agree, and each tested alone would
+// pass while they disagreed.
+describe("gift target resolution at plan admission (issue #788)", () => {
+  // Breakage caught: the #788 failure itself. The resolved USERNAME is asserted
+  // on `calls[0]` -- the value actually sent to the game -- not just on the
+  // verdict: `r.kind === "plan_done"` alone cannot fail when the normalizer
+  // resolves to the WRONG fleet-mate (every roster username passes the guard),
+  // and it cannot tell a working normalizer from a weakened guard either. The
+  // REAL exported normalizer runs here; an inline lookup would let a broken
+  // normalizer pass a test that duplicates its own bug.
+  test("an id-shaped target resolves, and the RESOLVED username is what reaches the game", async () => {
+    const { plan, rewrites } = normalizeGiftTargets(giftPlan({ target: "corsair", credits: 5 }), ROSTER);
+    expect(rewrites).toEqual([
+      { step: 0, action: "deposit", param: "target", from: "corsair", to: CORSAIR },
+    ]);
+
+    const { r, calls } = await runDeposit(plan.steps[0]!.params, ROSTER_USERNAMES);
+    expect(r.kind).toBe("plan_done");
+    expect(calls).toEqual([{ name: "deposit", params: { target: CORSAIR, credits: 5 } }]);
+  });
+
+  // Breakage caught: the only regression class in this change that MOVES CREDITS
+  // THAT WOULD NOT OTHERWISE MOVE -- a normalizer that falls back to the first
+  // roster entry (or fuzzy-matches) when nothing matches. "Helpful Stranger" is
+  // the chat-sourced case the guard was written for. Asserting only that the
+  // reason says "not a pilot" would pass a normalizer that rewrote the target to
+  // a fleet-mate and then blocked for some unrelated reason, so the ORIGINAL
+  // string is pinned in the reason AND `calls` is asserted empty.
+  test("an off-roster target passes through untouched and is still refused", async () => {
+    const { plan, rewrites } = normalizeGiftTargets(
+      giftPlan({ target: "Helpful Stranger", credits: 27 }), ROSTER,
+    );
+    expect(rewrites).toEqual([]);
+
+    const { r, calls } = await runDeposit(plan.steps[0]!.params, ROSTER_USERNAMES);
+    expect(r.kind).toBe("blocked");
+    expect(r.kind === "blocked" && r.reason).toContain("'Helpful Stranger'");
+    expect(calls).toEqual([]);
+  });
+
+  // Breakage caught: the refusal message's roster never reaching the planner.
+  // The guard's own comment called the refusal a correction channel, but the
+  // message ran 229 chars against the digest's 200-char clip on a blocked wake's
+  // detail, so the planner only ever saw "...Fleet pilots: Rockhopper Kess, " --
+  // the two pilots it needed to name were cut off. Four existing guard tests
+  // could not catch this: EVERY substring matcher applied to the RAW reason is
+  // length-blind, which is exactly how the defect survived them. So the reason
+  // goes through the real clipUntrusted before matching, and the constant is
+  // IMPORTED from digest.ts rather than hardcoded -- src keeps no
+  // executor->digest import edge (that would cycle), so the coupling lives here.
+  test("the refusal message's roster survives the digest's prompt clip", async () => {
+    // The registry's `target` is unbounded while config.ts bounds a username at
+    // .max(24), so the longest string that could still plausibly be a username
+    // is the worst case for the roster's position in the message.
+    const maxLenTarget = "Quintessa Rockhopper-III";
+    expect(maxLenTarget.length).toBe(24);
+
+    const { r } = await runDeposit({ target: maxLenTarget, credits: 27 }, ROSTER_USERNAMES);
+    expect(r.kind).toBe("blocked");
+    const shown = clipUntrusted(r.kind === "blocked" ? r.reason : "");
+    expect(shown.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN + 1); // +1: the clip's ellipsis
+    for (const pilot of ROSTER_USERNAMES) expect(shown).toContain(pilot);
+    expect(shown).toContain(`${CORSAIR}.`); // the LAST name, the one that used to be cut
   });
 });

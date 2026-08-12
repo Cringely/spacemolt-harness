@@ -319,8 +319,12 @@ const SEAMS: Seam[] = [
     code: { file: "src/agent/executor.ts", marker: 'step.action === "deposit"' },
     // One anchor per rule the model has to carry, since the improv driver
     // reaches NONE of the executor's guards: what a gift is, that it cannot be
-    // undone, who may receive one, how much, how often.
+    // undone, who may receive one, HOW they are named (#788: the planner wrote
+    // the harness agent id where the game wants the in-game username, and the
+    // improv driver reaches neither the plan-admission normalizer that now
+    // translates it nor the guard that refuses it), how much, how often.
     anchors: ["CREDIT GIFT", /no cancel for a gift/i, /fleet roster/i,
+      /never the short internal id/i,
       /5000cr in a single gift/i, /never set up a standing gift/i],
   },
 ];

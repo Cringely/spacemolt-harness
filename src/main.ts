@@ -29,11 +29,24 @@ store.onEvent = (e) => {
   console.log(`[${new Date(e.ts).toISOString()}] ${e.agentId} ${e.type}`, JSON.stringify(e.payload));
 };
 
-// The fleet roster (issue #703): every pilot username this harness runs. The
-// executor's credit-gift guard refuses a gift to anyone not on it, so it is
-// built ONCE here from the loaded config rather than per-agent -- the whole
-// point is that an agent knows its fleet-mates, not just itself.
-const fleetUsernames = config.agents.map((a) => a.username);
+// The fleet roster (issue #703): every pilot this harness runs. The executor's
+// credit-gift guard refuses a gift to anyone not on it, so it is built ONCE
+// here from the loaded config rather than per-agent -- the whole point is that
+// an agent knows its fleet-mates, not just itself.
+//
+// Issue #788: this line used to be `config.agents.map((a) => a.username)`, and
+// that map was the single hop where the id<->username correspondence was
+// discarded while BOTH fields sat on the same AgentEntry, in scope. Downstream
+// (AgentConfig, Agent, executeTick) was then structurally id-blind, so a plan
+// naming a pilot by its agents.yaml id -- `deposit {target: "corsair"}`, the
+// short name an operator addresses a pilot by -- could never match a roster of
+// usernames and every gift was refused. Carry the pair; plan admission
+// translates (normalizeGiftTargets, agent/normalize-plan.ts).
+//
+// `fleetRoster`, not `fleet`: the game already has a `fleet` of owned SHIPS
+// (see digest.ts's hull-upgrade prose), and one word for two concepts in a
+// prompt-adjacent codebase is how the next reader loses an hour.
+const fleetRoster = config.agents.map((a) => ({ id: a.id, username: a.username }));
 
 const agents: Agent[] = [];
 for (const entry of config.agents) {
@@ -71,7 +84,7 @@ for (const entry of config.agents) {
       repeatBlockWindowMinutes: entry.repeatBlockWindowMinutes,
       reflex: entry.reflex,
       experiment: entry.experiment,
-      fleetUsernames,
+      fleetRoster,
     },
   });
   agent.start();
