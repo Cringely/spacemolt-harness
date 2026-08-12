@@ -55,6 +55,16 @@ const DUPLICATE_ID_ROSTER: FleetPilot[] = [
   { id: "corsair", username: SCOUT },
 ];
 
+// A target long enough to shove the roster out of the digest's 200-char window
+// if the executor's 24-char echo clip were removed. A chat-sourced blob rather
+// than "x".repeat(300): the planner reads untrusted text (#681's
+// create_buy_order template arrived exactly that way), and a whole sentence
+// pasted into `target` is the shape that actually turns up in the event store.
+const LONG_TARGET =
+  "the pilot everyone in the station bar keeps calling the corsair, though I " +
+  "never did catch which of the three ships parked on pad four is actually " +
+  "theirs, so please just send the credits to whoever that turns out to be";
+
 /** A one-step gift plan, the shape Agent.replan hands the normalizer. */
 const giftPlan = (params: Record<string, unknown>) =>
   ({ goal: "rescue the corsair", steps: [{ action: "deposit", params }] }) as Plan;
@@ -86,6 +96,23 @@ function runDeposit(params: Plan["steps"][number]["params"], fleet?: readonly st
   const plan = { goal: "rescue the corsair", steps: [{ action: "deposit", params }] } as Plan;
   return executeTick(api, plan, { step: 0, iteration: 0 }, undefined, undefined, undefined,
     undefined, undefined, undefined, fleet).then((r) => ({ r, calls }));
+}
+
+/**
+ * The four assertions that pin "the WHOLE roster reaches the planner". Shared by
+ * the two target lengths that have to satisfy it -- a maximum-length username
+ * and an adversarially long blob -- so neither case can drift into asserting
+ * something weaker than the other. Returns the clipped text for case-specific
+ * assertions on top.
+ */
+async function expectRosterSurvivesClip(target: string) {
+  const { r } = await runDeposit({ target, credits: 27 }, ROSTER_USERNAMES);
+  expect(r.kind).toBe("blocked");
+  const shown = clipUntrusted(r.kind === "blocked" ? r.reason : "");
+  expect(shown.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN + 1); // +1: the clip's ellipsis
+  for (const pilot of ROSTER_USERNAMES) expect(shown).toContain(pilot);
+  expect(shown).toContain(`${CORSAIR}.`); // the LAST name, the one that used to be cut
+  return shown;
 }
 
 describe("deposit registry form (issue #703)", () => {
@@ -339,15 +366,83 @@ describe("gift target resolution at plan admission (issue #788)", () => {
     // The registry's `target` is unbounded while config.ts bounds a username at
     // .max(24), so the longest string that could still plausibly be a username
     // is the worst case for the roster's position in the message.
+    //
+    // This case does NOT reach the executor's 24-char clip and is not meant to:
+    // the guard's ternary is `length > 24`, so at exactly 24 it takes the ELSE
+    // branch and echoes the target whole. That is the correct side to pin here
+    // -- a real username must survive intact, never arrive at the planner with
+    // an ellipsis on it. The clip branch is a separate case, below.
     const maxLenTarget = "Quintessa Rockhopper-III";
     expect(maxLenTarget.length).toBe(24);
 
-    const { r } = await runDeposit({ target: maxLenTarget, credits: 27 }, ROSTER_USERNAMES);
-    expect(r.kind).toBe("blocked");
-    const shown = clipUntrusted(r.kind === "blocked" ? r.reason : "");
-    expect(shown.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN + 1); // +1: the clip's ellipsis
-    for (const pilot of ROSTER_USERNAMES) expect(shown).toContain(pilot);
-    expect(shown).toContain(`${CORSAIR}.`); // the LAST name, the one that used to be cut
+    const shown = await expectRosterSurvivesClip(maxLenTarget);
+    expect(shown).toContain(maxLenTarget); // echoed whole, no ellipsis
+  });
+
+  // Breakage caught: deleting the executor's 24-char clip on the echoed target
+  // (`const shown = gift.target;`), which until this test was free -- the whole
+  // suite stayed at 1805 pass / 0 fail without it. `target` is planner-authored
+  // and unbounded by the registry, so it is the one input that can shove the
+  // roster back out of the digest's 200-char window and restore the exact defect
+  // this PR repairs. The case above cannot catch it: 24 is the boundary where
+  // the ternary takes the else branch, so it pins the unclipped side. Even a
+  // 25-char target would not catch it, because a 25-char echo still leaves the
+  // roster ending near 150. It takes an adversarial length to separate them.
+  //
+  // A chat-sourced blob rather than "x".repeat(300): the planner reads untrusted
+  // text (#681's create_buy_order template arrived that way), and a whole
+  // sentence pasted into `target` is the shape that actually shows up.
+  test("an adversarially long target cannot push the roster out of the clip", async () => {
+    expect(LONG_TARGET.length).toBeGreaterThan(200);
+
+    const shown = await expectRosterSurvivesClip(LONG_TARGET);
+    expect(shown).not.toContain(LONG_TARGET); // the echo was clipped, not passed through
+  });
+
+  // NOT a desired behavior. This pins a known CEILING so the number cannot rot
+  // in a comment, which is the same failure class as a stale ablation receipt.
+  //
+  // The fit the two cases above pin is a property of the CURRENT three-pilot
+  // fleet, not of the message. Measured against the real strings: the fixed text
+  // plus a clipped 25-char echo puts the roster's first character at 90, three
+  // maximum-length usernames run 60 more (ends 150, fits), four run 117 (ends
+  // 207, outside the 200-char window). The fourth pilot is the one that vanishes.
+  //
+  // What makes this worth a test rather than a comment is the SHAPE of the
+  // failure, not the arithmetic. At four pilots the guarantee does not simply
+  // end -- it becomes CONDITIONAL ON THE TARGET, which is planner-authored and
+  // therefore the one input an attacker or a confused model controls. A short
+  // target still fits (ends 198). The long target from the case above does not.
+  // So the roster would reach the planner in exactly the situations where the
+  // planner is behaving, and vanish in the situations the correction channel
+  // exists for. Both halves are asserted here because the conditional is the
+  // finding; asserting only the overflow would read as "N=4 is broken" and
+  // invite a fix that widens the short-target case and leaves the real one.
+  //
+  // When a fourth pilot joins agents.yaml this test goes red. The fix is to stop
+  // echoing the roster whole: elide to the nearest few, or clip the roster the
+  // way the target is clipped. No test can read agents.yaml, so this assertion is
+  // the only thing standing between a fourth pilot and a silent return of the
+  // #703-era defect.
+  test("KNOWN CEILING: at four pilots the roster's fit becomes target-dependent", async () => {
+    const fourMaxLen = [
+      "Quintessa Rockhopper-III", "Bartholomew Sternwind-Jr",
+      "Persephone Vandergraff-X", "Maximilian Thornebury-IV",
+    ];
+    for (const u of fourMaxLen) expect(u.length).toBe(24);
+    const lastPilot = fourMaxLen[3]!;
+    const clipOf = async (target: string) => {
+      const { r } = await runDeposit({ target, credits: 27 }, fourMaxLen);
+      expect(r.kind).toBe("blocked");
+      return clipUntrusted(r.kind === "blocked" ? r.reason : "");
+    };
+
+    // A well-behaved target: the whole roster still arrives, at 198 of 200.
+    expect(await clipOf("Helpful Stranger")).toContain(lastPilot);
+
+    // A hostile one: the clip holds the echo to 25, and the roster still ends at
+    // 207. The last pilot is cut, exactly as all three were before #788.
+    expect(await clipOf(LONG_TARGET)).not.toContain(lastPilot);
   });
 
   // Breakage caught: collapsing the normalizer's two ORDERED lookups into the
@@ -413,10 +508,20 @@ describe("gift target resolution at plan admission (issue #788)", () => {
 // {id, username} pair, and Agent's constructor derives the guard's flat accept
 // set from it. Nothing in the suite constructed an Agent with a fleetRoster --
 // `git grep fleetUsernames origin/main -- test/` returns nothing -- so that
-// derivation was untested. Measured, not asserted: with that map inverted to
-// `.map((p) => p.id)`, the full suite reports 1800 pass / 1 fail and the one
-// failure is the test below. Exercised end-to-end for the same reason the #681
-// round-2 guard is: the defect would live in the seam, not in either half.
+// derivation was untested.
+//
+// Measured, not asserted: invert that map to `.map((p) => p.id)` and the ONLY
+// failures in the whole suite are the two tests in this block. The receipt is
+// written that way on purpose. An earlier draft said "1800 pass / 1 fail", and
+// it stopped being true inside the very commit that introduced it, because the
+// second test below was added in the same change. A receipt phrased as a ratio
+// of moving totals rots every time anyone adds a test; one phrased as "these
+// tests and nothing outside them" survives. The absolute count when this was
+// last run was 1805 pass / 1 skip / 2 fail, useful as a sanity check and not as
+// the claim.
+//
+// Exercised end-to-end for the same reason the #681 round-2 guard is: the defect
+// would live in the seam, not in either half.
 describe("the roster reaches the guard as usernames, end to end (issue #788)", () => {
   const config: AgentConfig = {
     fuelPct: 20, hullPct: 30, heartbeatMinutes: 15, wakeNotificationTypes: ["combat", "chat"],
