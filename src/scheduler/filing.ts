@@ -386,6 +386,75 @@ interface NearMatchHit {
 // the `truncated` signal below is how anyone finds out it happened.
 const NEAR_MATCH_FETCH_LIMIT = 400;
 
+// --- consumer presence signal (task 1 of the consumer-gate plan) -----------
+//
+// 362 issues filed since 2026-08-01 by four cron ceremonies, 354 still open,
+// last close 2026-08-12: the producer works, nothing reads the output. This
+// is the presence signal only — pure, unwired, no call site in this task.
+//
+// A judgment call, not a measured value: shorter than 7 days reads a slow
+// triager as briefly absent (bumps continue uninterrupted, one real close
+// resumes creates within the shorter window); longer accumulates more unread
+// backlog after a bulk-close-and-leave before creation gates back on
+// (roughly 8 new issues/day × window). Operator chose 7 days, 2026-09-06.
+export const CONSUMER_EVIDENCE_WINDOW_MS = 7 * 86_400_000;
+
+export type ConsumerProbe = "present" | "absent" | "error";
+
+// "unusable" is internal: it means "this attempt couldn't be read" (bad exit,
+// unparseable JSON, non-array shape), distinct from "absent" (readable, no
+// row in the window). probeConsumerAction only ever returns "error" once
+// BOTH attempts land here — see the fallback receipt below.
+function attempt(gh: GhRunner, args: string[], now: number): "present" | "absent" | "unusable" {
+  let hits: unknown;
+  try {
+    hits = JSON.parse(run(gh, args));
+  } catch {
+    return "unusable"; // covers run()'s non-zero-exit throw AND a JSON parse failure
+  }
+  if (!Array.isArray(hits)) return "unusable";
+  for (const row of hits as Array<{ closedAt?: unknown }>) {
+    const t = Date.parse(typeof row?.closedAt === "string" ? row.closedAt : "");
+    const age = now - t;
+    // age >= 0 is load-bearing: a backward host-clock skew makes a stale
+    // close read as future-dated, and this fails it closed (absent) instead
+    // of treating clock skew as fresh evidence of a live consumer.
+    if (Number.isFinite(t) && age >= 0 && age <= CONSUMER_EVIDENCE_WINDOW_MS) return "present";
+  }
+  return "absent";
+}
+
+/**
+ * Is anyone actually closing machine-filed issues? Client-side window is
+ * authoritative — the --search qualifier below is a narrowing hint gh may or
+ * may not honor server-side, never trusted on its own (test (b) pins this:
+ * a 400-day-old row still reads "absent" even though a stub server that
+ * ignores --search would return it).
+ *
+ * Fallback receipt: --search is the one part of this change that cannot be
+ * verified offline under the no-live-calls rule (its query-DSL acceptance is
+ * gh/GitHub server behavior, not this module's). Its failure mode with no
+ * fallback is permanent silent suppression of the whole producer — a rejected
+ * --search value would make every cycle read "error" forever. The fallback
+ * (identical call, --search dropped) is what keeps a real search-syntax
+ * rejection from being indistinguishable from an actually-absent consumer.
+ */
+export function probeConsumerAction(gh: GhRunner, now: number): ConsumerProbe {
+  const since = new Date(now - CONSUMER_EVIDENCE_WINDOW_MS).toISOString().slice(0, 10);
+  const primary = attempt(
+    gh,
+    ["issue", "list", "--state", "closed", "--label", MACHINE_LABEL, "--limit", "100", "--search", `closed:>=${since}`, "--json", "number,closedAt"],
+    now,
+  );
+  if (primary !== "unusable") return primary;
+  const fallback = attempt(
+    gh,
+    ["issue", "list", "--state", "closed", "--label", MACHINE_LABEL, "--limit", "100", "--json", "number,closedAt"],
+    now,
+  );
+  return fallback === "unusable" ? "error" : fallback;
+}
+
 /**
  * How the near-match scan went. The distinction is the whole point: a clean
  * miss and a scan that could not read its own input both produce "no bump",

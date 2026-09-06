@@ -5,11 +5,13 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CONSUMER_EVIDENCE_WINDOW_MS,
   FILING_REPO,
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
   MACHINE_LABEL,
   fileFinding,
+  probeConsumerAction,
   readActiveCycle,
   writeActiveCycle,
   type GhRunner,
@@ -482,5 +484,65 @@ describe("file-finding CLI (base64 argv body)", () => {
     writeFileSync(join(dir, "gates.json"), JSON.stringify({ fileFindings: { enabled: false } }));
     const res = runCli(["--dedup-key", "k", "--title", "t", "--body-b64", b64("a finding body")], dir);
     expect(res.exitCode).toBe(3);
+  });
+});
+
+// Task 1 of the consumer-gate plan: the presence signal, driven directly with
+// purpose-built GhRunners (not the shared fakeGh — it only speaks the
+// finding-filer's own list/create shapes, not this probe's).
+describe("consumer presence probe", () => {
+  const NOW = Date.now();
+  const closedDaysAgo = (days: number) => new Date(NOW - days * DAY).toISOString();
+
+  const rowsGh = (rows: Array<{ number: number; closedAt: string }>): GhRunner => (args) => {
+    if (args[0] === "issue" && args[1] === "list") return { stdout: JSON.stringify(rows), exitCode: 0 };
+    return { stdout: "", exitCode: 0 };
+  };
+
+  const failingGh: GhRunner = () => ({ stdout: "boom", exitCode: 1 });
+
+  // Catches: a live consumer read as absent — a close inside the window is
+  // "present" regardless of what the --search server-side hint did or didn't
+  // filter (this stub honors no query at all).
+  test("a row closed 1 day ago ⇒ present", () => {
+    const gh = rowsGh([{ number: 1, closedAt: closedDaysAgo(1) }]);
+    expect(probeConsumerAction(gh, NOW)).toBe("present");
+  });
+
+  // Catches: trusting the server-side --search hint instead of the client
+  // window — this stub ignores --search entirely and returns the row anyway,
+  // so only the client-side age check can produce "absent" here.
+  test("a row closed 400 days ago ⇒ absent (client-side window, not the server's)", () => {
+    const gh = rowsGh([{ number: 2, closedAt: closedDaysAgo(400) }]);
+    expect(probeConsumerAction(gh, NOW)).toBe("absent");
+  });
+
+  // Catches: an unreadable answer misreported as "no evidence" — both the
+  // primary and fallback attempts fail closed, so the whole probe is "error",
+  // never silently "absent".
+  test("both the --search call and the fallback exit non-zero ⇒ error", () => {
+    expect(probeConsumerAction(failingGh, NOW)).toBe("error");
+  });
+
+  // Catches: a --search rejection permanently suppressing the signal — the
+  // fallback (identical call, --search dropped) must still answer "present"
+  // when the plain call can.
+  test("the --search-bearing call exits 1, the plain fallback finds a 1-day-old close ⇒ present", () => {
+    const gh: GhRunner = (args) => {
+      if (args.includes("--search")) return { stdout: "rejected", exitCode: 1 };
+      return { stdout: JSON.stringify([{ number: 3, closedAt: closedDaysAgo(1) }]), exitCode: 0 };
+    };
+    expect(probeConsumerAction(gh, NOW)).toBe("present");
+  });
+
+  // Catches: backward host-clock skew read as fresh evidence — a closedAt
+  // that is FUTURE relative to `now` must not count as present.
+  test("a row closed 2 days in the future ⇒ absent", () => {
+    const gh = rowsGh([{ number: 4, closedAt: new Date(NOW + 2 * DAY).toISOString() }]);
+    expect(probeConsumerAction(gh, NOW)).toBe("absent");
+  });
+
+  test("CONSUMER_EVIDENCE_WINDOW_MS is 7 days", () => {
+    expect(CONSUMER_EVIDENCE_WINDOW_MS).toBe(7 * DAY);
   });
 });
