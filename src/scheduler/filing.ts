@@ -525,12 +525,18 @@ function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
     if (typeof hit.body !== "string") continue;
     const candidateKey = readDedupKey(hit.body);
     if (candidateKey === undefined) continue;
-    // The notice is dedup'd through its own findDedupMatch call (see
-    // ensureSuppressionNotice), never through this near-match scan: its key
-    // shares 3 of 5 segments with a plausible agent-minted key such as
-    // `scheduler-filing-suppressed` (Jaccard exactly NEAR_MATCH_JACCARD),
-    // which would otherwise route a real finding onto the notice instead of
-    // filing it.
+    // The notice's own key shares 3 of 5 segments with a plausible
+    // agent-minted key such as `scheduler-filing-suppressed` (Jaccard exactly
+    // NEAR_MATCH_JACCARD), which would otherwise route a real finding onto
+    // the notice instead of filing it — this scan is one of TWO routes that
+    // feed fileFinding's bumpTarget, so closing it here is necessary but not
+    // sufficient. findDedupMatch (the exact-match tier, checked before this
+    // scan even runs) is the other route: whether its quoted-phrase GitHub
+    // search can also match the notice for a different key is a live-search
+    // tokenizer question this repo cannot settle offline, so fileFinding
+    // closes that route too, unconditionally, by refusing to comment on
+    // bumpTarget when it resolves to the notice issue — see the comment at
+    // that call site.
     if (candidateKey === SUPPRESSION_NOTICE_KEY) continue;
     // Tier 2 (exact normalized equality, #635) then tier 3 (anchored segment
     // overlap). Tier 2 is kept rather than folded in: it still catches a pair
@@ -763,7 +769,22 @@ export function fileFinding(
   const near: NearMatchResult | undefined = match ? undefined : findNearMatch(gh, dedupKey);
   const nearMatch: FilingLogEntry["nearMatch"] = near?.fetch ?? "skipped";
   const bumpTarget = match?.number ?? near?.issue;
-  if (bumpTarget !== undefined) {
+  // The notice must stay uncommented via BOTH routes that feed bumpTarget,
+  // not just findNearMatch's scan (guarded above by the SUPPRESSION_NOTICE_KEY
+  // check): findDedupMatch's `"<!-- sm-dedup:${dedupKey} -->" in:body` search
+  // is a quoted phrase, and whether GitHub's issue search tokenizes a quoted
+  // phrase over hyphens/HTML-comment punctuation is unverified — offline,
+  // this repo cannot make the live call to settle it. If it tokenizes, a key
+  // whose tokens are a prefix of the notice's own phrase-matches it (e.g.
+  // `scheduler-filing-suppressed`, the exact string floated as a plausible
+  // agent-minted key two comments up), so `match` can legitimately resolve
+  // to the notice issue with no near-match scan involved at all. Rather than
+  // resolve the tokenizer question, close both routes the same way: any
+  // resolved bumpTarget that turns out to BE the notice falls through to the
+  // consumer gate below instead of commenting, so a live recurrence is
+  // suppressed or filed fresh — never appended to the one thread this whole
+  // feature exists to keep quiet.
+  if (bumpTarget !== undefined && bumpTarget !== readNotice(stateDir)) {
     const scratch = writeScratchBody(stateDir, body);
     run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;

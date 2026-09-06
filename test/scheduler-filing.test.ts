@@ -773,5 +773,37 @@ describe("suppression notice (task 3)", () => {
     const res = fileFinding(gh, dir, { ...finding(), dedupKey: "scheduler-filing-suppressed" });
     expect(res.outcome).toBe("created");
   });
+
+  // (e) Catches: findDedupMatch — the OTHER route into bumpTarget, the
+  // exact-key `--state all` search checked BEFORE findNearMatch even runs —
+  // phrase-matching the notice for a different key. Whether GitHub's quoted
+  // `"<!-- sm-dedup:${key} -->" in:body` search tokenizes over hyphens and
+  // HTML-comment punctuation is unverified offline; this models the
+  // pessimistic case where it does, so `scheduler-filing-suppressed` (a
+  // token-prefix of the notice's own key) phrase-matches the notice. Consumer
+  // absent, so a real bump here would silently flood the standing notice —
+  // not the near-match tier (d) already covers, a second, independent route
+  // to the same crash site.
+  test("findDedupMatch phrase-matching the notice for a different key still suppresses, never bumps onto the notice", () => {
+    const dir = tmp();
+    const NOTICE_ISSUE = 777;
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), JSON.stringify({ issue: NOTICE_ISSUE }));
+    const calls: GhCall[] = [];
+    const gh: GhRunner = (args) => {
+      calls.push({ args, body: undefined });
+      if (args[0] === "issue" && args[1] === "list") {
+        const state = args[args.indexOf("--state") + 1];
+        if (state === "closed") return { stdout: "[]", exitCode: 0 }; // consumer absent
+        if (state === "open") return { stdout: "[]", exitCode: 0 }; // near-match: no hits (route (d) covers that tier)
+        // state === "all": models a tokenizing search phrase-matching the
+        // notice for a key that is a token-prefix of its own.
+        return { stdout: JSON.stringify([{ number: NOTICE_ISSUE, state: "OPEN", closedAt: null }]), exitCode: 0 };
+      }
+      return { stdout: "https://github.com/x/y/issues/900\n", exitCode: 0 };
+    };
+    const res = fileFinding(gh, dir, { ...finding(), dedupKey: "scheduler-filing-suppressed" });
+    expect(res.outcome).toBe("suppressed");
+    expect(calls.some((c) => c.args[1] === "comment" && c.args[2] === String(NOTICE_ISSUE))).toBe(false);
+  });
 });
 
