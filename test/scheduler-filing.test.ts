@@ -626,6 +626,12 @@ describe("consumer gate wired into fileFinding (task 2)", () => {
     expect(
       calls.some((c) => c.args[1] === "create" && (c.args[c.args.indexOf("--title") + 1] ?? "").includes("findings over cap")),
     ).toBe(false);
+    // Pins counter.count += 1 on BOTH suppressed paths. Without the fresh-create
+    // increment the 6th call never reaches the cap branch (count stays 0); without
+    // the cap increment it stops at 5. Either way this test was passing through a
+    // guard it does not believe it is exercising.
+    const counterFile = readdirSync(dir).filter((f) => f.startsWith("filing-"))[0]!;
+    expect(JSON.parse(readFileSync(join(dir, counterFile), "utf8")).count).toBe(6);
   });
 
   // Catches: the failure alarm becoming indistinguishable from ordinary
