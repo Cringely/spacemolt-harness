@@ -441,6 +441,12 @@ function attempt(gh: GhRunner, args: string[], now: number): "present" | "absent
  */
 export function probeConsumerAction(gh: GhRunner, now: number): ConsumerProbe {
   const since = new Date(now - CONSUMER_EVIDENCE_WINDOW_MS).toISOString().slice(0, 10);
+  // --limit 100 is bounded, not arbitrary: the primary query is already
+  // constrained server-side by `closed:>=${since}`, so any 100 in-window rows
+  // answer "present". The fallback below drops that qualifier and is the rare
+  // path (a rejected search DSL); there, 100 could miss a recent close if gh's
+  // default ordering buries it. That fails to "absent" — suppression, the safe
+  // direction, recoverable by closing any one issue.
   const primary = attempt(
     gh,
     ["issue", "list", "--state", "closed", "--label", MACHINE_LABEL, "--limit", "100", "--search", `closed:>=${since}`, "--json", "number,closedAt"],

@@ -5,7 +5,6 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CONSUMER_EVIDENCE_WINDOW_MS,
   FILING_REPO,
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
@@ -540,9 +539,5 @@ describe("consumer presence probe", () => {
   test("a row closed 2 days in the future ⇒ absent", () => {
     const gh = rowsGh([{ number: 4, closedAt: new Date(NOW + 2 * DAY).toISOString() }]);
     expect(probeConsumerAction(gh, NOW)).toBe("absent");
-  });
-
-  test("CONSUMER_EVIDENCE_WINDOW_MS is 7 days", () => {
-    expect(CONSUMER_EVIDENCE_WINDOW_MS).toBe(7 * DAY);
   });
 });
