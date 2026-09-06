@@ -525,6 +525,13 @@ function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
     if (typeof hit.body !== "string") continue;
     const candidateKey = readDedupKey(hit.body);
     if (candidateKey === undefined) continue;
+    // The notice is dedup'd through its own findDedupMatch call (see
+    // ensureSuppressionNotice), never through this near-match scan: its key
+    // shares 3 of 5 segments with a plausible agent-minted key such as
+    // `scheduler-filing-suppressed` (Jaccard exactly NEAR_MATCH_JACCARD),
+    // which would otherwise route a real finding onto the notice instead of
+    // filing it.
+    if (candidateKey === SUPPRESSION_NOTICE_KEY) continue;
     // Tier 2 (exact normalized equality, #635) then tier 3 (anchored segment
     // overlap). Tier 2 is kept rather than folded in: it still catches a pair
     // whose segments reduce to nothing at all, where tier 3 declines by design.
@@ -568,6 +575,89 @@ export interface FilingLogEntry {
 function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
   mkdirSync(stateDir, { recursive: true });
   appendFileSync(join(stateDir, FILING_LOG_FILE), `${JSON.stringify(entry)}\n`);
+}
+
+// --- one standing suppression notice (task 3 of the consumer-gate plan) ----
+//
+// The escape valve must not become the second flood: at ~8 findings/day,
+// commenting on a notice per suppressed finding would produce ~200 comments
+// per absence on one unreadable thread — the same wall this whole feature
+// exists to prevent. So the notice is created ONCE, its issue number is
+// persisted, and it is never commented on again; `finding-log.jsonl` (via
+// FilingLogEntry above) is the per-finding record.
+export const SUPPRESSION_NOTICE_FILE = "suppression-notice.json";
+
+interface SuppressionNoticeState {
+  issue: number;
+}
+
+function noticePath(dir: string): string {
+  return join(dir, SUPPRESSION_NOTICE_FILE);
+}
+
+// Same persisted-state tolerance as loadCounter: unreadable/corrupt state
+// degrades to "no notice yet" (re-derived below via findDedupMatch) rather
+// than crashing filing altogether.
+function readNotice(dir: string): number | null {
+  try {
+    const raw = JSON.parse(readFileSync(noticePath(dir), "utf8")) as Partial<SuppressionNoticeState>;
+    return typeof raw.issue === "number" ? raw.issue : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeNotice(dir: string, issue: number): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(noticePath(dir), JSON.stringify({ issue }));
+}
+
+// Lazy, memoized via the persisted file: the common case (a notice already
+// exists) costs zero gh calls. Cold start (file missing — a fresh scheduler
+// host, or state wiped) re-derives the number via findDedupMatch rather than
+// blindly creating: mirrors CycleCounter.summaryIssue, which this codebase
+// already chose over re-searching every call, because GitHub's issue-search
+// index lags a seconds-old create and a burst of suppressed findings would
+// otherwise each mint their own notice before the first create is indexed.
+function ensureSuppressionNotice(gh: GhRunner, stateDir: string, now: number): number | undefined {
+  const known = readNotice(stateDir);
+  if (known !== null) return known;
+
+  const hit = findDedupMatch(gh, SUPPRESSION_NOTICE_KEY, now);
+  if (hit) {
+    writeNotice(stateDir, hit.number);
+    return hit.number;
+  }
+
+  const body = [
+    "New-issue creation from the scheduler's automated ceremonies is currently suppressed.",
+    "",
+    `Ceremonies are still running and still bump an existing issue when a standing condition recurs — this backlog is not silently going stale. What is off is opening a FRESH issue for a brand-new finding: that only happens while at least one \`${MACHINE_LABEL}\` issue has been closed in the last ${CONSUMER_EVIDENCE_WINDOW_MS / 86_400_000} days, and none has.`,
+    "",
+    `Closing any one \`${MACHINE_LABEL}\` issue resumes creation on the very next filing attempt — no restart, no manual step.`,
+    "",
+    "Every suppressed finding is still recorded, just not as its own issue: the per-finding record lives in `finding-log.jsonl` on the scheduler host.",
+    "",
+    "This notice is created once and never commented on again.",
+    "",
+    `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`,
+  ].join("\n");
+  const scratch = writeScratchBody(stateDir, body);
+  const stdout = run(gh, [
+    "issue",
+    "create",
+    "--title",
+    "scheduler: new-issue filing is suppressed — no one is consuming the backlog",
+    "--label",
+    MACHINE_LABEL,
+    "--label",
+    DEFAULT_TRIAGE_LABEL,
+    "--body-file",
+    scratch,
+  ]);
+  const issue = parseIssueNumber(stdout);
+  if (issue !== undefined) writeNotice(stateDir, issue);
+  return issue;
 }
 
 export function fileFinding(
@@ -632,9 +722,10 @@ export function fileFinding(
     const overflowNote = `## ${title}\n\n${body}`;
     if (counter.summaryIssue === null) {
       if (!consumerAllows()) {
+        const notice = ensureSuppressionNotice(gh, stateDir, Date.now());
         counter.count += 1;
         saveCounter(stateDir, jobId, cycleId, counter);
-        return record("suppressed", undefined, "skipped", probe);
+        return record("suppressed", notice, "skipped", probe);
       }
       const scratch = writeScratchBody(
         stateDir,
@@ -684,9 +775,10 @@ export function fileFinding(
   // still bump its existing issue while nobody is closing issues — only a
   // condition new enough to have no open match gates on the probe.
   if (!consumerAllows()) {
+    const notice = ensureSuppressionNotice(gh, stateDir, Date.now());
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return record("suppressed", undefined, nearMatch, probe);
+    return record("suppressed", notice, nearMatch, probe);
   }
 
   // (a)(2): label + provenance on every created issue. Priority label too

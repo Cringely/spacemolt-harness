@@ -9,6 +9,7 @@ import {
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
   MACHINE_LABEL,
+  SUPPRESSION_NOTICE_FILE,
   SUPPRESSION_NOTICE_KEY,
   fileFinding,
   probeConsumerAction,
@@ -582,7 +583,10 @@ describe("consumer gate wired into fileFinding (task 2)", () => {
     const { gh, calls } = fakeGh([], { consumerClosedAt: null });
     const res = fileFinding(gh, dir, finding());
     expect(res.outcome).toBe("suppressed");
-    expect(res.issue).toBeUndefined();
+    // Task 3: a suppressed outcome now carries the standing notice's issue
+    // number (not undefined) — the notice is the one visible trace a
+    // suppressed finding leaves in the tracker.
+    expect(res.issue).toBeDefined();
     expect(calls.some((c) => c.args[1] === "create" && c.args[c.args.indexOf("--title") + 1] === finding().title)).toBe(
       false,
     );
@@ -664,3 +668,110 @@ describe("consumer gate wired into fileFinding (task 2)", () => {
     expect(calls.length).toBe(0);
   });
 });
+// Task 3 of the consumer-gate plan: one standing suppression notice. Created
+// once, its issue number persisted, never commented on — the escape valve
+// must not become the second flood (~8 findings/day would mean ~200 comments
+// per absence on one unreadable thread).
+describe("suppression notice (task 3)", () => {
+  // A dedicated fake that distinguishes the three query shapes fileFinding
+  // actually makes (dedup: --state all; near-match: --state open --label;
+  // consumer probe: --state closed), unlike the generic fakeGh() above which
+  // answers every non-closed `issue list` from one canned array — too coarse
+  // once a seeded issue must answer ONE of those queries and not the others.
+  function seededGh(
+    issues: Array<{ number: number; state: string; body: string; closedAt: string | null }>,
+    opts: { consumerClosedAt?: string | null } = {},
+  ) {
+    const calls: GhCall[] = [];
+    let nextIssue = 900;
+    const gh: GhRunner = (args) => {
+      const bodyIdx = args.indexOf("--body-file");
+      const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
+      calls.push({ args, body });
+      if (args[0] === "issue" && args[1] === "list") {
+        const state = args[args.indexOf("--state") + 1];
+        if (state === "closed") {
+          const closedAt = opts.consumerClosedAt === undefined ? null : opts.consumerClosedAt;
+          return { stdout: closedAt === null ? "[]" : JSON.stringify([{ number: 1, closedAt }]), exitCode: 0 };
+        }
+        if (state === "open") {
+          // near-match fetch: label machine-filed, --json number,body — no
+          // server-side key filtering, matches production's own query shape.
+          return { stdout: JSON.stringify(issues.map((i) => ({ number: i.number, body: i.body }))), exitCode: 0 };
+        }
+        // state === "all": findDedupMatch's exact-phrase search. A real gh
+        // filters server-side by the quoted marker; simulate that instead of
+        // returning every seeded issue regardless of which key was searched.
+        const searchArg = args[args.indexOf("--search") + 1] ?? "";
+        const marker = searchArg.match(/<!-- sm-dedup:([^ ]+) -->/)?.[1];
+        const hits = issues.filter((i) => marker !== undefined && i.body.includes(`<!-- sm-dedup:${marker} -->`));
+        return {
+          stdout: JSON.stringify(hits.map(({ number, state: s, closedAt }) => ({ number, state: s, closedAt }))),
+          exitCode: 0,
+        };
+      }
+      if (args[0] === "issue" && args[1] === "create") return { stdout: `https://github.com/x/y/issues/${nextIssue++}\n`, exitCode: 0 };
+      return { stdout: "", exitCode: 0 };
+    };
+    return { gh, calls };
+  }
+
+  // (a) Catches: the escape valve becoming the second flood — a search-index
+  // lag (issue list always answers []) must not mint one notice per
+  // suppressed finding across different cycles sharing one state dir.
+  test("three suppressed findings across three cycles create the notice exactly once, sharing its number", () => {
+    const dir = tmp();
+    const { gh, calls } = seededGh([], { consumerClosedAt: null });
+    const outcomes = [1, 2, 3].map((n) => fileFinding(gh, dir, { ...finding(n), cycleId: `standup-${n}` }));
+    for (const o of outcomes) expect(o.outcome).toBe("suppressed");
+    const noticeIssue = outcomes[0]!.issue;
+    expect(noticeIssue).toBeDefined();
+    for (const o of outcomes) expect(o.issue).toBe(noticeIssue);
+    expect(calls.filter((c) => c.args[1] === "create").length).toBe(1);
+    expect(JSON.parse(readFileSync(join(dir, SUPPRESSION_NOTICE_FILE), "utf8")).issue).toBe(noticeIssue);
+  });
+
+  // (b) Catches: the notice becoming a per-finding transcript — a comment per
+  // suppression is the exact wall this feature exists to prevent.
+  test("repeated suppression never comments on the notice", () => {
+    const dir = tmp();
+    const { gh, calls } = seededGh([], { consumerClosedAt: null });
+    let noticeIssue: number | undefined;
+    for (let n = 1; n <= 3; n++) {
+      const res = fileFinding(gh, dir, { ...finding(n), cycleId: `standup-${n}` });
+      noticeIssue = res.issue;
+    }
+    expect(calls.some((c) => c.args[1] === "comment" && c.args[2] === String(noticeIssue))).toBe(false);
+  });
+
+  // (c) Catches: a cold start (state file missing) re-flooding the tracker
+  // with a duplicate notice instead of recovering the existing one.
+  test("cold start recovers a persisted notice from an existing open issue and re-persists it", () => {
+    const dir = tmp();
+    const NOTICE_ISSUE = 777;
+    const { gh, calls } = seededGh(
+      [{ number: NOTICE_ISSUE, state: "OPEN", body: `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`, closedAt: null }],
+      { consumerClosedAt: null },
+    );
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("suppressed");
+    expect(res.issue).toBe(NOTICE_ISSUE);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, SUPPRESSION_NOTICE_FILE), "utf8")).issue).toBe(NOTICE_ISSUE);
+  });
+
+  // (d) Catches: findNearMatch's segment-overlap scan silently bumping a real,
+  // new finding onto the notice because their keys share enough segments
+  // (scheduler-filing-suppressed vs. scheduler-filing-suppressed-no-consumer
+  // sit at exactly NEAR_MATCH_JACCARD). Consumer present, so this must create.
+  test("a near-match key against the notice still creates, never bumps onto the notice", () => {
+    const dir = tmp();
+    const { gh } = seededGh(
+      [{ number: 777, state: "OPEN", body: `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`, closedAt: null }],
+      { consumerClosedAt: new Date(Date.now() - DAY).toISOString() },
+    );
+    const res = fileFinding(gh, dir, { ...finding(), dedupKey: "scheduler-filing-suppressed" });
+    expect(res.outcome).toBe("created");
+  });
+});
+
