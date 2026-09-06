@@ -52,7 +52,7 @@ export interface FindingInput {
 }
 
 export interface FindingOutcome {
-  outcome: "created" | "bumped" | "capped";
+  outcome: "created" | "bumped" | "capped" | "suppressed";
   issue?: number;
 }
 
@@ -401,6 +401,15 @@ export const CONSUMER_EVIDENCE_WINDOW_MS = 7 * 86_400_000;
 
 export type ConsumerProbe = "present" | "absent" | "error";
 
+// Task 3 files a per-cycle "filing is suppressed, nobody is closing issues"
+// notice under this key, so its own bump path goes through the ordinary
+// dedup route like any other finding. Reserved here (task 2) rather than at
+// task 3's own call site: fileFinding's dedup key is caller-supplied and
+// DEDUP_KEY_RE would happily accept this exact string from a spawned agent,
+// which could then bump (or, worse, read the intent of) a notice it doesn't
+// own. The guard below in fileFinding closes that before task 3 exists.
+export const SUPPRESSION_NOTICE_KEY = "scheduler-filing-suppressed-no-consumer";
+
 // "unusable" is internal: it means "this attempt couldn't be read" (bad exit,
 // unparseable JSON, non-array shape), distinct from "absent" (readable, no
 // row in the window). probeConsumerAction only ever returns "error" once
@@ -547,10 +556,13 @@ export interface FilingLogEntry {
   jobId: string;
   cycleId: string;
   key: string;
+  title: string;
   outcome: FindingOutcome["outcome"];
   issue: number | null;
   /** "skipped" = an exact-key match or the cap path pre-empted the scan. */
   nearMatch: "skipped" | NearMatchFetch;
+  /** "skipped" = the consumer gate was never consulted (bump path, or bypassed). */
+  consumer: ConsumerProbe | "skipped";
 }
 
 function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
@@ -558,10 +570,20 @@ function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
   appendFileSync(join(stateDir, FILING_LOG_FILE), `${JSON.stringify(entry)}\n`);
 }
 
-export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput): FindingOutcome {
+export function fileFinding(
+  gh: GhRunner,
+  stateDir: string,
+  input: FindingInput,
+  opts?: { bypassConsumerGate?: boolean },
+): FindingOutcome {
   const { jobId, cycleId, dedupKey, title, body: rawBody } = input;
   if (!DEDUP_KEY_RE.test(dedupKey)) {
     throw new FilingInputError(`dedup-key must match ${DEDUP_KEY_RE} (got: ${JSON.stringify(dedupKey)})`);
+  }
+  // Reserved for task 3's own suppression notice — see SUPPRESSION_NOTICE_KEY.
+  // DEDUP_KEY_RE alone would accept this string from a spawned agent.
+  if (dedupKey === SUPPRESSION_NOTICE_KEY) {
+    throw new FilingInputError("dedup-key is reserved by the filer");
   }
   // Cap the incoming body before any gh call (the CLI also caps at its STDIN read).
   if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
@@ -572,19 +594,35 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   const marker = `<!-- sm-dedup:${dedupKey} -->`;
   const body = `${rawBody.trimEnd()}\n\n${marker}\n${provenance}\n`;
 
+  // Consumer gate (task 2 of the consumer-gate plan): lazy and memoized, so a
+  // bump — the common case, 354 of 362 issues since 2026-08-01 stayed open —
+  // never spends a gh call finding out whether anyone is closing issues.
+  // `Date.now()` matches this function's own existing idiom (the dedup call
+  // below already reads the clock inline rather than taking a threaded `now`)
+  // — fileFinding has no `now` in scope to thread, unlike probeConsumerAction.
+  let probe: ConsumerProbe | "skipped" = "skipped";
+  const consumerAllows = (): boolean => {
+    if (opts?.bypassConsumerGate) return true;
+    if (probe === "skipped") probe = probeConsumerAction(gh, Date.now());
+    return probe === "present";
+  };
+
   const record = (
     outcome: FindingOutcome["outcome"],
     issue: number | undefined,
     nearMatch: FilingLogEntry["nearMatch"],
+    consumer: ConsumerProbe | "skipped",
   ): FindingOutcome => {
     appendFilingLog(stateDir, {
       ts: new Date().toISOString(),
       jobId,
       cycleId,
       key: dedupKey,
+      title,
       outcome,
       issue: issue ?? null,
       nearMatch,
+      consumer,
     });
     return { outcome, issue };
   };
@@ -593,6 +631,11 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   if (counter.count >= FINDINGS_PER_CYCLE_CAP) {
     const overflowNote = `## ${title}\n\n${body}`;
     if (counter.summaryIssue === null) {
+      if (!consumerAllows()) {
+        counter.count += 1;
+        saveCounter(stateDir, jobId, cycleId, counter);
+        return record("suppressed", undefined, "skipped", probe);
+      }
       const scratch = writeScratchBody(
         stateDir,
         `Per-cycle finding cap (${FINDINGS_PER_CYCLE_CAP}) reached; further findings from this cycle append here instead of opening new issues.\n\n${provenance}\n\n${overflowNote}`,
@@ -616,7 +659,7 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
     }
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return record("capped", counter.summaryIssue ?? undefined, "skipped");
+    return record("capped", counter.summaryIssue ?? undefined, "skipped", probe);
   }
 
   // (a)(1)+(a)(3): dedup across open and recently-closed; a match is bumped.
@@ -634,7 +677,16 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
     run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return record("bumped", bumpTarget, nearMatch);
+    return record("bumped", bumpTarget, nearMatch, probe);
+  }
+
+  // Consumer gate, checked AFTER dedup on purpose: a genuine recurrence must
+  // still bump its existing issue while nobody is closing issues — only a
+  // condition new enough to have no open match gates on the probe.
+  if (!consumerAllows()) {
+    counter.count += 1;
+    saveCounter(stateDir, jobId, cycleId, counter);
+    return record("suppressed", undefined, nearMatch, probe);
   }
 
   // (a)(2): label + provenance on every created issue. Priority label too
@@ -655,5 +707,5 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   ]);
   counter.count += 1;
   saveCounter(stateDir, jobId, cycleId, counter);
-  return record("created", parseIssueNumber(stdout), nearMatch);
+  return record("created", parseIssueNumber(stdout), nearMatch, probe);
 }

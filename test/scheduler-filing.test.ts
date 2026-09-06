@@ -9,6 +9,7 @@ import {
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
   MACHINE_LABEL,
+  SUPPRESSION_NOTICE_KEY,
   fileFinding,
   probeConsumerAction,
   readActiveCycle,
@@ -16,6 +17,8 @@ import {
   type GhRunner,
 } from "../src/scheduler/filing";
 import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
+import { fileFailureAlarm } from "../src/scheduler/failure-alarm";
+import type { JobId } from "../src/scheduler/state";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "sched-filing-"));
 const DAY = 86_400_000;
@@ -27,14 +30,29 @@ interface GhCall {
 
 // Canned gh: `issue list` answers from `listResponse`, `issue create` mints
 // sequential numbers, everything else succeeds silently.
-function fakeGh(listResponse: Array<{ number: number; state: string; closedAt: string | null }>) {
+//
+// `--state closed` is the consumer probe's own signature (findDedupMatch uses
+// `all`, findNearMatch uses `open`), so it is checked FIRST and answered from
+// `opts.consumerClosedAt` — default a 1-day-old close (consumer present) so
+// every existing call site below keeps behaving exactly as it did before the
+// gate existed; pass `consumerClosedAt: null` to simulate no consumer.
+function fakeGh(
+  listResponse: Array<{ number: number; state: string; closedAt: string | null }>,
+  opts: { consumerClosedAt?: string | null } = {},
+) {
   const calls: GhCall[] = [];
   let nextIssue = 100;
   const gh: GhRunner = (args) => {
     const bodyIdx = args.indexOf("--body-file");
     const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
     calls.push({ args, body });
-    if (args[0] === "issue" && args[1] === "list") return { stdout: JSON.stringify(listResponse), exitCode: 0 };
+    if (args[0] === "issue" && args[1] === "list") {
+      if (args[args.indexOf("--state") + 1] === "closed") {
+        const closedAt = opts.consumerClosedAt === undefined ? new Date(Date.now() - DAY).toISOString() : opts.consumerClosedAt;
+        return { stdout: closedAt === null ? "[]" : JSON.stringify([{ number: 1, closedAt }]), exitCode: 0 };
+      }
+      return { stdout: JSON.stringify(listResponse), exitCode: 0 };
+    }
     if (args[0] === "issue" && args[1] === "create")
       return { stdout: `https://github.com/x/y/issues/${nextIssue++}\n`, exitCode: 0 };
     return { stdout: "", exitCode: 0 };
@@ -273,6 +291,12 @@ describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
       const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
       calls.push({ args, body });
       if (args[0] === "issue" && args[1] === "list") {
+        // `--state closed` is the consumer probe's own signature — answered
+        // present (a 1-day-old close) so every outcome assertion below keeps
+        // exercising dedup/near-match, not the gate this file doesn't test.
+        if (args[args.indexOf("--state") + 1] === "closed") {
+          return { stdout: JSON.stringify([{ number: 1, closedAt: new Date(Date.now() - DAY).toISOString() }]), exitCode: 0 };
+        }
         // findDedupMatch's exact-marker search (--search present) never has a
         // literal-text match here by construction (the whole point is that
         // the two calls use DIFFERENT literal keys) — empty is correct, not
@@ -354,7 +378,12 @@ describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
   test("malformed near-match JSON ⇒ files fresh, never throws", () => {
     const dir = tmp();
     const stub: GhRunner = (args) => {
-      if (args[0] === "issue" && args[1] === "list") return { stdout: "not json", exitCode: 0 };
+      if (args[0] === "issue" && args[1] === "list") {
+        if (args[args.indexOf("--state") + 1] === "closed") {
+          return { stdout: JSON.stringify([{ number: 1, closedAt: new Date(Date.now() - DAY).toISOString() }]), exitCode: 0 };
+        }
+        return { stdout: "not json", exitCode: 0 };
+      }
       if (args[0] === "issue" && args[1] === "create") return { stdout: "https://github.com/x/y/issues/300\n", exitCode: 0 };
       return { stdout: "", exitCode: 0 };
     };
@@ -539,5 +568,93 @@ describe("consumer presence probe", () => {
   test("a row closed 2 days in the future ⇒ absent", () => {
     const gh = rowsGh([{ number: 4, closedAt: new Date(NOW + 2 * DAY).toISOString() }]);
     expect(probeConsumerAction(gh, NOW)).toBe("absent");
+  });
+});
+
+// Task 2 of the consumer-gate plan: the probe wired into both fileFinding
+// create sites. Bumps are untouched — a persisting condition still bumps its
+// existing issue every cycle no matter how long the backlog goes unread.
+describe("consumer gate wired into fileFinding (task 2)", () => {
+  // Catches: a suppressed cycle silently creating anyway. `consumerClosedAt:
+  // null` makes the probe answer "absent" (fakeGh's --state closed branch).
+  test("consumer absent, no dedup/near match ⇒ suppressed, no create carries the finding's title", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([], { consumerClosedAt: null });
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("suppressed");
+    expect(res.issue).toBeUndefined();
+    expect(calls.some((c) => c.args[1] === "create" && c.args[c.args.indexOf("--title") + 1] === finding().title)).toBe(
+      false,
+    );
+  });
+
+  // Catches: the gate reordered ahead of dedup — a genuine recurrence must
+  // keep bumping its own issue regardless of consumer state. Asserting NO
+  // call carries `--state closed` proves the probe was never even reached
+  // (lazy + ordered after dedup), not merely that it answered the right way.
+  test("consumer absent, open dedup match ⇒ still bumped, probe never consulted", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([{ number: 42, state: "OPEN", closedAt: null }], { consumerClosedAt: null });
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(42);
+    expect(calls.some((c) => c.args[c.args.indexOf("--state") + 1] === "closed")).toBe(false);
+  });
+
+  // Catches: the gate becoming a permanent lockout instead of a live read —
+  // a present consumer must still let a genuinely new finding through.
+  test("consumer present ⇒ created, with the agent's own title", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]); // default consumerClosedAt: 1 day ago ⇒ present
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("created");
+    const create = calls.find((c) => c.args[1] === "create")!;
+    expect(create.args[create.args.indexOf("--title") + 1]).toBe(finding().title);
+  });
+
+  // Catches: gating only the fresh-create site and leaving the cap-overflow
+  // create unguarded — every finding in the cycle must stay suppressed, never
+  // a fresh "findings over cap" summary issue.
+  test("consumer absent, six findings in one cycle ⇒ every one suppressed, no over-cap summary create", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([], { consumerClosedAt: null });
+    for (let n = 1; n <= FINDINGS_PER_CYCLE_CAP; n++) {
+      expect(fileFinding(gh, dir, finding(n)).outcome).toBe("suppressed");
+    }
+    const sixth = fileFinding(gh, dir, finding(6));
+    expect(sixth.outcome).toBe("suppressed");
+    expect(
+      calls.some((c) => c.args[1] === "create" && (c.args[c.args.indexOf("--title") + 1] ?? "").includes("findings over cap")),
+    ).toBe(false);
+  });
+
+  // Catches: the failure alarm becoming indistinguishable from ordinary
+  // suppression during a no-consumer window — #558's whole founding purpose
+  // was a crash-looping ceremony staying visible. The alarm's key is
+  // code-minted and stable per job, so bypassConsumerGate is always safe here.
+  test("fileFailureAlarm bypasses the gate: consumer absent still creates, never probes", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([], { consumerClosedAt: null });
+    fileFailureAlarm(gh, dir, {
+      jobId: "council" as JobId,
+      cycleId: "council-1",
+      failStreak: 1,
+      timedOut: false,
+      exitCode: 1,
+    });
+    const create = calls.find((c) => c.args[1] === "create");
+    expect(create).toBeDefined();
+    expect(create!.body).toContain("<!-- sm-dedup:scheduler-council-fail -->");
+    expect(calls.some((c) => c.args[c.args.indexOf("--state") + 1] === "closed")).toBe(false);
+  });
+
+  // Catches: an agent minting the reserved notice key itself and bumping (or
+  // reading the intent of) a notice it does not own — closed before task 3
+  // ever creates one.
+  test("dedupKey === SUPPRESSION_NOTICE_KEY ⇒ rejected before any gh call", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    expect(() => fileFinding(gh, dir, { ...finding(), dedupKey: SUPPRESSION_NOTICE_KEY })).toThrow(FilingInputError);
+    expect(calls.length).toBe(0);
   });
 });
