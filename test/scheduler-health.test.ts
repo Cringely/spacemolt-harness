@@ -91,18 +91,34 @@ describe("--health probe (D-Health)", () => {
     });
     const writeLog = (dir: string, text: string) => writeFileSync(join(dir, FILING_LOG_FILE), text);
 
-    // Catches: the summary line dropping an outcome, miscounting the 24h
-    // window, or reading the wrong (not-newest) entry as "last".
+    // Catches: the summary line dropping an outcome, reading the wrong
+    // (not-newest) entry as "last", or the 24h window including an entry
+    // that falls outside it — e1 sits at 26h and must not be counted.
     test("(a) composes outcome, age, 24h counts, and consumer from three real entries", () => {
       const dir = fixture();
-      const e1 = entry({ ts: new Date(NOW - 20 * 3_600_000).toISOString(), outcome: "created", consumer: "present" });
+      const e1 = entry({ ts: new Date(NOW - 26 * 3_600_000).toISOString(), outcome: "created", consumer: "present" });
       const e2 = entry({ ts: new Date(NOW - 5 * 3_600_000).toISOString(), outcome: "suppressed", consumer: "absent" });
       const e3 = entry({ ts: new Date(NOW - 2 * 3_600_000).toISOString(), outcome: "suppressed", consumer: "absent" });
       writeLog(dir, [e1, e2, e3].map((e) => JSON.stringify(e)).join("\n") + "\n");
 
       const out = health(dir, JOBS, NOW);
       expect(out).toContain(
-        `filing: last suppressed ${e3.ts} (2h ago) | 24h created 1 bumped 0 suppressed 2 capped 0 | consumer absent`,
+        `filing: last suppressed ${e3.ts} (2h ago) | 24h created 0 bumped 0 suppressed 2 capped 0 | consumer absent`,
+      );
+    });
+
+    // Catches: a torn tail (readable entries plus garbage lines) rendering a
+    // clean summary that hides the unreadable lines — the partial form of
+    // the absent-vs-unreadable collapse (b)/(c) rule out on the extremes.
+    test("(a2) readable entries alongside garbage lines still surface the unreadable count", () => {
+      const dir = fixture();
+      const e1 = entry({ ts: new Date(NOW - 5 * 3_600_000).toISOString(), outcome: "suppressed", consumer: "absent" });
+      const e2 = entry({ ts: new Date(NOW - 2 * 3_600_000).toISOString(), outcome: "suppressed", consumer: "absent" });
+      writeLog(dir, [JSON.stringify(e1), "not json", JSON.stringify(e2), "{broken"].join("\n") + "\n");
+
+      const out = health(dir, JOBS, NOW);
+      expect(out).toContain(
+        `filing: last suppressed ${e2.ts} (2h ago) | 24h created 0 bumped 0 suppressed 2 capped 0 | consumer absent (2 unreadable lines)`,
       );
     });
 

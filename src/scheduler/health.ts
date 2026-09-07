@@ -45,7 +45,13 @@ function filingSummary(log: ReturnType<typeof readFilingLog>, now: number): stri
   const newest = log.entries.at(-1)!;
   const recent = log.entries.filter((e) => now - Date.parse(e.ts) <= DAY_MS);
   const count = (outcome: FilingLogEntry["outcome"]) => recent.filter((e) => e.outcome === outcome).length;
-  return `filing: last ${newest.outcome} ${when(Date.parse(newest.ts), now)} | 24h created ${count("created")} bumped ${count("bumped")} suppressed ${count("suppressed")} capped ${count("capped")} | consumer ${newest.consumer}`;
+  const summary = `filing: last ${newest.outcome} ${when(Date.parse(newest.ts), now)} | 24h created ${count("created")} bumped ${count("bumped")} suppressed ${count("suppressed")} capped ${count("capped")} | consumer ${newest.consumer}`;
+  // A torn tail (truncated last write) can make `.at(-1)` the SECOND-newest
+  // readable entry, silently dropping the actual newest one — e.g. the
+  // `consumer:"error"` record that should have triggered the loud line
+  // below. Some garbage lines alongside otherwise-good ones must stay
+  // visible here, not just on the all-garbage branch above.
+  return log.unreadable > 0 ? `${summary} (${log.unreadable} unreadable lines)` : summary;
 }
 
 function nextDue(job: JobDef, anchor: JobAnchor, now: number): string {
