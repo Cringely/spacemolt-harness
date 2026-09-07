@@ -52,7 +52,7 @@ export interface FindingInput {
 }
 
 export interface FindingOutcome {
-  outcome: "created" | "bumped" | "capped";
+  outcome: "created" | "bumped" | "capped" | "suppressed";
   issue?: number;
 }
 
@@ -344,10 +344,28 @@ interface DedupHit {
   number: number;
   state: string;
   closedAt: string | null;
+  body?: string;
 }
 
 // Open match, or the newest close within the window. Open wins over closed so
 // the bump lands where the conversation is still live.
+//
+// Excludes the standing suppression notice from every OTHER key's search:
+// GitHub ranks search hits by relevance, not literal substring containment,
+// so a query for `scheduler-filing-suppressed` can return the notice (whose
+// own marker is `scheduler-filing-suppressed-no-consumer`) ranked ahead of a
+// real match. Filtered here, at the producer, because this is the one call
+// site that has the body text to tell a real hit from a notice
+// false-positive by its marker — a caller holding only an issue number
+// cannot, and rejecting every hit that merely resolves to the notice's
+// number (rather than filtering the false-positive out and continuing) either
+// floods the notice or leaves a real duplicate unbumped.
+//
+// The `dedupKey !== SUPPRESSION_NOTICE_KEY` guard is required, not
+// decorative: ensureSuppressionNotice's own cold-start lookup calls this
+// function WITH that key to re-find the notice it already created. Filtering
+// unconditionally would filter out that answer too, minting a second notice
+// on every cold start.
 function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit | undefined {
   const stdout = run(gh, [
     "issue",
@@ -357,7 +375,7 @@ function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit |
     "--search",
     `"<!-- sm-dedup:${dedupKey} -->" in:body`, // quoted phrase — the key cannot smuggle search operators
     "--json",
-    "number,state,closedAt",
+    "number,state,closedAt,body",
   ]);
   let hits: DedupHit[];
   try {
@@ -365,6 +383,8 @@ function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit |
   } catch {
     return undefined; // unparseable dedup answer → file fresh rather than drop the finding
   }
+  if (dedupKey !== SUPPRESSION_NOTICE_KEY)
+    hits = hits.filter((h) => typeof h.body !== "string" || readDedupKey(h.body) !== SUPPRESSION_NOTICE_KEY);
   const open = hits.find((h) => h.state.toUpperCase() === "OPEN");
   if (open) return open;
   return hits
@@ -385,6 +405,90 @@ interface NearMatchHit {
 // repo that outgrows this needs a design revisit, not a bigger constant, and
 // the `truncated` signal below is how anyone finds out it happened.
 const NEAR_MATCH_FETCH_LIMIT = 400;
+
+// --- consumer presence signal (task 1 of the consumer-gate plan) -----------
+//
+// 362 issues filed since 2026-08-01 by four cron ceremonies, 354 still open,
+// last close 2026-08-12: the producer works, nothing reads the output. This
+// is the presence signal only — pure, unwired, no call site in this task.
+//
+// A judgment call, not a measured value: shorter than 7 days reads a slow
+// triager as briefly absent (bumps continue uninterrupted, one real close
+// resumes creates within the shorter window); longer accumulates more unread
+// backlog after a bulk-close-and-leave before creation gates back on
+// (roughly 8 new issues/day × window). Operator chose 7 days, 2026-09-06.
+export const CONSUMER_EVIDENCE_WINDOW_MS = 7 * 86_400_000;
+
+export type ConsumerProbe = "present" | "absent" | "error";
+
+// Task 3 files a per-cycle "filing is suppressed, nobody is closing issues"
+// notice under this key, so its own bump path goes through the ordinary
+// dedup route like any other finding. Reserved here (task 2) rather than at
+// task 3's own call site: fileFinding's dedup key is caller-supplied and
+// DEDUP_KEY_RE would happily accept this exact string from a spawned agent,
+// which could then bump (or, worse, read the intent of) a notice it doesn't
+// own. The guard below in fileFinding closes that before task 3 exists.
+export const SUPPRESSION_NOTICE_KEY = "scheduler-filing-suppressed-no-consumer";
+
+// "unusable" is internal: it means "this attempt couldn't be read" (bad exit,
+// unparseable JSON, non-array shape), distinct from "absent" (readable, no
+// row in the window). probeConsumerAction only ever returns "error" once
+// BOTH attempts land here — see the fallback receipt below.
+function attempt(gh: GhRunner, args: string[], now: number): "present" | "absent" | "unusable" {
+  let hits: unknown;
+  try {
+    hits = JSON.parse(run(gh, args));
+  } catch {
+    return "unusable"; // covers run()'s non-zero-exit throw AND a JSON parse failure
+  }
+  if (!Array.isArray(hits)) return "unusable";
+  for (const row of hits as Array<{ closedAt?: unknown }>) {
+    const t = Date.parse(typeof row?.closedAt === "string" ? row.closedAt : "");
+    const age = now - t;
+    // age >= 0 is load-bearing: a backward host-clock skew makes a stale
+    // close read as future-dated, and this fails it closed (absent) instead
+    // of treating clock skew as fresh evidence of a live consumer.
+    if (Number.isFinite(t) && age >= 0 && age <= CONSUMER_EVIDENCE_WINDOW_MS) return "present";
+  }
+  return "absent";
+}
+
+/**
+ * Is anyone actually closing machine-filed issues? Client-side window is
+ * authoritative — the --search qualifier below is a narrowing hint gh may or
+ * may not honor server-side, never trusted on its own (test (b) pins this:
+ * a 400-day-old row still reads "absent" even though a stub server that
+ * ignores --search would return it).
+ *
+ * Fallback receipt: --search is the one part of this change that cannot be
+ * verified offline under the no-live-calls rule (its query-DSL acceptance is
+ * gh/GitHub server behavior, not this module's). Its failure mode with no
+ * fallback is permanent silent suppression of the whole producer — a rejected
+ * --search value would make every cycle read "error" forever. The fallback
+ * (identical call, --search dropped) is what keeps a real search-syntax
+ * rejection from being indistinguishable from an actually-absent consumer.
+ */
+export function probeConsumerAction(gh: GhRunner, now: number): ConsumerProbe {
+  const since = new Date(now - CONSUMER_EVIDENCE_WINDOW_MS).toISOString().slice(0, 10);
+  // --limit 100 is bounded, not arbitrary: the primary query is already
+  // constrained server-side by `closed:>=${since}`, so any 100 in-window rows
+  // answer "present". The fallback below drops that qualifier and is the rare
+  // path (a rejected search DSL); there, 100 could miss a recent close if gh's
+  // default ordering buries it. That fails to "absent" — suppression, the safe
+  // direction, recoverable by closing any one issue.
+  const primary = attempt(
+    gh,
+    ["issue", "list", "--state", "closed", "--label", MACHINE_LABEL, "--limit", "100", "--search", `closed:>=${since}`, "--json", "number,closedAt"],
+    now,
+  );
+  if (primary !== "unusable") return primary;
+  const fallback = attempt(
+    gh,
+    ["issue", "list", "--state", "closed", "--label", MACHINE_LABEL, "--limit", "100", "--json", "number,closedAt"],
+    now,
+  );
+  return fallback === "unusable" ? "error" : fallback;
+}
 
 /**
  * How the near-match scan went. The distinction is the whole point: a clean
@@ -441,6 +545,16 @@ function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
     if (typeof hit.body !== "string") continue;
     const candidateKey = readDedupKey(hit.body);
     if (candidateKey === undefined) continue;
+    // The notice's own key shares 3 of 5 segments with a plausible
+    // agent-minted key such as `scheduler-filing-suppressed` (Jaccard exactly
+    // NEAR_MATCH_JACCARD), which would otherwise route a real finding onto
+    // the notice instead of filing it — this scan is one of TWO routes that
+    // feed fileFinding's bumpTarget, so closing it here is necessary but not
+    // sufficient. findDedupMatch (the exact-match tier, checked before this
+    // scan even runs) is the other route, and closes it the same way at its
+    // own source: it drops any hit whose body carries the notice's marker
+    // before it can become a match (see the comment there).
+    if (candidateKey === SUPPRESSION_NOTICE_KEY) continue;
     // Tier 2 (exact normalized equality, #635) then tier 3 (anchored segment
     // overlap). Tier 2 is kept rather than folded in: it still catches a pair
     // whose segments reduce to nothing at all, where tier 3 declines by design.
@@ -472,10 +586,13 @@ export interface FilingLogEntry {
   jobId: string;
   cycleId: string;
   key: string;
+  title: string;
   outcome: FindingOutcome["outcome"];
   issue: number | null;
   /** "skipped" = an exact-key match or the cap path pre-empted the scan. */
   nearMatch: "skipped" | NearMatchFetch;
+  /** "skipped" = the consumer gate was never consulted (bump path, or bypassed). */
+  consumer: ConsumerProbe | "skipped";
 }
 
 function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
@@ -483,10 +600,144 @@ function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
   appendFileSync(join(stateDir, FILING_LOG_FILE), `${JSON.stringify(entry)}\n`);
 }
 
-export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput): FindingOutcome {
+/**
+ * The health probe's read side of this log (task 4 of the consumer-gate
+ * plan). `present: false` means the log itself couldn't be read (missing
+ * file, or any other read failure) — distinct from `present: true` with zero
+ * parsed `entries`, which means the file exists but every line in it (or the
+ * slice we looked at) failed to parse. Collapsing those two into one boolean
+ * is exactly the "can't tell absent from unreadable" failure this project has
+ * been burned by seven times (see MEMORY.md); a health probe over this log
+ * must not repeat it.
+ *
+ * Split is CRLF-agnostic (`/\r?\n/`), a standing project invariant (three
+ * prior incidents from a bare `\n` split) — irrelevant to how appendFilingLog
+ * writes (always `\n`), relevant to how this file might be read back on a
+ * Windows checkout or after an editor round-trip.
+ */
+export function readFilingLog(
+  stateDir: string,
+  maxLines = 500,
+): { present: boolean; entries: FilingLogEntry[]; unreadable: number } {
+  let raw: string;
+  try {
+    raw = readFileSync(join(stateDir, FILING_LOG_FILE), "utf8");
+  } catch {
+    return { present: false, entries: [], unreadable: 0 };
+  }
+  const lines = raw
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .slice(-maxLines);
+  const entries: FilingLogEntry[] = [];
+  let unreadable = 0;
+  for (const line of lines) {
+    try {
+      entries.push(JSON.parse(line) as FilingLogEntry);
+    } catch {
+      unreadable++;
+    }
+  }
+  return { present: true, entries, unreadable };
+}
+
+// --- one standing suppression notice (task 3 of the consumer-gate plan) ----
+//
+// The escape valve must not become the second flood: at ~8 findings/day,
+// commenting on a notice per suppressed finding would produce ~200 comments
+// per absence on one unreadable thread — the same wall this whole feature
+// exists to prevent. So the notice is created ONCE, its issue number is
+// persisted, and it is never commented on again; `finding-log.jsonl` (via
+// FilingLogEntry above) is the per-finding record.
+export const SUPPRESSION_NOTICE_FILE = "suppression-notice.json";
+
+interface SuppressionNoticeState {
+  issue: number;
+}
+
+function noticePath(dir: string): string {
+  return join(dir, SUPPRESSION_NOTICE_FILE);
+}
+
+// Same persisted-state tolerance as loadCounter: unreadable/corrupt state
+// degrades to "no notice yet" (re-derived below via findDedupMatch) rather
+// than crashing filing altogether.
+function readNotice(dir: string): number | null {
+  try {
+    const raw = JSON.parse(readFileSync(noticePath(dir), "utf8")) as Partial<SuppressionNoticeState>;
+    return typeof raw.issue === "number" ? raw.issue : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeNotice(dir: string, issue: number): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(noticePath(dir), JSON.stringify({ issue }));
+}
+
+// Lazy, memoized via the persisted file: the common case (a notice already
+// exists) costs zero gh calls. Cold start (file missing — a fresh scheduler
+// host, or state wiped) re-derives the number via findDedupMatch rather than
+// blindly creating: mirrors CycleCounter.summaryIssue, which this codebase
+// already chose over re-searching every call, because GitHub's issue-search
+// index lags a seconds-old create and a burst of suppressed findings would
+// otherwise each mint their own notice before the first create is indexed.
+function ensureSuppressionNotice(gh: GhRunner, stateDir: string, now: number): number | undefined {
+  const known = readNotice(stateDir);
+  if (known !== null) return known;
+
+  const hit = findDedupMatch(gh, SUPPRESSION_NOTICE_KEY, now);
+  if (hit) {
+    writeNotice(stateDir, hit.number);
+    return hit.number;
+  }
+
+  const body = [
+    "New-issue creation from the scheduler's automated ceremonies is currently suppressed.",
+    "",
+    `Ceremonies are still running and still bump an existing issue when a standing condition recurs — this backlog is not silently going stale. What is off is opening a FRESH issue for a brand-new finding: that only happens while at least one \`${MACHINE_LABEL}\` issue has been closed in the last ${CONSUMER_EVIDENCE_WINDOW_MS / 86_400_000} days, and none has.`,
+    "",
+    `Closing any one \`${MACHINE_LABEL}\` issue resumes creation on the very next filing attempt — no restart, no manual step.`,
+    "",
+    "Every suppressed finding is still recorded, just not as its own issue: the per-finding record lives in `finding-log.jsonl` on the scheduler host.",
+    "",
+    "This notice is created once and never commented on again.",
+    "",
+    `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`,
+  ].join("\n");
+  const scratch = writeScratchBody(stateDir, body);
+  const stdout = run(gh, [
+    "issue",
+    "create",
+    "--title",
+    "scheduler: new-issue filing is suppressed — no one is consuming the backlog",
+    "--label",
+    MACHINE_LABEL,
+    "--label",
+    DEFAULT_TRIAGE_LABEL,
+    "--body-file",
+    scratch,
+  ]);
+  const issue = parseIssueNumber(stdout);
+  if (issue !== undefined) writeNotice(stateDir, issue);
+  return issue;
+}
+
+export function fileFinding(
+  gh: GhRunner,
+  stateDir: string,
+  input: FindingInput,
+  opts?: { bypassConsumerGate?: boolean },
+): FindingOutcome {
   const { jobId, cycleId, dedupKey, title, body: rawBody } = input;
   if (!DEDUP_KEY_RE.test(dedupKey)) {
     throw new FilingInputError(`dedup-key must match ${DEDUP_KEY_RE} (got: ${JSON.stringify(dedupKey)})`);
+  }
+  // Reserved for task 3's own suppression notice — see SUPPRESSION_NOTICE_KEY.
+  // DEDUP_KEY_RE alone would accept this string from a spawned agent.
+  if (dedupKey === SUPPRESSION_NOTICE_KEY) {
+    throw new FilingInputError("dedup-key is reserved by the filer");
   }
   // Cap the incoming body before any gh call (the CLI also caps at its STDIN read).
   if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
@@ -497,19 +748,35 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   const marker = `<!-- sm-dedup:${dedupKey} -->`;
   const body = `${rawBody.trimEnd()}\n\n${marker}\n${provenance}\n`;
 
+  // Consumer gate (task 2 of the consumer-gate plan): lazy and memoized, so a
+  // bump — the common case, 354 of 362 issues since 2026-08-01 stayed open —
+  // never spends a gh call finding out whether anyone is closing issues.
+  // `Date.now()` matches this function's own existing idiom (the dedup call
+  // below already reads the clock inline rather than taking a threaded `now`)
+  // — fileFinding has no `now` in scope to thread, unlike probeConsumerAction.
+  let probe: ConsumerProbe | "skipped" = "skipped";
+  const consumerAllows = (): boolean => {
+    if (opts?.bypassConsumerGate) return true;
+    if (probe === "skipped") probe = probeConsumerAction(gh, Date.now());
+    return probe === "present";
+  };
+
   const record = (
     outcome: FindingOutcome["outcome"],
     issue: number | undefined,
     nearMatch: FilingLogEntry["nearMatch"],
+    consumer: ConsumerProbe | "skipped",
   ): FindingOutcome => {
     appendFilingLog(stateDir, {
       ts: new Date().toISOString(),
       jobId,
       cycleId,
       key: dedupKey,
+      title,
       outcome,
       issue: issue ?? null,
       nearMatch,
+      consumer,
     });
     return { outcome, issue };
   };
@@ -518,6 +785,12 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   if (counter.count >= FINDINGS_PER_CYCLE_CAP) {
     const overflowNote = `## ${title}\n\n${body}`;
     if (counter.summaryIssue === null) {
+      if (!consumerAllows()) {
+        const notice = ensureSuppressionNotice(gh, stateDir, Date.now());
+        counter.count += 1;
+        saveCounter(stateDir, jobId, cycleId, counter);
+        return record("suppressed", notice, "skipped", probe);
+      }
       const scratch = writeScratchBody(
         stateDir,
         `Per-cycle finding cap (${FINDINGS_PER_CYCLE_CAP}) reached; further findings from this cycle append here instead of opening new issues.\n\n${provenance}\n\n${overflowNote}`,
@@ -541,7 +814,7 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
     }
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return record("capped", counter.summaryIssue ?? undefined, "skipped");
+    return record("capped", counter.summaryIssue ?? undefined, "skipped", probe);
   }
 
   // (a)(1)+(a)(3): dedup across open and recently-closed; a match is bumped.
@@ -554,12 +827,29 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   const near: NearMatchResult | undefined = match ? undefined : findNearMatch(gh, dedupKey);
   const nearMatch: FilingLogEntry["nearMatch"] = near?.fetch ?? "skipped";
   const bumpTarget = match?.number ?? near?.issue;
+  // Both routes into bumpTarget already exclude the suppression notice at
+  // their own source: findNearMatch skips a candidate keyed to the notice
+  // (guard above), findDedupMatch drops any hit whose body carries the
+  // notice's marker before returning a match (see the comment there). So
+  // bumpTarget can never legitimately resolve to the notice issue here —
+  // no second check needed, and no dependency on suppression-notice.json
+  // (a missing/corrupt state file no longer has any bearing on this path).
   if (bumpTarget !== undefined) {
     const scratch = writeScratchBody(stateDir, body);
     run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);
-    return record("bumped", bumpTarget, nearMatch);
+    return record("bumped", bumpTarget, nearMatch, probe);
+  }
+
+  // Consumer gate, checked AFTER dedup on purpose: a genuine recurrence must
+  // still bump its existing issue while nobody is closing issues — only a
+  // condition new enough to have no open match gates on the probe.
+  if (!consumerAllows()) {
+    const notice = ensureSuppressionNotice(gh, stateDir, Date.now());
+    counter.count += 1;
+    saveCounter(stateDir, jobId, cycleId, counter);
+    return record("suppressed", notice, nearMatch, probe);
   }
 
   // (a)(2): label + provenance on every created issue. Priority label too
@@ -580,5 +870,5 @@ export function fileFinding(gh: GhRunner, stateDir: string, input: FindingInput)
   ]);
   counter.count += 1;
   saveCounter(stateDir, jobId, cycleId, counter);
-  return record("created", parseIssueNumber(stdout), nearMatch);
+  return record("created", parseIssueNumber(stdout), nearMatch, probe);
 }

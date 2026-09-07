@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { loadBreakers } from "./breaker";
 import { ledgerTotals, loadLedger, sweepLedger } from "./dispatch-ledger";
 import { latestGridPoint } from "./due";
+import { readFilingLog, type FilingLogEntry } from "./filing";
 import { canDispatch, canFile, loadGates } from "./gates";
 import type { JobDef } from "./jobs";
 import { JOB_IDS, LOCK_FILE, STOP_FILE, loadAnchors, type JobAnchor } from "./state";
@@ -28,6 +29,31 @@ function when(ts: number | null, now: number): string {
   return ts === null ? "never" : `${new Date(ts).toISOString()} (${age(now - ts)} ago)`;
 }
 
+const DAY_MS = 86_400_000;
+
+/**
+ * The `gates:` line above states filing's on/off POLICY; it says nothing
+ * about whether filing has actually happened or is stuck. This reads the
+ * local finding-log (filing.ts's own writer) to answer that — three cases,
+ * kept as three distinct strings rather than one collapsed "no data" line,
+ * because "never filed anything" and "filed things but this log is
+ * unreadable" call for different operator responses.
+ */
+function filingSummary(log: ReturnType<typeof readFilingLog>, now: number): string {
+  if (!log.present) return "filing: never (no findings recorded)";
+  if (log.entries.length === 0) return `filing: log present but no readable entries (${log.unreadable} unreadable lines)`;
+  const newest = log.entries.at(-1)!;
+  const recent = log.entries.filter((e) => now - Date.parse(e.ts) <= DAY_MS);
+  const count = (outcome: FilingLogEntry["outcome"]) => recent.filter((e) => e.outcome === outcome).length;
+  const summary = `filing: last ${newest.outcome} ${when(Date.parse(newest.ts), now)} | 24h created ${count("created")} bumped ${count("bumped")} suppressed ${count("suppressed")} capped ${count("capped")} | consumer ${newest.consumer}`;
+  // A torn tail (truncated last write) can make `.at(-1)` the SECOND-newest
+  // readable entry, silently dropping the actual newest one — e.g. the
+  // `consumer:"error"` record that should have triggered the loud line
+  // below. Some garbage lines alongside otherwise-good ones must stay
+  // visible here, not just on the all-garbage branch above.
+  return log.unreadable > 0 ? `${summary} (${log.unreadable} unreadable lines)` : summary;
+}
+
 function nextDue(job: JobDef, anchor: JobAnchor, now: number): string {
   if (job.schedule.kind === "main-merge") return "on next main merge";
   const { periodMs, offsetMs } = job.schedule;
@@ -42,6 +68,7 @@ function nextDue(job: JobDef, anchor: JobAnchor, now: number): string {
 export function health(stateDir: string, jobs: JobDef[], now: number): string {
   const anchors = loadAnchors(stateDir);
   const gates = loadGates(stateDir);
+  const filingLog = readFilingLog(stateDir);
 
   let lastTick: number | null = null;
   try {
@@ -58,6 +85,7 @@ export function health(stateDir: string, jobs: JobDef[], now: number): string {
     // canAmend is unconditionally false by construction (gates.ts, verdict
     // (c)) — printed as the literal NEVER, not a state read.
     `gates: filing ${canFile(gates) ? "ON" : "OFF"} / dispatch ${canDispatch(gates) ? "ON" : "OFF"} / amend NEVER`,
+    filingSummary(filingLog, now),
   ];
 
   // Failures first, loudly — a probe that buries the failing job in a table
@@ -79,6 +107,19 @@ export function health(stateDir: string, jobs: JobDef[], now: number): string {
       lines.push(`!! BREAKER OPEN: ${id} — dispatch halted (${b.reason ?? "unknown"}, since ${when(b.openedAt, now)}); reset with \`scheduler.ts reset-breaker ${id}\``);
     }
   }
+
+  // The consumer probe degrades to "error" rather than throwing (see
+  // filing.ts probeConsumerAction) specifically so a dead gh PAT gets
+  // RECORDED as a suppression instead of vanishing into an uncaught
+  // exception with nothing logged. That design only pays off if something
+  // reads the record back loudly — this is that read.
+  const newestFiling = filingLog.entries.at(-1);
+  if (newestFiling?.consumer === "error") {
+    lines.push(
+      `!! CONSUMER PROBE ERROR: filing is suppressed because the consumer probe could not run (last attempt ${when(Date.parse(newestFiling.ts), now)}) — check gh auth on this host`,
+    );
+  }
+
   const ledger = loadLedger(stateDir);
   const t = ledgerTotals(ledger, now);
   const sweep = sweepLedger(ledger, now);

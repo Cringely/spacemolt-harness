@@ -9,12 +9,17 @@ import {
   FINDINGS_PER_CYCLE_CAP,
   FilingInputError,
   MACHINE_LABEL,
+  SUPPRESSION_NOTICE_FILE,
+  SUPPRESSION_NOTICE_KEY,
   fileFinding,
+  probeConsumerAction,
   readActiveCycle,
   writeActiveCycle,
   type GhRunner,
 } from "../src/scheduler/filing";
 import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
+import { fileFailureAlarm } from "../src/scheduler/failure-alarm";
+import type { JobId } from "../src/scheduler/state";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "sched-filing-"));
 const DAY = 86_400_000;
@@ -26,14 +31,29 @@ interface GhCall {
 
 // Canned gh: `issue list` answers from `listResponse`, `issue create` mints
 // sequential numbers, everything else succeeds silently.
-function fakeGh(listResponse: Array<{ number: number; state: string; closedAt: string | null }>) {
+//
+// `--state closed` is the consumer probe's own signature (findDedupMatch uses
+// `all`, findNearMatch uses `open`), so it is checked FIRST and answered from
+// `opts.consumerClosedAt` — default a 1-day-old close (consumer present) so
+// every existing call site below keeps behaving exactly as it did before the
+// gate existed; pass `consumerClosedAt: null` to simulate no consumer.
+function fakeGh(
+  listResponse: Array<{ number: number; state: string; closedAt: string | null }>,
+  opts: { consumerClosedAt?: string | null } = {},
+) {
   const calls: GhCall[] = [];
   let nextIssue = 100;
   const gh: GhRunner = (args) => {
     const bodyIdx = args.indexOf("--body-file");
     const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
     calls.push({ args, body });
-    if (args[0] === "issue" && args[1] === "list") return { stdout: JSON.stringify(listResponse), exitCode: 0 };
+    if (args[0] === "issue" && args[1] === "list") {
+      if (args[args.indexOf("--state") + 1] === "closed") {
+        const closedAt = opts.consumerClosedAt === undefined ? new Date(Date.now() - DAY).toISOString() : opts.consumerClosedAt;
+        return { stdout: closedAt === null ? "[]" : JSON.stringify([{ number: 1, closedAt }]), exitCode: 0 };
+      }
+      return { stdout: JSON.stringify(listResponse), exitCode: 0 };
+    }
     if (args[0] === "issue" && args[1] === "create")
       return { stdout: `https://github.com/x/y/issues/${nextIssue++}\n`, exitCode: 0 };
     return { stdout: "", exitCode: 0 };
@@ -272,6 +292,12 @@ describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
       const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
       calls.push({ args, body });
       if (args[0] === "issue" && args[1] === "list") {
+        // `--state closed` is the consumer probe's own signature — answered
+        // present (a 1-day-old close) so every outcome assertion below keeps
+        // exercising dedup/near-match, not the gate this file doesn't test.
+        if (args[args.indexOf("--state") + 1] === "closed") {
+          return { stdout: JSON.stringify([{ number: 1, closedAt: new Date(Date.now() - DAY).toISOString() }]), exitCode: 0 };
+        }
         // findDedupMatch's exact-marker search (--search present) never has a
         // literal-text match here by construction (the whole point is that
         // the two calls use DIFFERENT literal keys) — empty is correct, not
@@ -353,7 +379,12 @@ describe("severity-word near-match auto-bump (#635 review finding 1)", () => {
   test("malformed near-match JSON ⇒ files fresh, never throws", () => {
     const dir = tmp();
     const stub: GhRunner = (args) => {
-      if (args[0] === "issue" && args[1] === "list") return { stdout: "not json", exitCode: 0 };
+      if (args[0] === "issue" && args[1] === "list") {
+        if (args[args.indexOf("--state") + 1] === "closed") {
+          return { stdout: JSON.stringify([{ number: 1, closedAt: new Date(Date.now() - DAY).toISOString() }]), exitCode: 0 };
+        }
+        return { stdout: "not json", exitCode: 0 };
+      }
       if (args[0] === "issue" && args[1] === "create") return { stdout: "https://github.com/x/y/issues/300\n", exitCode: 0 };
       return { stdout: "", exitCode: 0 };
     };
@@ -484,3 +515,421 @@ describe("file-finding CLI (base64 argv body)", () => {
     expect(res.exitCode).toBe(3);
   });
 });
+
+// Task 1 of the consumer-gate plan: the presence signal, driven directly with
+// purpose-built GhRunners (not the shared fakeGh — it only speaks the
+// finding-filer's own list/create shapes, not this probe's).
+describe("consumer presence probe", () => {
+  const NOW = Date.now();
+  const closedDaysAgo = (days: number) => new Date(NOW - days * DAY).toISOString();
+
+  const rowsGh = (rows: Array<{ number: number; closedAt: string }>): GhRunner => (args) => {
+    if (args[0] === "issue" && args[1] === "list") return { stdout: JSON.stringify(rows), exitCode: 0 };
+    return { stdout: "", exitCode: 0 };
+  };
+
+  const failingGh: GhRunner = () => ({ stdout: "boom", exitCode: 1 });
+
+  // Catches: a live consumer read as absent — a close inside the window is
+  // "present" regardless of what the --search server-side hint did or didn't
+  // filter (this stub honors no query at all).
+  test("a row closed 1 day ago ⇒ present", () => {
+    const gh = rowsGh([{ number: 1, closedAt: closedDaysAgo(1) }]);
+    expect(probeConsumerAction(gh, NOW)).toBe("present");
+  });
+
+  // Catches: trusting the server-side --search hint instead of the client
+  // window — this stub ignores --search entirely and returns the row anyway,
+  // so only the client-side age check can produce "absent" here.
+  test("a row closed 400 days ago ⇒ absent (client-side window, not the server's)", () => {
+    const gh = rowsGh([{ number: 2, closedAt: closedDaysAgo(400) }]);
+    expect(probeConsumerAction(gh, NOW)).toBe("absent");
+  });
+
+  // Catches: an unreadable answer misreported as "no evidence" — both the
+  // primary and fallback attempts fail closed, so the whole probe is "error",
+  // never silently "absent".
+  test("both the --search call and the fallback exit non-zero ⇒ error", () => {
+    expect(probeConsumerAction(failingGh, NOW)).toBe("error");
+  });
+
+  // Catches: a --search rejection permanently suppressing the signal — the
+  // fallback (identical call, --search dropped) must still answer "present"
+  // when the plain call can.
+  test("the --search-bearing call exits 1, the plain fallback finds a 1-day-old close ⇒ present", () => {
+    const gh: GhRunner = (args) => {
+      if (args.includes("--search")) return { stdout: "rejected", exitCode: 1 };
+      return { stdout: JSON.stringify([{ number: 3, closedAt: closedDaysAgo(1) }]), exitCode: 0 };
+    };
+    expect(probeConsumerAction(gh, NOW)).toBe("present");
+  });
+
+  // Catches: backward host-clock skew read as fresh evidence — a closedAt
+  // that is FUTURE relative to `now` must not count as present.
+  test("a row closed 2 days in the future ⇒ absent", () => {
+    const gh = rowsGh([{ number: 4, closedAt: new Date(NOW + 2 * DAY).toISOString() }]);
+    expect(probeConsumerAction(gh, NOW)).toBe("absent");
+  });
+});
+
+// Task 2 of the consumer-gate plan: the probe wired into both fileFinding
+// create sites. Bumps are untouched — a persisting condition still bumps its
+// existing issue every cycle no matter how long the backlog goes unread.
+describe("consumer gate wired into fileFinding (task 2)", () => {
+  // Catches: a suppressed cycle silently creating anyway. `consumerClosedAt:
+  // null` makes the probe answer "absent" (fakeGh's --state closed branch).
+  test("consumer absent, no dedup/near match ⇒ suppressed, no create carries the finding's title", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([], { consumerClosedAt: null });
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("suppressed");
+    // Task 3: a suppressed outcome now carries the standing notice's issue
+    // number (not undefined) — the notice is the one visible trace a
+    // suppressed finding leaves in the tracker.
+    expect(res.issue).toBeDefined();
+    expect(calls.some((c) => c.args[1] === "create" && c.args[c.args.indexOf("--title") + 1] === finding().title)).toBe(
+      false,
+    );
+  });
+
+  // Catches: the gate reordered ahead of dedup — a genuine recurrence must
+  // keep bumping its own issue regardless of consumer state. Asserting NO
+  // call carries `--state closed` proves the probe was never even reached
+  // (lazy + ordered after dedup), not merely that it answered the right way.
+  test("consumer absent, open dedup match ⇒ still bumped, probe never consulted", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([{ number: 42, state: "OPEN", closedAt: null }], { consumerClosedAt: null });
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(42);
+    expect(calls.some((c) => c.args[c.args.indexOf("--state") + 1] === "closed")).toBe(false);
+  });
+
+  // Catches: the gate becoming a permanent lockout instead of a live read —
+  // a present consumer must still let a genuinely new finding through.
+  test("consumer present ⇒ created, with the agent's own title", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]); // default consumerClosedAt: 1 day ago ⇒ present
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("created");
+    const create = calls.find((c) => c.args[1] === "create")!;
+    expect(create.args[create.args.indexOf("--title") + 1]).toBe(finding().title);
+  });
+
+  // Catches: gating only the fresh-create site and leaving the cap-overflow
+  // create unguarded — every finding in the cycle must stay suppressed, never
+  // a fresh "findings over cap" summary issue.
+  test("consumer absent, six findings in one cycle ⇒ every one suppressed, no over-cap summary create", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([], { consumerClosedAt: null });
+    for (let n = 1; n <= FINDINGS_PER_CYCLE_CAP; n++) {
+      expect(fileFinding(gh, dir, finding(n)).outcome).toBe("suppressed");
+    }
+    const sixth = fileFinding(gh, dir, finding(6));
+    expect(sixth.outcome).toBe("suppressed");
+    expect(
+      calls.some((c) => c.args[1] === "create" && (c.args[c.args.indexOf("--title") + 1] ?? "").includes("findings over cap")),
+    ).toBe(false);
+    // Pins counter.count += 1 on BOTH suppressed paths. Without the fresh-create
+    // increment the 6th call never reaches the cap branch (count stays 0); without
+    // the cap increment it stops at 5. Either way this test was passing through a
+    // guard it does not believe it is exercising.
+    const counterFile = readdirSync(dir).filter((f) => f.startsWith("filing-"))[0]!;
+    expect(JSON.parse(readFileSync(join(dir, counterFile), "utf8")).count).toBe(6);
+  });
+
+  // Catches: the failure alarm becoming indistinguishable from ordinary
+  // suppression during a no-consumer window — #558's whole founding purpose
+  // was a crash-looping ceremony staying visible. The alarm's key is
+  // code-minted and stable per job, so bypassConsumerGate is always safe here.
+  test("fileFailureAlarm bypasses the gate: consumer absent still creates, never probes", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([], { consumerClosedAt: null });
+    fileFailureAlarm(gh, dir, {
+      jobId: "council" as JobId,
+      cycleId: "council-1",
+      failStreak: 1,
+      timedOut: false,
+      exitCode: 1,
+    });
+    const create = calls.find((c) => c.args[1] === "create");
+    expect(create).toBeDefined();
+    expect(create!.body).toContain("<!-- sm-dedup:scheduler-council-fail -->");
+    expect(calls.some((c) => c.args[c.args.indexOf("--state") + 1] === "closed")).toBe(false);
+  });
+
+  // Catches: an agent minting the reserved notice key itself and bumping (or
+  // reading the intent of) a notice it does not own — closed before task 3
+  // ever creates one.
+  test("dedupKey === SUPPRESSION_NOTICE_KEY ⇒ rejected before any gh call", () => {
+    const dir = tmp();
+    const { gh, calls } = fakeGh([]);
+    expect(() => fileFinding(gh, dir, { ...finding(), dedupKey: SUPPRESSION_NOTICE_KEY })).toThrow(FilingInputError);
+    expect(calls.length).toBe(0);
+  });
+});
+// Task 3 of the consumer-gate plan: one standing suppression notice. Created
+// once, its issue number persisted, never commented on — the escape valve
+// must not become the second flood (~8 findings/day would mean ~200 comments
+// per absence on one unreadable thread).
+describe("suppression notice (task 3)", () => {
+  // A dedicated fake that distinguishes the three query shapes fileFinding
+  // actually makes (dedup: --state all; near-match: --state open --label;
+  // consumer probe: --state closed), unlike the generic fakeGh() above which
+  // answers every non-closed `issue list` from one canned array — too coarse
+  // once a seeded issue must answer ONE of those queries and not the others.
+  function seededGh(
+    issues: Array<{ number: number; state: string; body: string; closedAt: string | null }>,
+    opts: { consumerClosedAt?: string | null } = {},
+  ) {
+    const calls: GhCall[] = [];
+    let nextIssue = 900;
+    const gh: GhRunner = (args) => {
+      const bodyIdx = args.indexOf("--body-file");
+      const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
+      calls.push({ args, body });
+      if (args[0] === "issue" && args[1] === "list") {
+        const state = args[args.indexOf("--state") + 1];
+        if (state === "closed") {
+          const closedAt = opts.consumerClosedAt === undefined ? null : opts.consumerClosedAt;
+          return { stdout: closedAt === null ? "[]" : JSON.stringify([{ number: 1, closedAt }]), exitCode: 0 };
+        }
+        if (state === "open") {
+          // near-match fetch: label machine-filed, --json number,body — no
+          // server-side key filtering, matches production's own query shape.
+          return { stdout: JSON.stringify(issues.map((i) => ({ number: i.number, body: i.body }))), exitCode: 0 };
+        }
+        // state === "all": findDedupMatch's exact-phrase search. A real gh
+        // filters server-side by the quoted marker; simulate that instead of
+        // returning every seeded issue regardless of which key was searched.
+        const searchArg = args[args.indexOf("--search") + 1] ?? "";
+        const marker = searchArg.match(/<!-- sm-dedup:([^ ]+) -->/)?.[1];
+        const hits = issues.filter((i) => marker !== undefined && i.body.includes(`<!-- sm-dedup:${marker} -->`));
+        return {
+          stdout: JSON.stringify(hits.map(({ number, state: s, closedAt }) => ({ number, state: s, closedAt }))),
+          exitCode: 0,
+        };
+      }
+      if (args[0] === "issue" && args[1] === "create") return { stdout: `https://github.com/x/y/issues/${nextIssue++}\n`, exitCode: 0 };
+      return { stdout: "", exitCode: 0 };
+    };
+    return { gh, calls };
+  }
+
+  // (a) Catches: the escape valve becoming the second flood — a search-index
+  // lag (issue list always answers []) must not mint one notice per
+  // suppressed finding across different cycles sharing one state dir.
+  test("three suppressed findings across three cycles create the notice exactly once, sharing its number", () => {
+    const dir = tmp();
+    const { gh, calls } = seededGh([], { consumerClosedAt: null });
+    const outcomes = [1, 2, 3].map((n) => fileFinding(gh, dir, { ...finding(n), cycleId: `standup-${n}` }));
+    for (const o of outcomes) expect(o.outcome).toBe("suppressed");
+    const noticeIssue = outcomes[0]!.issue;
+    expect(noticeIssue).toBeDefined();
+    for (const o of outcomes) expect(o.issue).toBe(noticeIssue);
+    expect(calls.filter((c) => c.args[1] === "create").length).toBe(1);
+    expect(JSON.parse(readFileSync(join(dir, SUPPRESSION_NOTICE_FILE), "utf8")).issue).toBe(noticeIssue);
+  });
+
+  // (b) Catches: the notice becoming a per-finding transcript — a comment per
+  // suppression is the exact wall this feature exists to prevent.
+  test("repeated suppression never comments on the notice", () => {
+    const dir = tmp();
+    const { gh, calls } = seededGh([], { consumerClosedAt: null });
+    let noticeIssue: number | undefined;
+    for (let n = 1; n <= 3; n++) {
+      const res = fileFinding(gh, dir, { ...finding(n), cycleId: `standup-${n}` });
+      noticeIssue = res.issue;
+    }
+    expect(calls.some((c) => c.args[1] === "comment" && c.args[2] === String(noticeIssue))).toBe(false);
+  });
+
+  // (c) Catches: a cold start (state file missing) re-flooding the tracker
+  // with a duplicate notice instead of recovering the existing one.
+  test("cold start recovers a persisted notice from an existing open issue and re-persists it", () => {
+    const dir = tmp();
+    const NOTICE_ISSUE = 777;
+    const { gh, calls } = seededGh(
+      [{ number: NOTICE_ISSUE, state: "OPEN", body: `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`, closedAt: null }],
+      { consumerClosedAt: null },
+    );
+    const res = fileFinding(gh, dir, finding());
+    expect(res.outcome).toBe("suppressed");
+    expect(res.issue).toBe(NOTICE_ISSUE);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, SUPPRESSION_NOTICE_FILE), "utf8")).issue).toBe(NOTICE_ISSUE);
+  });
+
+  // (d) Catches: findNearMatch's segment-overlap scan silently bumping a real,
+  // new finding onto the notice because their keys share enough segments
+  // (scheduler-filing-suppressed vs. scheduler-filing-suppressed-no-consumer
+  // sit at exactly NEAR_MATCH_JACCARD). Consumer present, so this must create.
+  test("a near-match key against the notice still creates, never bumps onto the notice", () => {
+    const dir = tmp();
+    const { gh } = seededGh(
+      [{ number: 777, state: "OPEN", body: `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`, closedAt: null }],
+      { consumerClosedAt: new Date(Date.now() - DAY).toISOString() },
+    );
+    const res = fileFinding(gh, dir, { ...finding(), dedupKey: "scheduler-filing-suppressed" });
+    expect(res.outcome).toBe("created");
+  });
+
+  // (e) Catches: findDedupMatch — the OTHER route into bumpTarget, the
+  // exact-key `--state all` search checked BEFORE findNearMatch even runs —
+  // phrase-matching the notice for a different key. Whether GitHub's quoted
+  // `"<!-- sm-dedup:${key} -->" in:body` search tokenizes over hyphens and
+  // HTML-comment punctuation is unverified offline; this models the
+  // pessimistic case where it does, so `scheduler-filing-suppressed` (a
+  // token-prefix of the notice's own key) phrase-matches the notice. Consumer
+  // absent, so a real bump here would silently flood the standing notice —
+  // not the near-match tier (d) already covers, a second, independent route
+  // to the same crash site.
+  test("findDedupMatch phrase-matching the notice for a different key still suppresses, never bumps onto the notice", () => {
+    const dir = tmp();
+    const NOTICE_ISSUE = 777;
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), JSON.stringify({ issue: NOTICE_ISSUE }));
+    const calls: GhCall[] = [];
+    const gh: GhRunner = (args) => {
+      calls.push({ args, body: undefined });
+      if (args[0] === "issue" && args[1] === "list") {
+        const state = args[args.indexOf("--state") + 1];
+        if (state === "closed") return { stdout: "[]", exitCode: 0 }; // consumer absent
+        if (state === "open") return { stdout: "[]", exitCode: 0 }; // near-match: no hits (route (d) covers that tier)
+        // state === "all": models a tokenizing search phrase-matching the
+        // notice for a key that is a token-prefix of its own. `body` carries
+        // the notice's own marker — findDedupMatch's producer-side filter
+        // reads it to tell this false-positive apart from a real hit; a hit
+        // with no body (the pre-fix fixture shape) can't be told apart and
+        // would wrongly survive the filter.
+        return {
+          stdout: JSON.stringify([{ number: NOTICE_ISSUE, state: "OPEN", closedAt: null, body: `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->` }]),
+          exitCode: 0,
+        };
+      }
+      return { stdout: "https://github.com/x/y/issues/900\n", exitCode: 0 };
+    };
+    const res = fileFinding(gh, dir, { ...finding(), dedupKey: "scheduler-filing-suppressed" });
+    expect(res.outcome).toBe("suppressed");
+    expect(calls.some((c) => c.args[1] === "comment" && c.args[2] === String(NOTICE_ISSUE))).toBe(false);
+  });
+});
+
+// Task 3 revision: the call-site guard from the first cut of this fix
+// (`bumpTarget !== readNotice(stateDir)`) regressed. Two adversarial probes
+// proved it: (1) findDedupMatch never reads a hit's body, so once a real
+// issue for a key exists, a search that ALSO surfaces the notice (GitHub
+// ranks by relevance, not literal substring containment — unverified
+// offline, per the comment on findDedupMatch) can rank the notice first;
+// the guard then vetoed that single candidate outright instead of falling
+// through to the real hit behind it, and a consumer-present cycle re-created
+// a duplicate issue every cycle instead of bumping the real one; (2) the
+// guard is inert whenever suppression-notice.json is missing or corrupt
+// (ensureSuppressionNotice's own comment names exactly this: "a fresh
+// scheduler host, or state wiped"), so a cold start could still comment on
+// the notice. This replacement drops the call-site guard and instead makes
+// findDedupMatch itself exclude any hit whose BODY carries the notice's
+// marker before it can become a candidate — content-based, so it holds
+// regardless of GitHub's ranking, and has no state-file dependency at all.
+describe("findDedupMatch excludes the notice at the source (task 3 revision, regression probes)", () => {
+  const KEY = "scheduler-filing-suppressed";
+  const NOTICE = 777;
+  const REAL = 900;
+  const noticeBody = `notice text\n\n<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`;
+  const realBody = `real finding\n\n<!-- sm-dedup:${KEY} -->`;
+  const probeFinding = () => ({ jobId: "standup", cycleId: "probe-1", dedupKey: KEY, title: "T", body: "b" });
+  const PRESENT = new Date(Date.now() - DAY).toISOString();
+
+  // Distinct from seededGh above: that mock pre-filters the "all" response
+  // server-side by literal marker match, which can never model GitHub
+  // returning a hit that doesn't literally satisfy the searched phrase. This
+  // one returns `allHits` verbatim for any "all"-state query, regardless of
+  // which key was searched — the shape the measured regression needed.
+  function mkGh(allHits: Array<{ number: number; state: string; body: string }>, consumerClosedAt: string | null) {
+    const calls: GhCall[] = [];
+    let nextIssue = 901;
+    const gh: GhRunner = (args) => {
+      calls.push({ args });
+      if (args[0] === "issue" && args[1] === "list") {
+        const state = args[args.indexOf("--state") + 1];
+        if (state === "closed")
+          return { stdout: consumerClosedAt ? JSON.stringify([{ number: 5, closedAt: consumerClosedAt }]) : "[]", exitCode: 0 };
+        if (state === "open") return { stdout: "[]", exitCode: 0 }; // near-match tier: no hits, the exact tier covers every case here
+        return { stdout: JSON.stringify(allHits.map((h) => ({ ...h, closedAt: null }))), exitCode: 0 };
+      }
+      return { stdout: `https://github.com/x/y/issues/${nextIssue++}\n`, exitCode: 0 };
+    };
+    return { gh, calls };
+  }
+
+  // Probe A: the measured regression. Notice ranks first in the exact-match
+  // response, a real open issue for the key also matches, consumer present.
+  // Must bump the real issue — never drop it in favor of vetoing the notice
+  // outright, and never mint a duplicate.
+  //
+  // State is seeded STALE on purpose: the persisted notice number (900)
+  // deliberately does not match the notice's real number (777) here — state
+  // drift the codebase already documents as real (ensureSuppressionNotice's
+  // own comment: "a fresh scheduler host, or state wiped"). This is the
+  // construction that actually exercises the removed call-site guard's
+  // failure mode: a fresh/stale state value can coincide with a genuine
+  // bump target's number by nothing more than accident, and a check that
+  // trusts a cached number over the fetched hit's own content has no way to
+  // tell the two apart. The fix removes that dependency entirely — bumping
+  // now turns solely on the hit's own body, never on what state remembers.
+  test("A: notice ranks first alongside a real match, consumer present ⇒ bumps the real issue, no create", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), JSON.stringify({ issue: REAL }));
+    const { gh, calls } = mkGh(
+      [
+        { number: NOTICE, state: "OPEN", body: noticeBody },
+        { number: REAL, state: "OPEN", body: realBody },
+      ],
+      PRESENT,
+    );
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(REAL);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+    expect(calls.filter((c) => c.args[1] === "comment").map((c) => c.args[2])).toEqual([String(REAL)]);
+  });
+
+  // Probe B: cold start (suppression-notice.json missing entirely), consumer
+  // present. Must create fresh with zero comment calls — nothing to bump,
+  // and specifically nothing lands on the notice.
+  test("B: notice exists but state file is missing, consumer present ⇒ creates, zero comments", () => {
+    const dir = tmp();
+    const { gh, calls } = mkGh([{ number: NOTICE, state: "OPEN", body: noticeBody }], PRESENT);
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("created");
+    expect(calls.some((c) => c.args[1] === "comment")).toBe(false);
+  });
+
+  // Probe C, THE TRAP: state file corrupt, consumer absent.
+  // ensureSuppressionNotice's own cold-start lookup calls findDedupMatch WITH
+  // the notice's own key to re-find the notice it already created — that one
+  // call must NOT filter its own key's marker out, or it can never find
+  // itself and mints a second notice on every cycle. Must suppress, re-derive
+  // the existing notice's number, and create nothing.
+  test("C: state file corrupt, consumer absent ⇒ suppressed, notice re-derived, zero creates", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), "{not json");
+    const { gh, calls } = mkGh([{ number: NOTICE, state: "OPEN", body: noticeBody }], null);
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("suppressed");
+    expect(res.issue).toBe(NOTICE);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+  });
+
+  // Probe D: regression control. An ordinary recurrence with no notice
+  // involved at all must still bump exactly as before this revision.
+  test("D: ordinary recurrence, no notice involved ⇒ bumps unchanged", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), JSON.stringify({ issue: NOTICE }));
+    const { gh, calls } = mkGh([{ number: REAL, state: "OPEN", body: realBody }], null);
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(REAL);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+  });
+});
+

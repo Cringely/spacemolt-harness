@@ -65,11 +65,21 @@ export function fileFailureAlarm(gh: GhRunner, stateDir: string, input: FailureA
       "the same way a successful one does, instead of only anchors.json and a run log an " +
       "operator has to go read.",
   ].join("\n");
-  fileFinding(gh, stateDir, {
-    jobId,
-    cycleId,
-    dedupKey: failureAlarmDedupKey(jobId),
-    title: `scheduler: ${jobId} ceremony run failed`,
-    body,
-  });
+  fileFinding(
+    gh,
+    stateDir,
+    {
+      jobId,
+      cycleId,
+      dedupKey: failureAlarmDedupKey(jobId),
+      title: `scheduler: ${jobId} ceremony run failed`,
+      body,
+    },
+    // A crash-looping ceremony must stay a distinct, identifiable issue even
+    // during a no-consumer window (#558's founding purpose: this is the ONE
+    // channel a failing job has). Safe to bypass unconditionally: the key is
+    // code-minted here, stable per job id, never caller-supplied — so it
+    // creates once and bumps thereafter regardless of the consumer gate.
+    { bypassConsumerGate: true },
+  );
 }

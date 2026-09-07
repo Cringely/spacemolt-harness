@@ -177,6 +177,11 @@ interface GhCall {
   body?: string;
 }
 
+// Consumer probe answer for every ad-hoc gh double in this file: a 1-day-old
+// close (consumer present), so the pre-existing dedup/near-match assertions
+// below keep exercising exactly what they did before the gate existed.
+const consumerPresentRow = () => JSON.stringify([{ number: 1, closedAt: new Date(Date.now() - 86_400_000).toISOString() }]);
+
 /** Stateful gh double: `issue list` (no --search) sees everything created so far. */
 function statefulGh() {
   const calls: GhCall[] = [];
@@ -187,6 +192,10 @@ function statefulGh() {
     const body = bodyIdx >= 0 ? readFileSync(args[bodyIdx + 1]!, "utf8") : undefined;
     calls.push({ args, body });
     if (args[0] === "issue" && args[1] === "list") {
+      // `--state closed` is the consumer probe's own signature (findDedupMatch
+      // uses `all`, findNearMatch uses `open`) — checked first so it can never
+      // be mistaken for either.
+      if (args[args.indexOf("--state") + 1] === "closed") return { stdout: consumerPresentRow(), exitCode: 0 };
       if (args.includes("--search")) return { stdout: "[]", exitCode: 0 }; // exact-key path never hits here by construction
       return { stdout: JSON.stringify(created), exitCode: 0 };
     }
@@ -298,9 +307,11 @@ describe("filing side channel (LOUD degradation, #654 class)", () => {
       jobId: "standup",
       cycleId: "standup-1",
       key: "pr-83-red-ci-stalled",
+      title: "finding pr-83-red-ci-stalled",
       outcome: "created",
       issue: created.issue!,
       nearMatch: "ok",
+      consumer: "present",
     });
     expect(lines[1]!.outcome).toBe("bumped");
     expect(lines[1]!.issue).toBe(bumped.issue!);
@@ -314,6 +325,7 @@ describe("filing side channel (LOUD degradation, #654 class)", () => {
   test("an unparseable near-match answer is recorded as unparseable, not as a clean miss", () => {
     const broken: GhRunner = (args) => {
       if (args[0] === "issue" && args[1] === "list") {
+        if (args[args.indexOf("--state") + 1] === "closed") return { stdout: consumerPresentRow(), exitCode: 0 };
         return { stdout: args.includes("--search") ? "[]" : "not json", exitCode: 0 };
       }
       if (args[0] === "issue" && args[1] === "create") return { stdout: "https://x/y/issues/1\n", exitCode: 0 };
@@ -349,6 +361,7 @@ describe("filing side channel (LOUD degradation, #654 class)", () => {
   test("a near-match answer that parses to a non-array is recorded as unparseable, not silently scanned", () => {
     const gh: GhRunner = (args) => {
       if (args[0] === "issue" && args[1] === "list") {
+        if (args[args.indexOf("--state") + 1] === "closed") return { stdout: consumerPresentRow(), exitCode: 0 };
         return { stdout: args.includes("--search") ? "[]" : JSON.stringify("oops"), exitCode: 0 };
       }
       if (args[0] === "issue" && args[1] === "create") return { stdout: "https://x/y/issues/1\n", exitCode: 0 };
@@ -366,6 +379,7 @@ describe("filing side channel (LOUD degradation, #654 class)", () => {
     const full = Array.from({ length: 400 }, (_, i) => ({ number: i + 1, body: `<!-- sm-dedup:unrelated-key-${i} -->` }));
     const gh: GhRunner = (args) => {
       if (args[0] === "issue" && args[1] === "list") {
+        if (args[args.indexOf("--state") + 1] === "closed") return { stdout: consumerPresentRow(), exitCode: 0 };
         return { stdout: args.includes("--search") ? "[]" : JSON.stringify(full), exitCode: 0 };
       }
       if (args[0] === "issue" && args[1] === "create") return { stdout: "https://x/y/issues/1\n", exitCode: 0 };
