@@ -4,11 +4,31 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-08-11 (merge freeze broken; backlog 280 open, **P0 at zero**; all three pilots insolvent, plans dying on `no_fuel_source`, prose steers not landing; seven findings filed #812-#821). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-06 (26-day pause ended by PR #94, the consumer gate; ceremonies filed 362 issues into an unread queue; all three pilots up 20 days, `RestartCount 0`; #94 deployment to the scheduler LXC in flight, unproven live). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-08-11. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-02 wave detail moved down to "Recent history"; nothing was dropped._
+_Refreshed 2026-09-06. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-11 block moved down to "Recent history, 2026-08-11"; nothing was dropped._
+
+**26-DAY PAUSE, THEN ONE MERGE.** Nothing merged between `da2aadd` (2026-08-11) and 2026-09-06. The four cron ceremonies ran the whole time and kept filing: 362 issues since 2026-08-01, 354 still open, last close 2026-08-12 (PR #94 body). A producer with no reader ([L-53](wiki/engineering-lessons.md#l-53--a-producer-with-no-consumer-accumulates)).
+
+**PR #94 MERGED (`f556bef`), THE CONSUMER GATE.** `fileFinding` now returns `"suppressed"` instead of opening a new issue when no `machine-filed` issue has closed in the last 7 days; bumps of existing issues still go through; one standing "suppression notice" issue, created once and never commented on, is the only visible trace; `failure-alarm` is exempt (code-only parameter). `scheduler.ts health` gained a `filing:` line (never-filed / present-but-unreadable / readable) and a loud `!! CONSUMER PROBE ERROR`. 1,832 tests pass, guards ablated. **Shipped capability, not proven behaviour:** the offline suite proves the gate; only the host's filing log can prove the producer stopped. **IN FLIGHT:** deployment of #94 to the scheduler LXC is being verified as this is written.
+
+**HOUSEKEEPING, SAME DAY.** Six stale steward PRs closed unmerged (#88, #89, #91 here; #462, #463, #467 in the issues repo): all `CONFLICTING`, 26-48 days old, carrying figures now false. 25 merged local branches pruned. #1029 filed: ceremony dedup fails for anchorless keys, 31 duplicates filed after the tier-3 fix (#85), best pairwise Jaccard 0.50 and 0.57 against the 0.6 bar; the live groom report finds the same 13 clusters (40 collapsible) it found at ship time and nothing newer.
+
+**PILOTS (prod container, TrueNAS, image `e4f0180`).** Up 20 days, `RestartCount 0`. Miner 26,913cr (226,449 on 08-01; lifetime earned 561,191 → 1,008,267). Corsair 2,364cr, 394 missions, 0 kills despite a combat persona and two autocannons fitted. Scout 55cr, 712 missions, 34,781 lifetime earned. `stranded` alerts clustered 08-10 to 08-29, zero in September. The scout planner has hallucinated POI `sirius_observatory_station` 1,250 times since 08-04: unfixed, non-fatal.
+
+**SCHEDULER.** Cron alive; standup/strategy/council `failStreak: 0`. `gates.json` has never existed on the host, `canDispatch()` is false by default and has no call site, so the stage-3 machinery (breaker, dispatch ledger) runs inert at stage 1.
+
+**SPEND.** Ledger stops at 2026-08-16, a sync gap, not zero spend; the $6,809.50 total covers only the first half of the window.
+
+**BACKLOG: 374 open `machine-filed` at the groom run.** The 2026-08-11 findings (#812-#821) are unchanged; none merged.
+
+**Next:** prove #94 live from the host filing log; #1029 (anchorless dedup); groom the 13 clusters; then #812-#815.
+
+## Recent history, 2026-08-11
+
+Moved out of `## NOW` on 2026-09-06 to fit the 500-word handoff cap. Last verified state as of 2026-08-11; superseded only where the block above says so.
 
 **MERGE FREEZE BROKEN (2026-08-11, afternoon).** PR #83 (state refresh fix, 531→337 words) merged as `423e629` after 8 days red, followed by #86 (backlog reconciliation after PRs #79/#80/#82), #84 (docker/login-action bump), #85 (tier-3 dedup + read-only groom report, closing #635). The freeze was mechanical: one failing assertion while every other gate (verify, gitleaks, CodeQL) stayed green. Ceremonies that filed the same red error nine times (#807, #804, #802, #796, #782, #779, #778, #772, #768) made the pattern visible: a filing producer that makes no dedup check, plus a backlog grooming ceremony that runs nowhere.
 
