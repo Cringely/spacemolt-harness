@@ -344,10 +344,28 @@ interface DedupHit {
   number: number;
   state: string;
   closedAt: string | null;
+  body?: string;
 }
 
 // Open match, or the newest close within the window. Open wins over closed so
 // the bump lands where the conversation is still live.
+//
+// Excludes the standing suppression notice from every OTHER key's search:
+// GitHub ranks search hits by relevance, not literal substring containment,
+// so a query for `scheduler-filing-suppressed` can return the notice (whose
+// own marker is `scheduler-filing-suppressed-no-consumer`) ranked ahead of a
+// real match. Filtered here, at the producer, because this is the one call
+// site that has the body text to tell a real hit from a notice
+// false-positive by its marker — a caller holding only an issue number
+// cannot, and rejecting every hit that merely resolves to the notice's
+// number (rather than filtering the false-positive out and continuing) either
+// floods the notice or leaves a real duplicate unbumped.
+//
+// The `dedupKey !== SUPPRESSION_NOTICE_KEY` guard is required, not
+// decorative: ensureSuppressionNotice's own cold-start lookup calls this
+// function WITH that key to re-find the notice it already created. Filtering
+// unconditionally would filter out that answer too, minting a second notice
+// on every cold start.
 function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit | undefined {
   const stdout = run(gh, [
     "issue",
@@ -357,7 +375,7 @@ function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit |
     "--search",
     `"<!-- sm-dedup:${dedupKey} -->" in:body`, // quoted phrase — the key cannot smuggle search operators
     "--json",
-    "number,state,closedAt",
+    "number,state,closedAt,body",
   ]);
   let hits: DedupHit[];
   try {
@@ -365,6 +383,8 @@ function findDedupMatch(gh: GhRunner, dedupKey: string, now: number): DedupHit |
   } catch {
     return undefined; // unparseable dedup answer → file fresh rather than drop the finding
   }
+  if (dedupKey !== SUPPRESSION_NOTICE_KEY)
+    hits = hits.filter((h) => typeof h.body !== "string" || readDedupKey(h.body) !== SUPPRESSION_NOTICE_KEY);
   const open = hits.find((h) => h.state.toUpperCase() === "OPEN");
   if (open) return open;
   return hits
@@ -531,12 +551,9 @@ function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
     // the notice instead of filing it — this scan is one of TWO routes that
     // feed fileFinding's bumpTarget, so closing it here is necessary but not
     // sufficient. findDedupMatch (the exact-match tier, checked before this
-    // scan even runs) is the other route: whether its quoted-phrase GitHub
-    // search can also match the notice for a different key is a live-search
-    // tokenizer question this repo cannot settle offline, so fileFinding
-    // closes that route too, unconditionally, by refusing to comment on
-    // bumpTarget when it resolves to the notice issue — see the comment at
-    // that call site.
+    // scan even runs) is the other route, and closes it the same way at its
+    // own source: it drops any hit whose body carries the notice's marker
+    // before it can become a match (see the comment there).
     if (candidateKey === SUPPRESSION_NOTICE_KEY) continue;
     // Tier 2 (exact normalized equality, #635) then tier 3 (anchored segment
     // overlap). Tier 2 is kept rather than folded in: it still catches a pair
@@ -769,22 +786,14 @@ export function fileFinding(
   const near: NearMatchResult | undefined = match ? undefined : findNearMatch(gh, dedupKey);
   const nearMatch: FilingLogEntry["nearMatch"] = near?.fetch ?? "skipped";
   const bumpTarget = match?.number ?? near?.issue;
-  // The notice must stay uncommented via BOTH routes that feed bumpTarget,
-  // not just findNearMatch's scan (guarded above by the SUPPRESSION_NOTICE_KEY
-  // check): findDedupMatch's `"<!-- sm-dedup:${dedupKey} -->" in:body` search
-  // is a quoted phrase, and whether GitHub's issue search tokenizes a quoted
-  // phrase over hyphens/HTML-comment punctuation is unverified — offline,
-  // this repo cannot make the live call to settle it. If it tokenizes, a key
-  // whose tokens are a prefix of the notice's own phrase-matches it (e.g.
-  // `scheduler-filing-suppressed`, the exact string floated as a plausible
-  // agent-minted key two comments up), so `match` can legitimately resolve
-  // to the notice issue with no near-match scan involved at all. Rather than
-  // resolve the tokenizer question, close both routes the same way: any
-  // resolved bumpTarget that turns out to BE the notice falls through to the
-  // consumer gate below instead of commenting, so a live recurrence is
-  // suppressed or filed fresh — never appended to the one thread this whole
-  // feature exists to keep quiet.
-  if (bumpTarget !== undefined && bumpTarget !== readNotice(stateDir)) {
+  // Both routes into bumpTarget already exclude the suppression notice at
+  // their own source: findNearMatch skips a candidate keyed to the notice
+  // (guard above), findDedupMatch drops any hit whose body carries the
+  // notice's marker before returning a match (see the comment there). So
+  // bumpTarget can never legitimately resolve to the notice issue here —
+  // no second check needed, and no dependency on suppression-notice.json
+  // (a missing/corrupt state file no longer has any bearing on this path).
+  if (bumpTarget !== undefined) {
     const scratch = writeScratchBody(stateDir, body);
     run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;

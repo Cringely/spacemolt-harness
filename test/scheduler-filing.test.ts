@@ -796,14 +796,140 @@ describe("suppression notice (task 3)", () => {
         if (state === "closed") return { stdout: "[]", exitCode: 0 }; // consumer absent
         if (state === "open") return { stdout: "[]", exitCode: 0 }; // near-match: no hits (route (d) covers that tier)
         // state === "all": models a tokenizing search phrase-matching the
-        // notice for a key that is a token-prefix of its own.
-        return { stdout: JSON.stringify([{ number: NOTICE_ISSUE, state: "OPEN", closedAt: null }]), exitCode: 0 };
+        // notice for a key that is a token-prefix of its own. `body` carries
+        // the notice's own marker — findDedupMatch's producer-side filter
+        // reads it to tell this false-positive apart from a real hit; a hit
+        // with no body (the pre-fix fixture shape) can't be told apart and
+        // would wrongly survive the filter.
+        return {
+          stdout: JSON.stringify([{ number: NOTICE_ISSUE, state: "OPEN", closedAt: null, body: `<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->` }]),
+          exitCode: 0,
+        };
       }
       return { stdout: "https://github.com/x/y/issues/900\n", exitCode: 0 };
     };
     const res = fileFinding(gh, dir, { ...finding(), dedupKey: "scheduler-filing-suppressed" });
     expect(res.outcome).toBe("suppressed");
     expect(calls.some((c) => c.args[1] === "comment" && c.args[2] === String(NOTICE_ISSUE))).toBe(false);
+  });
+});
+
+// Task 3 revision: the call-site guard from the first cut of this fix
+// (`bumpTarget !== readNotice(stateDir)`) regressed. Two adversarial probes
+// proved it: (1) findDedupMatch never reads a hit's body, so once a real
+// issue for a key exists, a search that ALSO surfaces the notice (GitHub
+// ranks by relevance, not literal substring containment — unverified
+// offline, per the comment on findDedupMatch) can rank the notice first;
+// the guard then vetoed that single candidate outright instead of falling
+// through to the real hit behind it, and a consumer-present cycle re-created
+// a duplicate issue every cycle instead of bumping the real one; (2) the
+// guard is inert whenever suppression-notice.json is missing or corrupt
+// (ensureSuppressionNotice's own comment names exactly this: "a fresh
+// scheduler host, or state wiped"), so a cold start could still comment on
+// the notice. This replacement drops the call-site guard and instead makes
+// findDedupMatch itself exclude any hit whose BODY carries the notice's
+// marker before it can become a candidate — content-based, so it holds
+// regardless of GitHub's ranking, and has no state-file dependency at all.
+describe("findDedupMatch excludes the notice at the source (task 3 revision, regression probes)", () => {
+  const KEY = "scheduler-filing-suppressed";
+  const NOTICE = 777;
+  const REAL = 900;
+  const noticeBody = `notice text\n\n<!-- sm-dedup:${SUPPRESSION_NOTICE_KEY} -->`;
+  const realBody = `real finding\n\n<!-- sm-dedup:${KEY} -->`;
+  const probeFinding = () => ({ jobId: "standup", cycleId: "probe-1", dedupKey: KEY, title: "T", body: "b" });
+  const PRESENT = new Date(Date.now() - DAY).toISOString();
+
+  // Distinct from seededGh above: that mock pre-filters the "all" response
+  // server-side by literal marker match, which can never model GitHub
+  // returning a hit that doesn't literally satisfy the searched phrase. This
+  // one returns `allHits` verbatim for any "all"-state query, regardless of
+  // which key was searched — the shape the measured regression needed.
+  function mkGh(allHits: Array<{ number: number; state: string; body: string }>, consumerClosedAt: string | null) {
+    const calls: GhCall[] = [];
+    let nextIssue = 901;
+    const gh: GhRunner = (args) => {
+      calls.push({ args });
+      if (args[0] === "issue" && args[1] === "list") {
+        const state = args[args.indexOf("--state") + 1];
+        if (state === "closed")
+          return { stdout: consumerClosedAt ? JSON.stringify([{ number: 5, closedAt: consumerClosedAt }]) : "[]", exitCode: 0 };
+        if (state === "open") return { stdout: "[]", exitCode: 0 }; // near-match tier: no hits, the exact tier covers every case here
+        return { stdout: JSON.stringify(allHits.map((h) => ({ ...h, closedAt: null }))), exitCode: 0 };
+      }
+      return { stdout: `https://github.com/x/y/issues/${nextIssue++}\n`, exitCode: 0 };
+    };
+    return { gh, calls };
+  }
+
+  // Probe A: the measured regression. Notice ranks first in the exact-match
+  // response, a real open issue for the key also matches, consumer present.
+  // Must bump the real issue — never drop it in favor of vetoing the notice
+  // outright, and never mint a duplicate.
+  //
+  // State is seeded STALE on purpose: the persisted notice number (900)
+  // deliberately does not match the notice's real number (777) here — state
+  // drift the codebase already documents as real (ensureSuppressionNotice's
+  // own comment: "a fresh scheduler host, or state wiped"). This is the
+  // construction that actually exercises the removed call-site guard's
+  // failure mode: a fresh/stale state value can coincide with a genuine
+  // bump target's number by nothing more than accident, and a check that
+  // trusts a cached number over the fetched hit's own content has no way to
+  // tell the two apart. The fix removes that dependency entirely — bumping
+  // now turns solely on the hit's own body, never on what state remembers.
+  test("A: notice ranks first alongside a real match, consumer present ⇒ bumps the real issue, no create", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), JSON.stringify({ issue: REAL }));
+    const { gh, calls } = mkGh(
+      [
+        { number: NOTICE, state: "OPEN", body: noticeBody },
+        { number: REAL, state: "OPEN", body: realBody },
+      ],
+      PRESENT,
+    );
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(REAL);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+    expect(calls.filter((c) => c.args[1] === "comment").map((c) => c.args[2])).toEqual([String(REAL)]);
+  });
+
+  // Probe B: cold start (suppression-notice.json missing entirely), consumer
+  // present. Must create fresh with zero comment calls — nothing to bump,
+  // and specifically nothing lands on the notice.
+  test("B: notice exists but state file is missing, consumer present ⇒ creates, zero comments", () => {
+    const dir = tmp();
+    const { gh, calls } = mkGh([{ number: NOTICE, state: "OPEN", body: noticeBody }], PRESENT);
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("created");
+    expect(calls.some((c) => c.args[1] === "comment")).toBe(false);
+  });
+
+  // Probe C, THE TRAP: state file corrupt, consumer absent.
+  // ensureSuppressionNotice's own cold-start lookup calls findDedupMatch WITH
+  // the notice's own key to re-find the notice it already created — that one
+  // call must NOT filter its own key's marker out, or it can never find
+  // itself and mints a second notice on every cycle. Must suppress, re-derive
+  // the existing notice's number, and create nothing.
+  test("C: state file corrupt, consumer absent ⇒ suppressed, notice re-derived, zero creates", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), "{not json");
+    const { gh, calls } = mkGh([{ number: NOTICE, state: "OPEN", body: noticeBody }], null);
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("suppressed");
+    expect(res.issue).toBe(NOTICE);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
+  });
+
+  // Probe D: regression control. An ordinary recurrence with no notice
+  // involved at all must still bump exactly as before this revision.
+  test("D: ordinary recurrence, no notice involved ⇒ bumps unchanged", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, SUPPRESSION_NOTICE_FILE), JSON.stringify({ issue: NOTICE }));
+    const { gh, calls } = mkGh([{ number: REAL, state: "OPEN", body: realBody }], null);
+    const res = fileFinding(gh, dir, probeFinding());
+    expect(res.outcome).toBe("bumped");
+    expect(res.issue).toBe(REAL);
+    expect(calls.some((c) => c.args[1] === "create")).toBe(false);
   });
 });
 
