@@ -600,6 +600,47 @@ function appendFilingLog(stateDir: string, entry: FilingLogEntry): void {
   appendFileSync(join(stateDir, FILING_LOG_FILE), `${JSON.stringify(entry)}\n`);
 }
 
+/**
+ * The health probe's read side of this log (task 4 of the consumer-gate
+ * plan). `present: false` means the log itself couldn't be read (missing
+ * file, or any other read failure) — distinct from `present: true` with zero
+ * parsed `entries`, which means the file exists but every line in it (or the
+ * slice we looked at) failed to parse. Collapsing those two into one boolean
+ * is exactly the "can't tell absent from unreadable" failure this project has
+ * been burned by seven times (see MEMORY.md); a health probe over this log
+ * must not repeat it.
+ *
+ * Split is CRLF-agnostic (`/\r?\n/`), a standing project invariant (three
+ * prior incidents from a bare `\n` split) — irrelevant to how appendFilingLog
+ * writes (always `\n`), relevant to how this file might be read back on a
+ * Windows checkout or after an editor round-trip.
+ */
+export function readFilingLog(
+  stateDir: string,
+  maxLines = 500,
+): { present: boolean; entries: FilingLogEntry[]; unreadable: number } {
+  let raw: string;
+  try {
+    raw = readFileSync(join(stateDir, FILING_LOG_FILE), "utf8");
+  } catch {
+    return { present: false, entries: [], unreadable: 0 };
+  }
+  const lines = raw
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .slice(-maxLines);
+  const entries: FilingLogEntry[] = [];
+  let unreadable = 0;
+  for (const line of lines) {
+    try {
+      entries.push(JSON.parse(line) as FilingLogEntry);
+    } catch {
+      unreadable++;
+    }
+  }
+  return { present: true, entries, unreadable };
+}
+
 // --- one standing suppression notice (task 3 of the consumer-gate plan) ----
 //
 // The escape valve must not become the second flood: at ~8 findings/day,

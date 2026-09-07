@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultBreaker, loadBreakers, saveBreakers, tripOpen } from "../src/scheduler/breaker";
 import { saveLedger } from "../src/scheduler/dispatch-ledger";
+import { FILING_LOG_FILE, type FilingLogEntry } from "../src/scheduler/filing";
 import { health } from "../src/scheduler/health";
 import { JOBS } from "../src/scheduler/jobs";
 import { defaultAnchor, saveAnchors } from "../src/scheduler/state";
@@ -72,6 +73,71 @@ describe("--health probe (D-Health)", () => {
     expect(out).toContain("lock: PRESENT");
     expect(out).toContain("stop: absent");
     expect(out).toContain("last tick: 2026-07-18T08:57:00.000Z (3m ago)");
+  });
+
+  // Task 4 (consumer-gate plan): the local finding-log is the ONLY way to
+  // tell "correctly suppressed because nobody is reading" from "broken and
+  // silent" (see filing.ts's readFilingLog). Four cases, each catching a
+  // distinct way that distinction can collapse.
+  describe("filing summary from the local finding-log", () => {
+    const entry = (over: Partial<FilingLogEntry> & Pick<FilingLogEntry, "ts" | "outcome" | "consumer">): FilingLogEntry => ({
+      jobId: "standup",
+      cycleId: "c",
+      key: "k",
+      title: "t",
+      issue: null,
+      nearMatch: "skipped",
+      ...over,
+    });
+    const writeLog = (dir: string, text: string) => writeFileSync(join(dir, FILING_LOG_FILE), text);
+
+    // Catches: the summary line dropping an outcome, miscounting the 24h
+    // window, or reading the wrong (not-newest) entry as "last".
+    test("(a) composes outcome, age, 24h counts, and consumer from three real entries", () => {
+      const dir = fixture();
+      const e1 = entry({ ts: new Date(NOW - 20 * 3_600_000).toISOString(), outcome: "created", consumer: "present" });
+      const e2 = entry({ ts: new Date(NOW - 5 * 3_600_000).toISOString(), outcome: "suppressed", consumer: "absent" });
+      const e3 = entry({ ts: new Date(NOW - 2 * 3_600_000).toISOString(), outcome: "suppressed", consumer: "absent" });
+      writeLog(dir, [e1, e2, e3].map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+      const out = health(dir, JOBS, NOW);
+      expect(out).toContain(
+        `filing: last suppressed ${e3.ts} (2h ago) | 24h created 1 bumped 0 suppressed 2 capped 0 | consumer absent`,
+      );
+    });
+
+    // Catches: "no log" and "unreadable log" collapsing into the same line —
+    // the absent-vs-unreadable distinction this project has been burned by
+    // seven times (MEMORY.md).
+    test("(b) no finding-log.jsonl at all -> 'filing: never'", () => {
+      const out = health(fixture(), JOBS, NOW);
+      expect(out).toContain("filing: never (no findings recorded)");
+    });
+
+    // Catches: a log that exists but fails to parse being reported the same
+    // as "nothing has ever been filed" — the exact collapse (b) exists to
+    // rule out on the other side.
+    test("(c) log present, every line garbage -> unreadable count, never 'filing: never'", () => {
+      const dir = fixture();
+      writeLog(dir, "not json\nalso not json\n{broken\n");
+      const out = health(dir, JOBS, NOW);
+      expect(out).toContain("filing: log present but no readable entries (3 unreadable lines)");
+      expect(out).not.toContain("filing: never");
+    });
+
+    // Catches: the loud consumer-probe-error line either never firing (the
+    // pre-existing blind spot: `gates: filing ON` printing through a probe
+    // that can't run) or firing on every ordinary consumer value.
+    test("(d) newest consumer 'error' is loud; 'absent' is not", () => {
+      const ts = new Date(NOW - 30 * 60_000).toISOString();
+      const dir = fixture();
+      writeLog(dir, `${JSON.stringify(entry({ ts, outcome: "suppressed", consumer: "error" }))}\n`);
+      expect(health(dir, JOBS, NOW)).toContain("!! CONSUMER PROBE ERROR");
+
+      const dir2 = fixture();
+      writeLog(dir2, `${JSON.stringify(entry({ ts, outcome: "suppressed", consumer: "absent" }))}\n`);
+      expect(health(dir2, JOBS, NOW)).not.toContain("!! CONSUMER PROBE ERROR");
+    });
   });
 
   // Catches: silent job failure invisible to the operator — the one failure
