@@ -109,6 +109,24 @@ describe("withdraw storage guard: the refusals #706 asks for", () => {
     expect(r.kind === "blocked" && r.reason).toContain("storage holds 3, not 10");
     expect(calls.length).toBe(0);
   });
+
+  // Catches `find` in place of the sum. Whether a locker can list one item id
+  // across several rows is ASSUMED, not verified -- the reference says nothing
+  // about stacking (zero hits for stack/aggregate/duplicate in storage.md) and a
+  // per-row quantity field is weak evidence that it aggregates. But the two
+  // readings fail in opposite directions and only one of them costs: `find`
+  // takes the first row, under-counts, and refuses a withdraw the locker can
+  // satisfy. Summing is wrong only if the game itself double-counts, which no
+  // reading of the reference suggests.
+  test("a locker listing one item across several rows is summed, not read off the first", async () => {
+    const { api, calls } = stubApi({
+      storage: [held("nickel_ore", 4), held("iron_ore", 99), held("nickel_ore", 6)],
+    });
+    const r = await executeTick(api, withdraw({ item_id: "nickel_ore", quantity: 10 }), { step: 0, iteration: 0 });
+    // 4 + 6 satisfies 10. Under `find` this would read 4 and refuse.
+    expect(r.kind).not.toBe("blocked");
+    expect(calls.length).toBe(1);
+  });
 });
 
 describe("withdraw storage guard: the withdrawals it must let through", () => {
@@ -195,6 +213,11 @@ describe("withdraw storage guard: the refusal text the planner actually reads", 
   test("the refusal does not classify as the game's insufficient_storage", async () => {
     const { api } = stubApi({ storage: [] });
     const r = await executeTick(api, withdraw({ item_id: "nickel_ore", quantity: 10 }), { step: 0, iteration: 0 });
+    // Positive control FIRST. Without it the negative assertion below passes on
+    // `reason = ""` -- so the test stayed GREEN under a mutation that deleted
+    // the call site entirely, while five siblings went red. A `not.toBe` needs
+    // something to have happened before it means anything.
+    expect(r.kind).toBe("blocked");
     const reason = r.kind === "blocked" ? r.reason : "";
     // Through the real classifier, never a copy of its regex: a duplicated
     // pattern goes on passing after the producer changes.

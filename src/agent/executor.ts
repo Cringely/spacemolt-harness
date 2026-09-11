@@ -775,18 +775,30 @@ async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepR
   }
   if (items === undefined) return null; // unreadable / not a storage listing -> fail open
 
-  // Registry requires quantity (actions.ts), but a foreign or older persisted
-  // step can carry anything; an unreadable quantity falls back to the weakest
-  // claim the data supports -- "at least one" -- so the block still needs a
-  // PROVEN shortfall and never invents a bigger one.
-  const want = typeof p.quantity === "number" && p.quantity > 0 ? p.quantity : 1;
-  const held = items.find((i) => i.itemId === p.item_id)?.quantity ?? 0;
+  // An unreadable quantity fails OPEN rather than substituting one. The registry
+  // schema is .strict() with quantity int >= 1 (actions.ts) and a persisted plan
+  // that fails re-validation is discarded rather than replayed, so this is
+  // unreachable today; if it were reachable, inventing "at least one" would put
+  // a number the step never asked for on a BLOCKING path.
+  if (typeof p.quantity !== "number" || p.quantity <= 0) return null;
+  const want = p.quantity;
+  // SUM every matching row, not the first. The reference says nothing about
+  // whether a locker can list one item id twice (zero hits for stack/aggregate/
+  // duplicate in storage.md), and a per-row quantity field is weak evidence that
+  // it aggregates. ASSUMED, not verified -- and `find` would under-count and
+  // refuse a withdraw the locker satisfies, which is the direction that costs.
+  const held = items
+    .filter((i) => i.itemId === p.item_id)
+    .reduce((n, i) => n + i.quantity, 0);
   if (held >= want) return null;
 
   // Remedy FIRST, and MEASURED -- digest.ts clips a blocked wake's detail at
   // UNTRUSTED_TEXT_SNIPPET_LEN (200), and three reasons in the #757 change ran
-  // 250-295 and lost their remedy half. Worst case here is 194 (the longest
-  // catalog item id, 33 chars, with a six-digit quantity); the id appears ONCE,
+  // 250-295 and lost their remedy half. Both numbers vary: with the longest
+  // catalog item id (33 chars) and a six-digit held AND want, it measures 199 --
+  // one char of headroom, not six. `quantity` carries no upper bound in the
+  // registry, so an 8-digit want would clip at 204; cargo capacity bounds
+  // anything reachable, and the remedy head survives either way. The id appears ONCE,
   // inside the command, because a second mention cost 40 chars and took the
   // long-id case over the clip. Asserted against the real catalog in
   // test/executor-withdraw-storage.test.ts rather than eyeballed.

@@ -876,12 +876,19 @@ const StorageViewSchema = z.object({
   base_id: z.string(),
   hint: z.string(),
   ships: z.array(z.unknown()),
-  items: z.array(
-    z.object({ item_id: z.string(), quantity: z.number() })
-      .passthrough()
-      .nullable()
-      .catch(null),
-  ),
+  // NO per-row tolerance, deliberately, and the opposite of CargoItemSchema's
+  // choice. A dropped row makes `items` SHORTER, and for this consumer a short
+  // list is indistinguishable from an empty locker -- which the guard reads as
+  // proven-empty and refuses. Per-row `.catch(null)` therefore manufactures the
+  // one outcome this design says it cannot: a well-formed listing whose rows
+  // carry a type surprise nulls every row, and every withdraw is refused
+  // silently for as long as the shape holds, with `guard: true` keeping it out
+  // of brokenCapabilities so nothing pages on it. Cargo tolerates rows because
+  // installModBlock reads it as an informational manifest and treats [] as
+  // UNKNOWN (executor.ts:640-654); for a BLOCKING guard the same construct
+  // inverts. A bad row fails the whole parse, getStorage returns undefined, and
+  // the guard fails open at the cost of one tick.
+  items: z.array(z.object({ item_id: z.string(), quantity: z.number() })),
 });
 
 export class SpacemoltClient implements GameApi {
@@ -1246,9 +1253,7 @@ export class SpacemoltClient implements GameApi {
     const res = await this.action("view");
     const parsed = StorageViewSchema.safeParse(res.structuredContent ?? {});
     if (!parsed.success) return undefined; // UNKNOWN, never "empty"
-    return parsed.data.items
-      .filter((i): i is { item_id: string; quantity: number } => i !== null)
-      .map((i) => ({ itemId: i.item_id, quantity: i.quantity }));
+    return parsed.data.items.map((i) => ({ itemId: i.item_id, quantity: i.quantity }));
   }
 
   // Purchase discovery (issue #220): raw estimate text for the digest. Identical

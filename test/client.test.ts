@@ -328,12 +328,17 @@ describe("SpacemoltClient", () => {
     expect(await client.getStorage()).toBeUndefined();
   });
 
-  // Per-entry defensiveness, matching CargoItemSchema's. One malformed row must
-  // not turn a readable locker into UNKNOWN -- that would hand the pilot back
-  // the doomed call over a field it never reads. Catches a schema that throws
-  // the whole parse on a bad row, and equally one that keeps the bad row and
-  // lets `undefined` reach the guard's quantity comparison.
-  test("getStorage() drops a malformed row and keeps its siblings", async () => {
+  // NO per-entry defensiveness, and this is the inverse of CargoItemSchema's
+  // choice on purpose. A dropped row makes the list SHORTER, and this consumer
+  // cannot tell a short list from an empty locker -- withdrawStorageBlock reads
+  // [] as PROVEN-EMPTY and refuses. So tolerating a bad row is what manufactures
+  // a false refusal: nulling every row of a well-formed listing yields [], and
+  // every withdraw is refused silently for as long as the shape holds, with
+  // `guard: true` keeping it out of brokenCapabilities so nothing pages on it.
+  // Cargo tolerates rows because installModBlock reads it as an informational
+  // manifest and treats [] as UNKNOWN; for a BLOCKING guard the construct
+  // inverts. Catches a schema that reintroduces `.catch(null)` or a `.filter`.
+  test("getStorage() returns UNKNOWN for a listing with any unreadable row, never a short list", async () => {
     server = startFakeServer();
     const client = makeClient();
     await client.login("TestPilot", "pw");
@@ -348,10 +353,29 @@ describe("SpacemoltClient", () => {
         ],
       },
     }));
-    expect(await client.getStorage()).toEqual([
-      { itemId: "nickel_ore", quantity: 12 },
-      { itemId: "iron_ore", quantity: 7 },
-    ]);
+    // `undefined`, not `[]` and not the two readable rows: the guard must fail
+    // open on a shape it cannot fully read, at the cost of one wasted tick.
+    expect(await client.getStorage()).toBeUndefined();
+  });
+
+  // The whole-row-type case, which is the one that actually bit. Every row is
+  // individually well-shaped except that `quantity` arrives as a string -- the
+  // exact divergence class the envelope-level required-key argument does not
+  // cover, on a response shape this harness has never exercised live.
+  test("getStorage() returns UNKNOWN when every row carries a type surprise", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+    server.setHandler("spacemolt_storage", "view", () => ({
+      structuredContent: {
+        base_id: "haven_central", hint: "h", ships: [],
+        items: [
+          { item_id: "nickel_ore", name: "Nickel Ore", quantity: "12", size: 1 },
+          { item_id: "iron_ore", name: "Iron Ore", quantity: "40", size: 1 },
+        ],
+      },
+    }));
+    expect(await client.getStorage()).toBeUndefined();
   });
 
   // Ship tool (issue #219): the fit guard and the digest's fit section BOTH read

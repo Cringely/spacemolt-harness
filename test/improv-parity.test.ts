@@ -364,21 +364,21 @@ const SEAMS: Seam[] = [
       "fewer than the requested quantity is refused before the tick. 21 of the miner's 30 lifetime " +
       "withdraws were refused by the game with `insufficient_storage: Storage only has 0 x <item>`, " +
       "one tick after a create_buy_order the pilot read as delivery)",
-    // `api.getStorage` appears in executor.ts exactly twice, the capability
-    // probe and the call, BOTH inside this guard and nowhere else -- so the
-    // marker vanishing is the guard vanishing. Deliberately not
-    // `withdrawStorageBlock`, which also appears in two comments: that is the
-    // shape of marker the #757 change proved can survive its own guard's
-    // deletion, since `toContain` over a whole-file read cannot tell a live
-    // call site from a comment mentioning one.
+    // Pins the CALL SITE, which is what every other seam in this file does
+    // (`step.action === "undock"`, `step.action === "accept_mission"`). An
+    // earlier version marked `api.getStorage`, the guard's INTERIOR, and review
+    // measured the gap: deleting the `if (step.action === "withdraw")` block in
+    // executeTick leaves the guard defined, dead, and this seam GREEN. Existence
+    // and wiring have to be pinned together or the seam certifies a function
+    // nothing calls.
     //
-    // A REGEX, and the `\b` is the point. Ablating this seam with a rename to
-    // `api.getStorageXX` left a `toContain("api.getStorage")` GREEN, because
-    // the old name survives as a PREFIX of the new one -- the same
-    // substring-blindness that let the #757 marker match two decoys, in its
-    // other form. `\b` refuses the longer identifier, so a rename fails here
-    // as loudly as a deletion.
-    code: { file: "src/agent/executor.ts", marker: /api\.getStorage\b/ },
+    // A REGEX, and the parens are the point. The interior marker was a regex
+    // for a related reason: ablating it with a rename to `api.getStorageXX`
+    // left a `toContain("api.getStorage")` GREEN, because the old name survives
+    // as a PREFIX of the new one -- the same substring-blindness that let the
+    // #757 marker match two decoys, in its other form. Matching the call with
+    // its arguments refuses both a rename and a bare mention in a comment.
+    code: { file: "src/agent/executor.ts", marker: /withdrawStorageBlock\(api, step\)/ },
     // Each anchor was absent from §4 before this bullet was added (checked, not
     // assumed), so deleting the bullet fails here rather than passing on a
     // neighbour's vocabulary. create_buy_order is deliberately NOT an anchor:
