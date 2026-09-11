@@ -193,6 +193,85 @@ describe("normalizePlanLocations", () => {
     expect(result.plan).toEqual(plan);
     expect(result.rewrites).toEqual([]);
   });
+
+  // Issue #813, live capture 2026-08-10T22:01:19Z (corsair): the planner's
+  // `travel mobile_capital` step targets a POI in `horizon`, the system the
+  // PRECEDING travel_to step moves the pilot to -- but the passed-in
+  // surroundings snapshot is still `frontier` (the pre-plan system). The old
+  // normalizer checked mobile_capital against frontier's POI list and
+  // hard-rejected it as unknown, discarding an otherwise-valid plan.
+  test("issue #813 live case: a travel step after a cross-system travel_to is not checked against the stale snapshot", () => {
+    const surroundings: Surroundings = {
+      systemId: "frontier",
+      systemName: "Frontier",
+      connections: ["horizon"],
+      pois: [
+        { id: "frontier_star", name: "Frontier Star", type: "star" },
+        { id: "old_survey_station", name: "Old Survey Station", type: "station" },
+        { id: "veil_nebula", name: "Veil Nebula", type: "nebula" },
+        { id: "drifters_haze", name: "Drifters Haze", type: "asteroid_belt" },
+        { id: "icecap_drift", name: "Icecap Drift", type: "asteroid_belt" },
+        { id: "pioneer_fields", name: "Pioneer Fields", type: "asteroid_belt" },
+      ],
+      dockedAt: "old_survey_station",
+    };
+    const plan: Plan = {
+      goal: "Dock at Frontier Station to acquire and fit a combat weapon before resuming the grazer cull",
+      steps: [
+        { action: "travel_to", params: { system_id: "horizon" } },
+        { action: "travel", params: { id: "mobile_capital" } },
+        { action: "dock", params: {} },
+      ],
+    };
+    const result = normalizePlanLocations(plan, surroundings);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan.steps[1]).toEqual({ action: "travel", params: { id: "mobile_capital" } });
+  });
+
+  // Proves the fix does not over-suppress validation: a travel_to that stays
+  // IN the current system leaves the snapshot correct, so a bad POI in a
+  // later step must still hard-reject exactly as it does with no travel_to
+  // at all.
+  test("a same-system travel_to does not suppress validation for a later bad POI", () => {
+    const plan: Plan = {
+      goal: "mine",
+      steps: [
+        { action: "travel_to", params: { system_id: "sys-1" } },
+        { action: "travel", params: { id: "Nonexistent Place" } },
+      ],
+    };
+    const result = normalizePlanLocations(plan, commerceFieldsSurroundings);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("unknown id 'Nonexistent Place'");
+    expect(result.error).toContain("commerce_fields");
+  });
+
+  // jump shares the identical stale-snapshot exposure as travel: its target
+  // system id is only ever meaningful against the CURRENT system's
+  // connections, which the pre-plan snapshot no longer reflects once an
+  // earlier cross-system travel_to has run.
+  test("a jump step after a cross-system travel_to is exempted the same way travel is", () => {
+    const surroundings: Surroundings = {
+      systemId: "frontier",
+      systemName: "Frontier",
+      connections: ["horizon"],
+      pois: [],
+      dockedAt: "old_survey_station",
+    };
+    const plan: Plan = {
+      goal: "explore",
+      steps: [
+        { action: "travel_to", params: { system_id: "horizon" } },
+        { action: "jump", params: { id: "some_far_system" } },
+      ],
+    };
+    const result = normalizePlanLocations(plan, surroundings);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan.steps[1]).toEqual({ action: "jump", params: { id: "some_far_system" } });
+  });
 });
 
 describe("normalizeGiftTargets (issue #788)", () => {
