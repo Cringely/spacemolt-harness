@@ -475,6 +475,19 @@ Social / security (VERBATIM, non-negotiable — matters MORE under improv, model
   deterministic backstop: the registry schema refuses any gift above 5000cr on every driver
   including this one, plan admission refuses `repeat`/`until` on a gift step, and in
   plan-then-execute the executor refuses a target that is not on the roster.)
+- `withdraw` MOVES items out of your station locker into cargo. It is not a way to obtain
+  anything: the locker has to hold the item already, and only three things put one there — a
+  `deposit` from cargo, a crafting job delivering its output, or a `buy` you routed with
+  `deliver_to=storage`. Ask `view_storage` first if you are not certain what is in there. Above
+  all, a standing `create_buy_order` is NOT one of those three: it escrows your credits and then
+  waits for a seller, so the goods do not exist yet and there is nothing to withdraw. When a `buy`
+  is refused because nobody is selling here, the refusal text hands you a ready-made
+  `create_buy_order` — placing it is fine, but the next step after it is to go about your business,
+  never to withdraw what you just ordered. Withdrawing something the locker does not hold is
+  refused with `insufficient_storage: Storage only has 0 x <item>`, and it costs you the tick.
+  (Also a §5 deterministic backstop in plan-then-execute: the executor reads the locker before a
+  withdraw and refuses one it can prove is short. The improv driver reaches no executor guard, so
+  here the rule is yours to keep.)
 
 ## 5. Deterministic backstops that REMAIN (harness-enforced; the model cannot disable them)
 

@@ -275,6 +275,85 @@ describe("SpacemoltClient", () => {
     expect(await client.getShipClassCapabilities("nope")).toBeUndefined();
   });
 
+  // Withdraw precondition (#706). StorageResponse is a oneOf of 17 variants
+  // (openapi-v2.json:26200) and only the first is the personal locker, so the
+  // parse has to be a DISCRIMINATOR, not just a field reader. The three cases
+  // are the three the guard acts on, and the middle one is the whole point: an
+  // empty locker is knowledge (the state behind all 21 live refusals), while a
+  // response that is some OTHER variant is UNKNOWN. Collapsing those two in
+  // either direction breaks the guard -- one way it deadlocks every withdraw,
+  // the other way it fails open on the only case worth catching.
+  test("getStorage() separates a stocked locker, an empty one, and a non-listing response", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+
+    // Variant 1, shaped as the vendored spec's own example (base_id + items +
+    // ships + hint, each item carrying item_id/name/quantity/size).
+    server.setHandler("spacemolt_storage", "view", () => ({
+      structuredContent: {
+        base_id: "haven_central", hint: "Use withdraw to move items to cargo.", ships: [],
+        items: [
+          { item_id: "nickel_ore", name: "Nickel Ore", quantity: 12, size: 1 },
+          { item_id: "copper_wiring", name: "Copper Wiring", quantity: 4, size: 1 },
+        ],
+      },
+    }));
+    expect(await client.getStorage()).toEqual([
+      { itemId: "nickel_ore", quantity: 12 },
+      { itemId: "copper_wiring", quantity: 4 },
+    ]);
+
+    // An EMPTY locker. `items` is a required key of the variant, so reaching []
+    // means a well-formed listing really carried no rows.
+    server.setHandler("spacemolt_storage", "view", () => ({
+      structuredContent: { base_id: "haven_central", hint: "Nothing stored here.", ships: [], items: [] },
+    }));
+    expect(await client.getStorage()).toEqual([]);
+
+    // Variant 4 of the same oneOf: a WITHDRAW RECEIPT. Real, current, and it
+    // carries no `items` key at all. Must be UNKNOWN -- treating this as an
+    // empty locker would refuse the pilot's next withdraw on the strength of a
+    // receipt for its last one.
+    server.setHandler("spacemolt_storage", "view", () => ({
+      structuredContent: {
+        action: "withdraw", item_id: "nickel_ore", quantity: 10,
+        storage_total: 2, cargo_remaining: 38, cargo_space: 50,
+      },
+    }));
+    expect(await client.getStorage()).toBeUndefined();
+
+    // An error envelope, the other route to a non-listing response.
+    server.setHandler("spacemolt_storage", "view", () => ({ structuredContent: {} }));
+    expect(await client.getStorage()).toBeUndefined();
+  });
+
+  // Per-entry defensiveness, matching CargoItemSchema's. One malformed row must
+  // not turn a readable locker into UNKNOWN -- that would hand the pilot back
+  // the doomed call over a field it never reads. Catches a schema that throws
+  // the whole parse on a bad row, and equally one that keeps the bad row and
+  // lets `undefined` reach the guard's quantity comparison.
+  test("getStorage() drops a malformed row and keeps its siblings", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+    server.setHandler("spacemolt_storage", "view", () => ({
+      structuredContent: {
+        base_id: "haven_central", hint: "h", ships: [],
+        items: [
+          { item_id: "nickel_ore", name: "Nickel Ore", quantity: 12, size: 1 },
+          { item_id: "broken_ore", name: "Broken Ore", quantity: "lots", size: 1 },
+          { name: "No Id At All", quantity: 3, size: 1 },
+          { item_id: "iron_ore", name: "Iron Ore", quantity: 7, size: 1 },
+        ],
+      },
+    }));
+    expect(await client.getStorage()).toEqual([
+      { itemId: "nickel_ore", quantity: 12 },
+      { itemId: "iron_ore", quantity: 7 },
+    ]);
+  });
+
   // Ship tool (issue #219): the fit guard and the digest's fit section BOTH read
   // this off get_status -- there is no second get_ship fetch -- so if the ship
   // block's grid ever stops being mapped, the guard silently stops guarding.

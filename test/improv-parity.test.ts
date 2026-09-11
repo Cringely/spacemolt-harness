@@ -359,6 +359,32 @@ const SEAMS: Seam[] = [
       /never the short internal id/i,
       /5000cr in a single gift/i, /never set up a standing gift/i],
   },
+  {
+    guard: "withdraw storage-contents guard (#706: a withdraw whose personal locker provably holds " +
+      "fewer than the requested quantity is refused before the tick. 21 of the miner's 30 lifetime " +
+      "withdraws were refused by the game with `insufficient_storage: Storage only has 0 x <item>`, " +
+      "one tick after a create_buy_order the pilot read as delivery)",
+    // `api.getStorage` appears in executor.ts exactly twice, the capability
+    // probe and the call, BOTH inside this guard and nowhere else -- so the
+    // marker vanishing is the guard vanishing. Deliberately not
+    // `withdrawStorageBlock`, which also appears in two comments: that is the
+    // shape of marker the #757 change proved can survive its own guard's
+    // deletion, since `toContain` over a whole-file read cannot tell a live
+    // call site from a comment mentioning one.
+    //
+    // A REGEX, and the `\b` is the point. Ablating this seam with a rename to
+    // `api.getStorageXX` left a `toContain("api.getStorage")` GREEN, because
+    // the old name survives as a PREFIX of the new one -- the same
+    // substring-blindness that let the #757 marker match two decoys, in its
+    // other form. `\b` refuses the longer identifier, so a rename fails here
+    // as loudly as a deletion.
+    code: { file: "src/agent/executor.ts", marker: /api\.getStorage\b/ },
+    // Each anchor was absent from §4 before this bullet was added (checked, not
+    // assumed), so deleting the bullet fails here rather than passing on a
+    // neighbour's vocabulary. create_buy_order is deliberately NOT an anchor:
+    // §4 already says it four times in the market-order rules.
+    anchors: ["insufficient_storage", "view_storage", "deliver_to=storage", /waits for a seller/i],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {
