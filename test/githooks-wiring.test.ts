@@ -113,6 +113,11 @@ describe(".githooks wiring", () => {
 
   test.each(hooks)("%s is executable", (hook) => {
     const modes = stagedModes();
+    // Per hook, not per run: git may answer for the directory yet not list
+    // THIS file (untracked, gitignored, `git rm --cached`), in which case the
+    // verdict falls to the filesystem for this hook alone. That is the right
+    // answer to the question actually being asked -- will git execute it --
+    // since an untracked hook with a real exec bit does run.
     const verdict = hookExecutable(modes?.get(hook) ?? null, fsMode(hook));
     // null means no instrument could read this hook's mode. Failing here is
     // correct: an unreadable mode is indistinguishable from a bad one, and
@@ -127,12 +132,17 @@ describe(".githooks wiring", () => {
     let chained = 0;
     for (const hook of hooks) {
       const body = readFileSync(join(HOOK_DIR, hook), "utf8");
-      for (const m of body.matchAll(/(?:^|\s)(\.claude\/hooks\/[\w.-]+)/g)) {
+      // Unanchored on purpose. Requiring a preceding space or line start
+      // narrows this to the bare form today's three shims happen to use, and
+      // misses every other realistic one: double-quoted, single-quoted,
+      // $CLAUDE_PROJECT_DIR-prefixed, ./-prefixed, or assigned to a variable.
+      // A future shim written with quotes would pass this test while its chain
+      // went unchecked, which is the failure this test exists to catch.
+      for (const m of body.matchAll(/\.claude\/hooks\/[\w.-]+/g)) {
         // Comments name these paths too. Both a mention and an invocation must
         // resolve: a comment citing a path that no longer exists is itself the
         // stale-documentation half of the same drift.
-        const target = m[1];
-        if (!target) continue;
+        const target = m[0];
         chained++;
         if (!existsSync(join(ROOT, target))) missing.push(`${hook} -> ${target}`);
       }
