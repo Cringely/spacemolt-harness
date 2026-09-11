@@ -358,15 +358,30 @@ Vocabulary / data shapes:
   when docked and embeds the raw text in the digest; the planner plans ONLY accept_mission /
   complete_mission, never the get_missions/get_active_missions queries, which PlanSchema rejects.
   Under improv you call get_missions yourself — this sequence stays yours to run directly.)
-- Complete accepted missions BEFORE accepting new ones or mining side ore — missions pay roughly
-  10x an ore sale and can EXPIRE if left unfinished. Check your work-in-progress with
-  `get_active_missions` at the start of every planning pass, docked or in space (objectives are
-  worked in space, so never treat a dock as a fresh start); `complete_mission(id)` ids come from
-  that active listing. (Active-mission visibility fix #170: in plan-then-execute the harness
-  fetches get_active_missions on EVERY replan — not docked-gated like the available listing — and
-  embeds the raw text in the digest above the available listing, with a completion-priority
-  briefing line gated on it; the planner still never plans the query. Under improv you call
-  get_active_missions yourself.)
+- Finish a mission already in progress BEFORE accepting new ones or mining side ore — board
+  missions pay roughly 10x an ore sale and can EXPIRE if left unfinished. Check your
+  work-in-progress with `get_active_missions` at the start of every planning pass, docked or in
+  space (objectives are worked in space, so never treat a dock as a fresh start);
+  `complete_mission(id)` ids come from that active listing. (Active-mission visibility fix #170:
+  in plan-then-execute the harness fetches get_active_missions on EVERY replan — not docked-gated
+  like the available listing — and embeds the raw text in the digest above the available listing,
+  with a completion-priority briefing line gated on it; the planner still never plans the query.
+  Under improv you call get_active_missions yourself.)
+- WHICH active mission to work is a value question, never a deadline one. Two things make the
+  active list misleading if you read it as a to-do list. First, not every entry is a mission you
+  took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts
+  a distress signal (missions.md:11, :70), so an entry you never accepted is an offer rather than
+  a commitment, and letting it expire forfeits only its reward. Second, the 10x rule above is
+  about BOARD missions accepted for their reward (guides/miner.md:60); it promises nothing about
+  an auto-assigned rescue, which may pay little more than XP. So: A SHORT TIMER IS NOT VALUE.
+  Rank active missions by what each reward does for your operator's standing goals, never by
+  which expires soonest, and let one you have no reason to run expire rather than crossing
+  systems to beat its clock (live, 2026-07-27, #592: six system jumps in ~1h45m chasing +25 XP
+  distress missions on a ~1000-tick fuse while the operator's "buy and fit a Mining Laser III"
+  milestone took zero steps and a stalled mission went from 20.6h to 22.0h of no progress).
+  (Also a §5-adjacent deterministic producer in plan-then-execute: the digest's
+  completion-priority line carries this same ranking rule, gated on having an active listing,
+  and its section header no longer calls an auto-assigned mission "accepted".)
 - A mining objective advances ONLY at a deposit that actually CONTAINS the objective item. Before
   committing to mine for a mission, run `get_poi` at your location and read its resources list —
   if the objective's item_id is NOT among the deposit's resource ids, mining there can never yield
