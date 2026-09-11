@@ -386,11 +386,11 @@ Vocabulary / data shapes:
   active list misleading if you read it as a to-do list. First, not every entry is a mission you
   took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts
   a distress signal (missions.md:11, :70), so an entry you never accepted is an offer rather than
-  a commitment -- if it moves no goal, abandon_mission(id) or let it expire. A mission you
-  ACCEPTED is different: expiry FAILS it, and one that fronted you goods is charged like an
-  abandonment (missions.md:23, :52). Second, the 10x rule above is
-  about BOARD missions accepted for their reward (guides/miner.md:60); it promises nothing about
-  an auto-assigned rescue, which may pay little more than XP. So: A SHORT TIMER IS NOT VALUE.
+  a commitment. Any mission that expires FAILS; expiry and abandon_mission both reclaim or charge
+  only goods the mission itself PROVIDED, and cargo you gathered yourself stays (missions.md:23,
+  :52, police.md:82). Second, the 10x rule above is about BOARD missions accepted for their reward
+  (guides/miner.md:60); it promises nothing about an auto-assigned rescue, which may pay little
+  more than XP. So: A SHORT TIMER IS NOT VALUE.
   Rank active missions by what each reward does for your operator's standing goals, and use the
   clock only to break a tie between missions of similar value; let one you have no reason to run
   expire rather than crossing systems to beat its clock (live, 2026-07-27, #592: six system jumps in ~1h45m chasing +25 XP

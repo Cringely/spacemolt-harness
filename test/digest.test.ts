@@ -678,6 +678,22 @@ describe("buildDigest", () => {
       expect(line).toMatch(/use the clock only to break a tie/i);
     });
 
+    // Catches: the expiry cost stated on the wrong axis. Two rounds of review
+    // went on this line. The reference keys the charge on what the mission
+    // PROVIDED (missions.md:23, :52, police.md:82), never on whether the pilot
+    // accepted it -- and the digest renders no accepted/auto-assigned
+    // discriminator at all, so an instruction keyed on acceptance is one the
+    // planner has to guess at. Guessing wrong on a fronted-goods courier means
+    // confiscation plus a base-value charge. Also pins that expiry failure is
+    // stated universally, which :52 says of every mission.
+    test("keys the expiry and abandon cost on the goods the mission PROVIDED, not on acceptance", () => {
+      const line = priorityLineOf(buildDigest({ ...baseCtx, activeMissionsText: active }))!;
+      expect(line).toMatch(/reclaim or charge only goods the mission itself PROVIDED/);
+      expect(line).toMatch(/Any mission that expires FAILS/);
+      // The axis the planner cannot see must not carry the cost claim.
+      expect(line).not.toMatch(/ACCEPTED is different/);
+    });
+
     test("the Goals it points at are rendered ABOVE it, so 'the Goals above' is truthful", () => {
       const text = buildDigest({ ...baseCtx, activeMissionsText: active });
       const line = priorityLineOf(text)!;

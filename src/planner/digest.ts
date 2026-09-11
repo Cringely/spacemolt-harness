@@ -443,7 +443,7 @@ export function buildDigest(ctx: PlanContext): string {
     lines.push(renderActiveMissionListing(ctx.activeMissionsText));
     lines.push(
       `You have missions IN PROGRESS (the active listing above). Work the objective, then plan complete_mission(id) with the id from the active listing above -- finishing one comes FIRST, before accepting new missions or mining side ore. ` +
-      `Choose WHICH one deliberately. Not every entry here is a mission you took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts a distress signal, so an entry you never accepted is an offer rather than a commitment -- if it moves no goal, plan abandon_mission(id) or let it expire. A mission you ACCEPTED is different: expiry FAILS it, and one that fronted you goods is charged like an abandonment. ` +
+      `Choose WHICH one deliberately. Not every entry here is a mission you took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts a distress signal, so an entry you never accepted is an offer rather than a commitment. Any mission that expires FAILS; expiry and abandon_mission both reclaim or charge only goods the mission itself PROVIDED, and cargo you gathered yourself stays. ` +
       `The rule that missions pay ~10x an ore sale is about BOARD missions accepted for their reward; it promises nothing about an auto-assigned rescue, which may pay little more than XP. ` +
       `A SHORT TIMER IS NOT VALUE: rank these by what each reward does for the Goals above, and use the clock only to break a tie between missions of similar value.`
     );

@@ -225,7 +225,11 @@ const SEAMS: Seam[] = [
       // /never by/i was vacuous: it already matched the unrelated #670 fuel
       // rule ("never by percent of tank capacity") elsewhere in the spec, so it
       // could not fail independently of the three anchors beside it.
-      /BOARD missions accepted for their reward/, /break a tie between missions of similar value/i],
+      /BOARD missions accepted for their reward/, /break a tie between missions of similar value/i,
+      // The expiry cost, keyed on the observable. Unanchored before, and two
+      // review rounds found the claim wrong in three different directions with
+      // nothing on either side of the seam able to fail.
+      /reclaim or charge\s+only goods the mission itself PROVIDED/],
   },
   {
     guard: "mission objective check + deposit cross-ref (#291: objective item vs current POI's deposit resource ids)",
