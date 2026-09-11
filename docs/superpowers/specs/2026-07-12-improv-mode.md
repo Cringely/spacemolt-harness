@@ -287,6 +287,21 @@ Vocabulary / data shapes:
   system map marks every POI's yield and required module from its type, and the agent remembers
   each refused POI across restarts — bounded, persisted map memory — and briefs it as
   [mine blocked here for your ship: ...].)
+- Several commands need a specific MODULE fitted, and without it they fail every single time, not
+  most of the time. Read your fitted modules from `get_ship` (or `get_status` — same block) BEFORE
+  you plan one of them: `survey_system` needs a survey scanner and answers `no_scanner: "No survey
+  scanner equipped."` without one; `tow` needs a tow rig in a utility slot and answers `no_tow_rig`;
+  `cloak` needs a cloaking device; `mine` needs a mining laser (or the harvester the POI type
+  wants). Two hulls can substitute for a module — some integrate a survey scanner or a cloak — so
+  the honest check is "does my ship have this capability", not "is a module named in my fit". If it
+  does not, the command is not worth one attempt: buy and fit the module, or drop the goal.
+  Retrying is the expensive mistake, because nothing about the ship changes between tries. Live
+  2026-08: a scout issued `survey_system` 204 times with no scanner ever equipped and was refused
+  204 times — 90 of them in one 72h window, more than half of everything it did that window — and a
+  miner issued `tow` 6 times with no tow rig and was refused 6 times. (Also a §5 deterministic
+  backstop: in plan-then-execute the executor refuses a module-gated step before the call when the
+  fitted set is readable and provably lacks the module, and checks the hull's own integrated
+  capabilities before refusing anything a hull can substitute for.)
 - UPGRADING YOUR SHIP is how you stop being a starter pilot — unspent credits earn nothing. Buying
   and fitting runs in two different ways, and confusing them wastes ticks. A MODULE (mining laser,
   cargo expander, scanner) is bought like any other item: dock where the market sells it,
