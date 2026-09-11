@@ -709,6 +709,106 @@ async function installModBlock(
   return null;
 }
 
+// withdraw storage-contents guard (issue #706). Invariant: `withdraw` MOVES
+// items the personal station locker ALREADY HOLDS into cargo -- the locker is
+// filled only by a completed deposit, a craft delivery, or a purchase routed
+// with deliver_to:"storage" (storage.md:22,24,89), so a locker provably holding
+// fewer than the requested quantity makes the call a guaranteed refusal.
+// Established at the locker; violated by a plan that withdraws before anything
+// put the item there.
+//
+// PREMISE, from live capture, NOT from the issue's own wording. #706 reports
+// `insufficient_storage` and asserts a cause in a parenthetical; the code is
+// undocumented (it appears nowhere in docs/game-reference/, and api.md:1104's
+// table does not list it), and the name reads two opposite ways -- "storage
+// holds too few" or, as in HTTP 507, "storage has no room". Those need opposite
+// fixes, so the message the classifier throws away settles it. Pulled from the
+// production miner's own event store, 2026-09-05..09, all 21 occurrences
+// identical in shape:
+//     insufficient_storage: Storage only has 0 x nickel_ore.
+//     Use 'view_storage' to check.
+// A SOURCE-side shortfall. The capacity reading is refuted twice over: the
+// game names a full hold `no_cargo_space` (api.md:1106) and `cargo_full`
+// (markets.md:87), and the status snapshot 81s before that refusal reads
+// cargoUsed 0 -- an empty hold cannot be out of room.
+//
+// THE PRODUCER, same capture, one tick apart each time: `buy` is refused with
+// `item_not_available`, whose text ships a filled-in create_buy_order template;
+// the pilot places the standing order, the order sits UNFILLED awaiting a
+// seller, and the next step withdraws as though it had delivered. A standing
+// buy order puts nothing in the locker. That chain is what this guard cuts.
+//
+// FAIL OPEN, like every other pre-step guard here: only a locker we could
+// actually READ refuses anything. getStorage's three-valued return is the whole
+// mechanism (see GameApi.getStorage) -- undefined is UNKNOWN and skips the
+// check, while [] is knowledge that the locker is empty. Reading [] as UNKNOWN
+// would be the safe-looking choice and is the wrong one here: an empty locker is
+// the exact state behind every one of the 21 refusals, so that reading would
+// fail open on the only case worth catching. It is safe to trust because
+// `items` is a REQUIRED key of the variant parsed, so [] is reachable only from
+// a well-formed personal-storage listing (client.ts's StorageViewSchema).
+//
+// Receipt (simplicity rule 3) for the one free query this spends: the smaller
+// alternative was to skip the query and refuse on the harness's own memory of a
+// prior successful deposit. Rejected -- the executor is stateless across ticks,
+// and the locker is also filled by craft deliveries and deliver_to:"storage"
+// buys that no deposit event records, so that guard would refuse legitimate
+// withdrawals it simply had not watched. Fired only on a withdraw step (30 in
+// this pilot's lifetime), never on a mine/travel tick.
+//
+// NOT folded into the fitment table (issues #757/#736): that table maps an
+// action to a REQUIRED MODULE and answers from the ship's loadout, with a row
+// shape (action -> module requirement, fitted/inherent/absent verdict) that has
+// no column for an item id or a quantity -- both of which come from THIS step's
+// own params rather than from any static requirement. A one-row table plus a
+// bespoke verdict path would be a shared abstraction in name only.
+async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepResult | null> {
+  const p = step.params as { item_id?: unknown; quantity?: unknown };
+  if (typeof p.item_id !== "string" || !p.item_id) return null;
+  if (!api.getStorage) return null; // no capability to consult -> fail open
+
+  let items: readonly { itemId: string; quantity: number }[] | undefined;
+  try {
+    items = await api.getStorage();
+  } catch {
+    return null; // query threw -> UNKNOWN locker -> fail open
+  }
+  if (items === undefined) return null; // unreadable / not a storage listing -> fail open
+
+  // An unreadable quantity fails OPEN rather than substituting one. The registry
+  // schema is .strict() with quantity int >= 1 (actions.ts) and a persisted plan
+  // that fails re-validation is discarded rather than replayed, so this is
+  // unreachable today; if it were reachable, inventing "at least one" would put
+  // a number the step never asked for on a BLOCKING path.
+  if (typeof p.quantity !== "number" || p.quantity <= 0) return null;
+  const want = p.quantity;
+  // SUM every matching row, not the first. The reference says nothing about
+  // whether a locker can list one item id twice (zero hits for stack/aggregate/
+  // duplicate in storage.md), and a per-row quantity field is weak evidence that
+  // it aggregates. ASSUMED, not verified -- and `find` would under-count and
+  // refuse a withdraw the locker satisfies, which is the direction that costs.
+  const held = items
+    .filter((i) => i.itemId === p.item_id)
+    .reduce((n, i) => n + i.quantity, 0);
+  if (held >= want) return null;
+
+  // Remedy FIRST, and MEASURED -- digest.ts clips a blocked wake's detail at
+  // UNTRUSTED_TEXT_SNIPPET_LEN (200), and three reasons in the #757 change ran
+  // 250-295 and lost their remedy half. Both numbers vary: with the longest
+  // catalog item id (33 chars) and a six-digit held AND want, it measures 199 --
+  // one char of headroom, not six. `quantity` carries no upper bound in the
+  // registry, so an 8-digit want would clip at 204; cargo capacity bounds
+  // anything reachable, and the remedy head survives either way. The id appears ONCE,
+  // inside the command, because a second mention cost 40 chars and took the
+  // long-id case over the clip. Asserted against the real catalog in
+  // test/executor-withdraw-storage.test.ts rather than eyeballed.
+  const reason =
+    `withdraw blocked: storage holds ${held}, not ${want}. ` +
+    `Put it there: deposit{item_id=${p.item_id}, quantity=${want}}, ` +
+    `or buy deliver_to=storage -- a pending buy order stores nothing.`;
+  return guardBlock(reason);
+}
+
 // refuel target precondition guard (issue #595): target selects ship-to-ship
 // transfer mode, which the vendored reference requires the RECIPIENT be
 // present at the caller's own location for (fuel.md:235, a rescuer "must be
@@ -1409,6 +1509,15 @@ export async function executeTick(
       `withdraw blocked: you must be DOCKED at a station with storage service. ` +
       `Plan dock first, then withdraw{item_id=...}.`;
     return guardBlock(reason);
+  }
+
+  // Storage-contents guard (issue #706) -- see withdrawStorageBlock above.
+  // AFTER the docked check on purpose: undocked is decidable for free from the
+  // snapshot already in hand, so a plan that forgot to dock never spends the
+  // storage query to be told the same thing.
+  if (step.action === "withdraw") {
+    const block = await withdrawStorageBlock(api, step);
+    if (block) return block;
   }
 
   // refuel target precondition guard (issue #595) -- see refuelTargetBlock

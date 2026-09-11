@@ -193,6 +193,16 @@ export interface ModuleSpec {
   slot?: string;
 }
 
+// Withdraw precondition (issue #706): one row of the personal station locker.
+// Trimmed to what the guard weighs -- the id it matches a withdraw step's
+// item_id against, and the quantity it compares to the requested amount. The
+// spec's `name` and `size` are real fields with no consumer here (see
+// StorageViewSchema).
+export interface StorageItem {
+  itemId: string;
+  quantity: number;
+}
+
 // F-1 fix: map-awareness types for the surroundings the digest renders (see
 // src/planner/types.ts). Subset only, per the finding: ids, names, types,
 // resource fields, connections -- not the full get_system/get_poi payload.
@@ -517,6 +527,29 @@ export interface GameApi {
   // every optional GameApi method here). Optional like getShipyard: fakes/
   // mocks without it degrade to the old get_status-only path.
   getCargo?(): Promise<{ used: number; capacity: number; items: CargoItem[] } | undefined>;
+  // Withdraw precondition (issue #706): the contents of the personal station
+  // locker `withdraw` draws FROM. Registered since #221 as a free query
+  // (actions.ts's storage.view, kind:"query") whose harness-side wiring was
+  // explicitly deferred -- this is that wiring, fired only from the executor's
+  // withdraw guard, so a pilot that never withdraws pays nothing.
+  //
+  // THE RETURN IS THREE-VALUED and every caller must keep the three apart:
+  //   undefined  -> UNKNOWN. The query threw, or the response is not a
+  //                 personal-storage listing (see StorageViewSchema). Guards
+  //                 fail OPEN on it.
+  //   []         -> KNOWLEDGE: the locker is genuinely EMPTY.
+  //   [...]      -> KNOWLEDGE: exactly what it holds.
+  // The empty case is the one that matters, and it is the opposite of the
+  // convention CargoItem uses: StatusSnapshot.cargo parses with `.catch([])`,
+  // which collapses a shape-surprise into the same [] as an empty hold, so
+  // installModBlock has to treat [] as UNKNOWN. Nothing here collapses that
+  // way -- `items` is a REQUIRED key of the variant, so [] is reached only by
+  // parsing a well-formed listing that really carried no rows. That matters
+  // because an empty locker is the COMMON case behind #706 (21 of 30 lifetime
+  // withdraws refused with `insufficient_storage: Storage only has 0 x <item>`,
+  // live capture 2026-09-05..09): a guard that read [] as UNKNOWN would fail
+  // open on precisely the state it exists to catch.
+  getStorage?(): Promise<readonly StorageItem[] | undefined>;
   // Purchase discovery (issue #220): "is this item purchasable, at what cost,
   // from whom." estimate_purchase is kind:"query" (no `x-is-mutation` on
   // /api/v2/spacemolt_market/estimate_purchase in the vendored spec), so the
@@ -839,6 +872,42 @@ const CatalogShipClassSchema = z.object({
   items: z.array(z.object({
     inherent_capabilities: z.array(z.object({ type: z.string() }).partial()).optional(),
   }).partial()).default([]),
+});
+
+// Withdraw precondition (issue #706): the PERSONAL-storage view. StorageResponse
+// is a `oneOf` of 17 variants (openapi-v2.json:26200) covering the view, the
+// deposit/withdraw receipts, the faction store and the help page; this schema is
+// variant 1, the personal locker, whose required set is EXACTLY
+// [base_id, items, ships, hint]. Requiring all four is what makes an empty
+// `items` trustworthy: a response that omits any of them is some other variant
+// (or an error envelope) and fails the parse, so it can never be mistaken for
+// "the locker is empty". That is the property the guard's fail direction rests
+// on, and it is why this is a strict `.object()` rather than the `.partial()`
+// shape the catalog schemas above use -- those answer "what does this entry
+// say", this one answers "is this a personal-storage listing at all".
+//
+// Per-ENTRY defensiveness is the same as CargoItemSchema's: a malformed row is
+// dropped, never fatal, because one bad row must not turn a readable locker into
+// UNKNOWN and hand the pilot back the doomed call. `size` is in the spec's
+// required set but is not read here, so it stays out -- an unused field is dead
+// data (the same subset choice actions.ts makes for withdraw's own params).
+const StorageViewSchema = z.object({
+  base_id: z.string(),
+  hint: z.string(),
+  ships: z.array(z.unknown()),
+  // NO per-row tolerance, deliberately, and the opposite of CargoItemSchema's
+  // choice. A dropped row makes `items` SHORTER, and for this consumer a short
+  // list is indistinguishable from an empty locker -- which the guard reads as
+  // proven-empty and refuses. Per-row `.catch(null)` therefore manufactures the
+  // one outcome this design says it cannot: a well-formed listing whose rows
+  // carry a type surprise nulls every row, and every withdraw is refused
+  // silently for as long as the shape holds, with `guard: true` keeping it out
+  // of brokenCapabilities so nothing pages on it. Cargo tolerates rows because
+  // installModBlock reads it as an informational manifest and treats [] as
+  // UNKNOWN (executor.ts:640-654); for a BLOCKING guard the same construct
+  // inverts. A bad row fails the whole parse, getStorage returns undefined, and
+  // the guard fails open at the cost of one tick.
+  items: z.array(z.object({ item_id: z.string(), quantity: z.number() })),
 });
 
 export class SpacemoltClient implements GameApi {
@@ -1194,6 +1263,21 @@ export class SpacemoltClient implements GameApi {
           typeof c.item_id === "string" && typeof c.item_name === "string" && typeof c.quantity === "number")
         .map((c) => ({ itemId: c.item_id, name: c.item_name, quantity: c.quantity })),
     };
+  }
+
+  // Withdraw precondition (issue #706): read the personal locker (see
+  // GameApi.getStorage for the three-valued contract). A bare call is exactly
+  // "my own storage, here": the vendored spec leaves both params optional and
+  // defaults target to "self" at the current station (openapi-v2.json:117583,
+  // /api/v2/spacemolt_storage/view; storage.md:20, "omit it to view your
+  // current docked station"), which is the same locker `withdraw` draws from --
+  // so the guard and the action read one place, and no station_id has to be
+  // guessed. No x-is-mutation flag, so it costs no tick.
+  async getStorage(): Promise<readonly StorageItem[] | undefined> {
+    const res = await this.action("view");
+    const parsed = StorageViewSchema.safeParse(res.structuredContent ?? {});
+    if (!parsed.success) return undefined; // UNKNOWN, never "empty"
+    return parsed.data.items.map((i) => ({ itemId: i.item_id, quantity: i.quantity }));
   }
 
   // Purchase discovery (issue #220): raw estimate text for the digest. Identical

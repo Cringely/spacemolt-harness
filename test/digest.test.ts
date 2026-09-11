@@ -593,8 +593,12 @@ describe("buildDigest", () => {
     const activeSection = /^your active missions/im;
     // Topic anchor (issue #148 style): "comes FIRST" ties to the priority
     // rule, not its exact prose; "active listing above" is the id-source
-    // pointer unique to that line.
-    const priorityLine = /accepted mission[^\n]{0,60}FIRST/i;
+    // pointer unique to that line. Re-anchored for #592: the old anchor was
+    // /accepted mission[^\n]{0,60}FIRST/i, which pinned the very word the fix
+    // removed -- the game AUTO-ASSIGNS distress missions (missions.md:11,70),
+    // so "accepted" was false of them. The finish-before-starting RULE is what
+    // #170 exists to protect, and that is what this now pins.
+    const priorityLine = /comes FIRST[^\n]{0,40}before accepting new missions/i;
 
     test("renders the active listing quoted, above the available listing, with the priority line", () => {
       const active = "1. Haul 20 iron_ore to Vega Depot (id: m-77, expires tick 9400)";
@@ -624,6 +628,79 @@ describe("buildDigest", () => {
       // ... but is still bounded.
       expect(text).not.toContain("a".repeat(1501));
       expect(text).toContain("…");
+    });
+  });
+
+  // Mission-priority inversion (issue #592, live 2026-07-27 21:13-22:56Z): six
+  // system jumps in ~1h45m chasing auto-assigned distress missions (+25 XP, a
+  // ~1000-1080 tick fuse) while the operator's standing "buy and fit a Mining
+  // Laser III" milestone took zero steps start to end. The producer is this same
+  // completion-priority line, which asserted two things the harness cannot
+  // establish and which are false for this class of mission:
+  //   1. that every entry was ACCEPTED -- the game AUTO-ASSIGNS a rescue mission
+  //      to ships in the system on any distress broadcast (missions.md:11,70),
+  //      and no harness code path reaches accept_mission for one (the only
+  //      accept_mission site in src/ is the executor's empty-param guard);
+  //   2. that it pays "~10x an ore sale" -- a rule about BOARD missions accepted
+  //      for their reward (guides/miner.md:60), and the active-mission shape
+  //      carries a `rewards` object the harness has never parsed, so the digest
+  //      has no value datum for any of them.
+  // Meanwhile the ONE per-mission discriminator the digest does render is the
+  // fuse (renderMissionObjectiveCheck's "expires in N ticks"), and the Goals
+  // line above states no rank at all -- urgency with no counterweight. These
+  // tests pin the repaired ranking rule; each fails against the pre-#592 line.
+  describe("mission priority vs the operator's goals (#592)", () => {
+    const active = "1. Distress: Wexler stranded in gold_run (id: m-91, expires tick 1043)";
+    // Scoped to the ONE line that carries both markers: "10x an ore sale" is
+    // unique to the completion-priority line (the #147 runbook line says "far
+    // more than selling ore"), and "active listing above" is its id-source
+    // pointer. find(...)! throwing is the right failure if the claim is deleted
+    // outright rather than scoped.
+    const priorityLineOf = (text: string) =>
+      text.split("\n").find((l) => l.includes("10x an ore sale") && l.includes("active listing above"));
+
+    test("does not claim the pilot accepted every active mission, and names the auto-assign source", () => {
+      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      // Positive control first: a vacuous pass on the not-match below would
+      // otherwise look identical to the line having vanished entirely.
+      expect(priorityLineOf(text)).toBeDefined();
+      expect(text).not.toMatch(/completing an accepted mission comes FIRST/i);
+      expect(priorityLineOf(text)!).toMatch(/AUTO-ASSIGNS/);
+    });
+
+    test("scopes the ~10x value rule to board missions instead of every active mission", () => {
+      expect(priorityLineOf(buildDigest({ ...baseCtx, activeMissionsText: active }))!).toMatch(/BOARD missions/);
+    });
+
+    test("ranks by what the reward does for the Goals, with the clock only as a tiebreak", () => {
+      const line = priorityLineOf(buildDigest({ ...baseCtx, activeMissionsText: active }))!;
+      expect(line).toMatch(/SHORT TIMER IS NOT VALUE/);
+      expect(line).toMatch(/use the clock only to break a tie/i);
+    });
+
+    // Catches: the expiry cost stated on the wrong axis. Two rounds of review
+    // went on this line. The reference keys the charge on what the mission
+    // PROVIDED (missions.md:23, :52, police.md:82), never on whether the pilot
+    // accepted it -- and the digest renders no accepted/auto-assigned
+    // discriminator at all, so an instruction keyed on acceptance is one the
+    // planner has to guess at. Guessing wrong on a fronted-goods courier means
+    // confiscation plus a base-value charge. Also pins that expiry failure is
+    // stated universally, which :52 says of every mission.
+    test("keys the expiry and abandon cost on the goods the mission PROVIDED, not on acceptance", () => {
+      const line = priorityLineOf(buildDigest({ ...baseCtx, activeMissionsText: active }))!;
+      expect(line).toMatch(/reclaim or charge only goods the mission itself PROVIDED/);
+      expect(line).toMatch(/Any mission that expires FAILS/);
+      // The axis the planner cannot see must not carry the cost claim.
+      expect(line).not.toMatch(/ACCEPTED is different/);
+    });
+
+    test("the Goals it points at are rendered ABOVE it, so 'the Goals above' is truthful", () => {
+      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      const line = priorityLineOf(text)!;
+      expect(line).toMatch(/Goals above/);
+      const goalsAt = text.search(/^Goals \(/m);
+      expect(goalsAt).toBeGreaterThanOrEqual(0);
+      expect(goalsAt).toBeLessThan(text.indexOf(line));
     });
   });
 
