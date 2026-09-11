@@ -434,6 +434,7 @@ describe("ensureCredentials", () => {
       stallThreshold: 5, subscriptionCooldownMinutes: 60,
       maxPlansPerWindow: 12, planBudgetWindowMinutes: 60,
       fuelReservePct: 25, stuckWindowMinutes: 30, strandAutoSelfDestruct: false,
+      selfDestructAuthorized: false,
       progressHeartbeatMinutes: 30, repeatBlockThreshold: 3, repeatBlockWindowMinutes: 30,
       mode: "plan-then-execute" as const,
     };
@@ -467,6 +468,7 @@ describe("ensureCredentials", () => {
       stallThreshold: 5, subscriptionCooldownMinutes: 60,
       maxPlansPerWindow: 12, planBudgetWindowMinutes: 60,
       fuelReservePct: 25, stuckWindowMinutes: 30, strandAutoSelfDestruct: false,
+      selfDestructAuthorized: false,
       progressHeartbeatMinutes: 30, repeatBlockThreshold: 3, repeatBlockWindowMinutes: 30,
       mode: "plan-then-execute" as const,
     };
@@ -496,6 +498,7 @@ describe("ensureCredentials", () => {
       stallThreshold: 5, subscriptionCooldownMinutes: 60,
       maxPlansPerWindow: 12, planBudgetWindowMinutes: 60,
       fuelReservePct: 25, stuckWindowMinutes: 30, strandAutoSelfDestruct: false,
+      selfDestructAuthorized: false,
       progressHeartbeatMinutes: 30, repeatBlockThreshold: 3, repeatBlockWindowMinutes: 30,
       mode: "plan-then-execute" as const,
     };

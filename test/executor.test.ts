@@ -339,6 +339,29 @@ describe("executeTick", () => {
     expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
     expect(calls).toEqual([{ name: "accept_mission", params: { id: "mission-abc" } }]);
   });
+
+  // self_destruct operator opt-in (issue #705). Destroys hull, modules and
+  // cargo, and voids insurance -- fail-closed by default, same shape as the
+  // deposit-gift guard's fail-closed absence-is-a-verdict convention.
+  test("self_destruct with no operator opt-in is refused and makes no API call", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "self_destruct", params: {} }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    expect((r as { guard?: boolean }).guard).toBe(true);
+    expect(calls.find((c) => c.name === "self_destruct")).toBeUndefined();
+  });
+
+  test("self_destruct with selfDestructAuthorized=true is sent to the API", async () => {
+    const { api, calls } = stubApi();
+    const plan: Plan = { goal: "g", steps: [{ action: "self_destruct", params: {} }] };
+    const r = await executeTick(
+      api, plan, { step: 0, iteration: 0 },
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, true,
+    );
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls.find((c) => c.name === "self_destruct")).toBeDefined();
+  });
 });
 
 // complete_mission precondition guard (issue #291 regression, live 2026-07-17):

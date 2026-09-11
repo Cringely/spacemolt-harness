@@ -1018,6 +1018,12 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  * from agents.yaml (agent.ts derives it from AgentConfig.fleetRoster). It feeds
  * the credit-gift guard below, and it is the ONE input here whose absence is a
  * verdict rather than a pass -- see that guard's fail-closed receipt.
+ *
+ * `selfDestructAuthorized` (issue #705) is the operator's opt-in, plain data
+ * from agents.yaml (agent.ts derives it from AgentConfig.selfDestructAuthorized,
+ * the same config field the strand-escalation steward already gates on --
+ * see the self_destruct guard below). Optional and defaults to refusing the
+ * step: absence is a verdict here too, same fail-closed shape as fleetUsernames.
  */
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
@@ -1032,6 +1038,9 @@ export async function executeTick(
   // Issue #703: appended at the end for the same reason itemUnavailableAtStation
   // was -- every existing positional call site keeps its argument list.
   fleetUsernames?: readonly string[],
+  // Issue #705: appended at the end for the same reason -- every existing
+  // positional call site keeps its argument list unaffected.
+  selfDestructAuthorized?: boolean,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1393,6 +1402,32 @@ export async function executeTick(
         return guardBlock(reason);
       }
     }
+  }
+
+  // self_destruct operator opt-in (issue #705). Destroys the hull, every
+  // fitted module, and all cargo, and voids insurance -- destructive enough
+  // that agent.ts's strand-escalation steward already gates its OWN
+  // self_destruct call behind config.strandAutoSelfDestruct, default OFF
+  // (agent.ts ~1911). That gate covers only the steward's deliberate,
+  // multi-hour-strand call; a plan step naming self_destruct had no guard at
+  // all here and executed on the next tick, reachable from the planner via
+  // in-game chat text the pilot cannot distinguish from instruction (issue
+  // #681's item_not_available template obeyed six times is the precedent).
+  //
+  // Deliberately a NEW flag (selfDestructAuthorized), not a reuse of
+  // strandAutoSelfDestruct: reusing it would force an operator who wants one
+  // manual destruct available to also arm the autonomous 4-hour strand
+  // steward, the wrong coupling for an irreversible action.
+  //
+  // FAIL-CLOSED, same shape as the deposit-gift guard above: absence of the
+  // flag is a verdict (refuse), not a pass, because the action cannot be
+  // undone once it fires.
+  if (step.action === "self_destruct" && !selfDestructAuthorized) {
+    return guardBlock(
+      "self_destruct refused: this harness requires operator opt-in before a plan step may fire it. " +
+      "It destroys the hull, all fitted modules and all cargo, and voids insurance. " +
+      "Set self_destruct_authorized in agents.yaml to allow it, or rely on the strand-escalation steward.",
+    );
   }
 
   // create_sell_order / create_buy_order price default (issue #94, extended to

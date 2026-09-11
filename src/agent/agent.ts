@@ -109,6 +109,12 @@ export interface AgentConfig {
   fuelReservePct?: number;
   stuckWindowMinutes?: number;
   strandAutoSelfDestruct?: boolean;
+  // Issue #705: operator opt-in for a PLAN-issued self_destruct (executor.ts's
+  // guard). Deliberately separate from strandAutoSelfDestruct above -- that
+  // flag arms the autonomous multi-hour strand steward, this one only lets a
+  // plan step fire self_destruct; conflating them would force one to arm the
+  // other. Default OFF (absent from config means refused).
+  selfDestructAuthorized?: boolean;
   // Progress-heartbeat cadence (minutes). Optional so test AgentConfig literals
   // need no update; loadConfig (config.ts) always supplies a concrete value.
   // The heartbeat only REPORTS a per-window progress delta -- it never acts.
@@ -3234,6 +3240,7 @@ export class Agent {
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
       fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,
+      this.config.selfDestructAuthorized,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of
