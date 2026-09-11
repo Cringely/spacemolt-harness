@@ -211,6 +211,27 @@ const SEAMS: Seam[] = [
     anchors: ["get_active_missions", "complete_mission", /before accepting/i],
   },
   {
+    guard: "mission-priority ranking rule (#592: the digest's completion-priority line ranks active " +
+      "missions by what each reward does for the operator's Goals, with the clock only as a tiebreak -- " +
+      "it no longer calls an auto-assigned distress mission 'accepted' (missions.md:11,70) and no " +
+      "longer generalises the board-mission '~10x an ore sale' rule (guides/miner.md:60) onto one)",
+    // "A SHORT TIMER IS NOT VALUE" appears in digest.ts only inside this
+    // priority line, so the marker vanishing is the ranking rule vanishing.
+    code: { file: "src/planner/digest.ts", marker: "A SHORT TIMER IS NOT VALUE" },
+    // Anchors kept inside single source lines (the #148/#161/paid-border
+    // pattern -- the spec wraps prose at ~100 chars, so a phrase straddling
+    // that wrap never matches a literal-space regex).
+    anchors: [/A SHORT TIMER IS NOT VALUE/, /AUTO-ASSIGNS a rescue mission/,
+      // /never by/i was vacuous: it already matched the unrelated #670 fuel
+      // rule ("never by percent of tank capacity") elsewhere in the spec, so it
+      // could not fail independently of the three anchors beside it.
+      /BOARD missions accepted for their reward/, /break a tie between missions of similar value/i,
+      // The expiry cost, keyed on the observable. Unanchored before, and two
+      // review rounds found the claim wrong in three different directions with
+      // nothing on either side of the seam able to fail.
+      /reclaim or charge\s+only goods the mission itself PROVIDED/],
+  },
+  {
     guard: "mission objective check + deposit cross-ref (#291: objective item vs current POI's deposit resource ids)",
     code: { file: "src/agent/agent.ts", marker: "gatherPoiDeposits(" },
     anchors: ["get_poi", /never yield/i, /deposits DO list it/i],
