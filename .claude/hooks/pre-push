@@ -1,0 +1,276 @@
+#!/bin/sh
+# Git pre-push hook — refuses to push identifying strings across any of the
+# four channels this repository's identity mandate covers, over the WHOLE
+# range of commits about to leave this clone.
+#
+# WHY THIS STAGE EXISTS ALONGSIDE pre-commit
+# core/claude/hooks/pre-commit catches the cheap case: an edit or an amend,
+# before a bad commit exists at all. It cannot catch a commit that already
+# exists locally by the time this hook runs — one made by another tool, one
+# reintroduced by a rebase, or one made with --no-verify. Only the range
+# actually being pushed is authoritative for what is about to leave the
+# machine, and only this hook sees that range.
+#
+# WHY THE METADATA SWEEP LIVES HERE
+# 2026-09-05's incident: thirty commits already carried a real name in both
+# the author and the committer field, sitting in local history for a while
+# before anyone scanned for it. pre-commit's own `git var` check (added
+# alongside this hook) only ever sees the identity a NEW commit is about to
+# use; it cannot retroactively catch one that already landed. This hook's
+# whole-range `git log --format` sweep is the one that would have caught
+# those thirty before `git push` ever ran.
+#
+# PROTOCOL
+# git invokes this hook as `pre-push <remote-name> <remote-url>` and feeds
+# one line per ref being updated on stdin: "<local ref> <local oid>
+# <remote ref> <remote oid>". A local oid of all zeroes is a delete (nothing
+# is leaving the machine; skip it). A remote oid of all zeroes means the
+# remote ref does not exist yet (a new branch or tag): there is no upstream
+# commit to diff FROM, so the range becomes "every commit reachable from the
+# local oid that is not already on a tracking ref for THIS remote" instead
+# of ref1..ref2 (scoped to this remote's own refs/remotes/<name>/*, not
+# every remote-tracking ref in the clone -- see the range-computation
+# comment below for why).
+#
+# MERGE COMMITS
+# The content channel (see channel 1's own comment below) reads objects via
+# `git rev-list --objects`, not a diff, and rev-list walks every commit's
+# actual tree rather than deciding what to show against a parent -- a
+# conflict resolution's hand-typed content, absent from every parent's
+# tree, is still a genuinely new blob reachable only through the merge
+# commit, and rev-list enumerates it like any other new blob. This used to
+# be a documented gap when the channel read `git log -p` instead: that
+# command shows no diff at all for a merge commit unless told to with -m or
+# -c, so conflict-resolution content was invisible to it. Measured
+# 2026-09-05 against the exact shape (two branches independently changing
+# the same file, conflict resolved by hand-typing content matching neither
+# side) that content now refuses the push. Metadata and message channels
+# were never affected either way — `git log --format` walks every commit
+# regardless of shape.
+#
+# See core/claude/hooks/identity-patterns.sh for the matcher itself (why
+# grep -E and \b instead of -F or a PCRE lookaround) and for why the
+# pattern set is loaded from ~/.claude-account-identity.json and the
+# environment rather than declared in this repository.
+
+set -u
+
+# git invokes this as `pre-push <remote-name> <remote-url>` (see PROTOCOL
+# above). Captured before anything else touches $1/$2: the while loop below
+# reads its own fields via `read`, which does not disturb the script's own
+# positional parameters, but capturing by name here makes that reliance
+# explicit instead of implicit.
+identity_remote_name=${1:-}
+
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# `git log`, `git rev-list` and `git cat-file` all honour refs/replace/* by
+# default. Every range check below reads history through one of those three,
+# and none of them are what actually ships bytes to the remote on push — so
+# a replace ref pointed at a clean stand-in commit made every one of these
+# checks read the stand-in while the real object (real content, real
+# author/committer, real message) left the machine. Measured 2026-09-05:
+# all four channels defeated at once by one `git replace`. This is the
+# fix, not a workaround at any one call site, because it closes the gap for
+# every git invocation in this process, present and future, rather than
+# threading --no-replace-objects through each one individually.
+export GIT_NO_REPLACE_OBJECTS=1
+
+identity_lib="$hook_dir/identity-patterns.sh"
+if [ ! -f "$identity_lib" ]; then
+  echo "pre-push: identity gate library missing at '$identity_lib'. Refusing rather than silently skipping a security gate." >&2
+  exit 1
+fi
+. "$identity_lib"
+
+# Three states, not two. 0 configured, 1 broken and must refuse, 2 not
+# configured. Only 1 blocks: a file that exists and cannot be read means
+# something was declared and this gate cannot see it. State 2 already printed
+# its own notice to stderr and the rest of this hook still runs, so a
+# project that installs the harness without an identity file can still push.
+identity_load
+identity_state=$?
+[ "$identity_state" -eq 1 ] && exit 1
+if [ "$identity_state" -eq 0 ]; then
+  identity_control || exit 1
+fi
+
+# True (0) when $1 is an all-zero object id, whatever length the
+# repository's hash algorithm gives it (SHA-1: 40, SHA-256: 64). Checked by
+# content rather than length, so this needs no opinion on which algorithm a
+# given repository uses.
+identity_is_zero_oid() {
+  case $(printf '%s' "$1" | tr -d '0') in
+    '') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+identity_refuse_range() {
+  echo "pre-push: refused. $1" >&2
+  echo "  security.md: identifying information must never reach a remote repository," >&2
+  echo "  and only a human can waive that. The matched value is deliberately not" >&2
+  echo "  printed. Fix it at the source (git-filter-repo, or an interactive rebase" >&2
+  echo "  for a small range), then re-push." >&2
+  exit 1
+}
+
+# Read the whole of stdin into a variable and loop over it with a here-doc,
+# not a pipe into `while` — same reasoning as pre-commit's own loop: a pipe
+# puts the loop in a subshell in some /bin/sh implementations, and this
+# loop's `exit 1` on refusal has to end the real process, not a subshell
+# copy of it that the parent never sees.
+identity_stdin=$(cat)
+[ -n "$identity_stdin" ] || exit 0
+
+while read -r identity_local_ref identity_local_oid identity_remote_ref identity_remote_oid; do
+  [ -n "${identity_local_ref:-}" ] || continue
+  identity_is_zero_oid "$identity_local_oid" && continue
+
+  # Both sides of the refspec, not only the local one: `git push origin
+  # HEAD:refs/heads/x` sends the literal symbolic name "HEAD" as the local
+  # ref, and the destination name actually about to exist on the remote
+  # sits in $identity_remote_ref instead. Measured: checking only
+  # $identity_local_ref let a `HEAD:refs/heads/feature/<username>-work`
+  # push through clean, because "HEAD" itself carries nothing to match.
+  if identity_match "$identity_local_ref"; then
+    identity_refuse_range "ref name '$identity_local_ref' carries an identifying string."
+  fi
+  if identity_match "$identity_remote_ref"; then
+    identity_refuse_range "destination ref name '$identity_remote_ref' carries an identifying string."
+  fi
+
+  # The remote's claimed current tip has to actually be an object this
+  # clone holds before "<remote>..<local>" means anything. If it isn't --
+  # the remote moved and this clone never fetched, or a force push claims a
+  # tip that never existed here -- git turns that into an invalid revision
+  # range, `git log`/`git rev-list` fail, stderr used to go to /dev/null,
+  # and every consumer below was guarded by `[ -n "$..." ]`, which reads an
+  # empty result from a FAILED command identically to an empty result from
+  # a range that is genuinely clean. Measured 2026-09-05: a force push
+  # against an oid this clone never fetched skipped content, metadata and
+  # message checks entirely and still exited 0. Falling back to the same
+  # conservative range a brand-new ref gets -- everything reachable from
+  # the local oid that no tracking ref for THIS remote already covers --
+  # means "I can't prove anything here is already known-clean" turns into
+  # "scan it", not "skip it".
+  if identity_is_zero_oid "$identity_remote_oid" || ! git cat-file -e "$identity_remote_oid" 2>/dev/null; then
+    # --remotes=<name>, not bare --remotes: bare form excludes anything
+    # reachable from ANY remote-tracking ref in the whole clone, including a
+    # second remote, a fork, or a stale tracking ref for a branch deleted
+    # upstream long ago -- the ordinary reason such a ref exists at all, not
+    # an attack on its own. Measured 2026-09-05: `git update-ref
+    # refs/remotes/upstream/old <oid>` under a completely unrelated remote
+    # name emptied this range to nothing. Scoping to the actual destination
+    # remote closes that: only tracking refs for the remote this push is
+    # actually going to still get excluded. A tracking ref forged under
+    # this SAME remote's own namespace (`refs/remotes/$identity_remote_name/*`)
+    # still evades -- that is trusting local git state at all, which every
+    # git-based check here already does, not a new hole this scoping opens.
+    identity_range_args="$identity_local_oid --not --remotes=$identity_remote_name"
+  else
+    identity_range_args="${identity_remote_oid}..${identity_local_oid}"
+  fi
+
+  # Channel 1: content and path, over every object newly reachable in the
+  # range being pushed. `git rev-list --objects` enumerates objects
+  # directly from the object store rather than asking git to render a
+  # diff, which is what `git log -p` (the prior mechanism here) does --
+  # and every diff has to decide binary-or-text and apply diff attributes
+  # before it can show anything, decisions this gate has no business
+  # inheriting. Measured 2026-09-05, all five closed by this one change: a
+  # leading NUL byte (git's own binary heuristic hid the content behind
+  # "Binary files ... differ"), a `-diff` gitattributes entry -- tracked,
+  # untracked, or via the `binary` macro -- marking a path binary the same
+  # way, `core.bigFileThreshold` shrunk via -c or GIT_CONFIG_PARAMETERS to
+  # make git call ordinary files binary, and a typechange (symlink <->
+  # regular file) falling outside --diff-filter=ACMR and disappearing from
+  # the diff entirely. `git rev-list --objects` has no diff-filter, no
+  # binary heuristic, and no gitattributes to consult; it lists blob and
+  # tree objects (each with the path that introduced them) and commit
+  # objects, and stderr is left unredirected so a failure here is visible,
+  # not silently read as "nothing new."
+  identity_objects=$(git rev-list --objects $identity_range_args)
+  identity_objects_status=$?
+  if [ "$identity_objects_status" -ne 0 ]; then
+    identity_refuse_range "could not enumerate the objects being pushed on '$identity_local_ref' (git rev-list exited $identity_objects_status). Refusing rather than treating an unreadable range as clean."
+  fi
+  if [ -n "$identity_objects" ]; then
+    # Path half of the channel, checked before content: rev-list's own
+    # listing already carries "<oid> <path>" for every blob and tree, the
+    # same information `git log -p`'s diff header used to expose a path
+    # through by accident. Checking it explicitly here means this channel
+    # does not depend on that header still existing once content is read a
+    # different way.
+    identity_object_paths=$(printf '%s\n' "$identity_objects" | cut -d' ' -f2-)
+    if [ -n "$identity_object_paths" ] && identity_match "$identity_object_paths"; then
+      identity_refuse_range "the path of one or more objects being pushed on '$identity_local_ref' carries an identifying string."
+    fi
+
+    # Two separate command substitutions, not one piped straight through to
+    # awk: without `pipefail` (a bash extension this POSIX sh script does
+    # not have), $? after a pipeline is the LAST command's exit status, so
+    # awk in that position would swallow cat-file's own. Ending each
+    # substitution ON the git invocation is what makes $? mean anything
+    # here.
+    identity_batch_check=$(printf '%s\n' "$identity_objects" | cut -d' ' -f1 | git cat-file --batch-check='%(objectname) %(objecttype)')
+    identity_batch_check_status=$?
+    if [ "$identity_batch_check_status" -ne 0 ]; then
+      identity_refuse_range "could not classify the objects being pushed on '$identity_local_ref' (git cat-file --batch-check exited $identity_batch_check_status). Refusing rather than treating an unreadable range as clean."
+    fi
+    identity_blob_ids=$(printf '%s\n' "$identity_batch_check" | awk '$2 == "blob" { print $1 }')
+    if [ -n "$identity_blob_ids" ]; then
+      identity_content=$(printf '%s\n' "$identity_blob_ids" | git cat-file --batch)
+      identity_content_status=$?
+      if [ "$identity_content_status" -ne 0 ]; then
+        identity_refuse_range "could not read the blob content of the objects being pushed on '$identity_local_ref' (git cat-file --batch exited $identity_content_status). Refusing rather than treating an unreadable range as clean."
+      fi
+      if [ -n "$identity_content" ] && identity_match "$identity_content"; then
+        identity_refuse_range "the content of one or more commits being pushed on '$identity_local_ref' carries an identifying string."
+      fi
+    fi
+  fi
+
+  # Channel 2: author and committer, independently, over every commit in
+  # the range — name and email both, since either field alone identifies.
+  identity_idents=$(git log --format='%an%n%ae%n%cn%n%ce' $identity_range_args)
+  identity_idents_status=$?
+  if [ "$identity_idents_status" -ne 0 ]; then
+    identity_refuse_range "could not read the author/committer identity of the range being pushed on '$identity_local_ref' (git log exited $identity_idents_status). Refusing rather than treating an unreadable range as clean."
+  fi
+  if [ -n "$identity_idents" ] && identity_match "$identity_idents"; then
+    identity_refuse_range "the author or committer identity of one or more commits being pushed on '$identity_local_ref' carries an identifying string."
+  fi
+
+  # Channel 3: commit message bodies. git-filter-repo --replace-text does
+  # not rewrite these, so a scrub that fixes content leaves this channel
+  # dirty — this whole-range check is what catches that.
+  identity_messages=$(git log --format='%B' $identity_range_args)
+  identity_messages_status=$?
+  if [ "$identity_messages_status" -ne 0 ]; then
+    identity_refuse_range "could not read the commit messages of the range being pushed on '$identity_local_ref' (git log exited $identity_messages_status). Refusing rather than treating an unreadable range as clean."
+  fi
+  if [ -n "$identity_messages" ] && identity_match "$identity_messages"; then
+    identity_refuse_range "the commit message of one or more commits being pushed on '$identity_local_ref' carries an identifying string."
+  fi
+
+  # Channel 4, the annotated-tag half: a lightweight tag's oid IS the
+  # commit, already covered by the metadata and message sweeps above. An
+  # annotated tag is its own object with its own tagger identity and its
+  # own message, neither of which `git log` over a commit range ever reads.
+  case $identity_local_ref in
+    refs/tags/*)
+      identity_tag_type=$(git cat-file -t "$identity_local_oid" 2>/dev/null)
+      if [ "$identity_tag_type" = "tag" ]; then
+        identity_tag_body=$(git cat-file -p "$identity_local_oid" 2>/dev/null)
+        if [ -n "$identity_tag_body" ] && identity_match "$identity_tag_body"; then
+          identity_refuse_range "the annotated tag object for '$identity_local_ref' carries an identifying string in its tagger identity or message."
+        fi
+      fi
+      ;;
+  esac
+done <<EOF
+$identity_stdin
+EOF
+
+exit 0

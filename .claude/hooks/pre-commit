@@ -1,6 +1,7 @@
 #!/bin/sh
-# Git pre-commit hook — lints staged living-doc prose with Vale before it
-# reaches a commit.
+# Git pre-commit hook — refuses a commit carrying an identifying string
+# (see the "identity gate" block below), then lints staged living-doc prose
+# with Vale before it reaches a commit.
 #
 # WHY A GIT HOOK, NOT ANOTHER CLAUDE CODE HOOK
 # lint-doc-prose.ts (PostToolUse, matcher Write|Edit) only sees direct tool
@@ -16,9 +17,17 @@
 # hook doesn't.
 #
 # SCOPE
-# Only staged markdown (git diff --cached --diff-filter=ACM -- '*.md'). No
-# staged markdown is the common case and must stay fast: exit 0 before
-# touching Vale at all.
+# Only staged markdown (git diff --cached --diff-filter=ACM -- '*.md'), minus
+# internal agent traffic (is_internal_traffic below). No staged markdown is
+# the common case and must stay fast: exit 0 before touching Vale at all.
+#
+# Note the scope here is WIDER than lint-doc-prose.ts's. That hook runs an
+# allowlist (README.md or docs/) because it fires on every single Write; this
+# one runs on a commit, where a staged .md anywhere is usually something
+# somebody meant to publish. Keeping the exclusion — and only the exclusion —
+# in common is deliberate: an operator who exempts internal traffic gets the
+# same answer from both hooks, without this hook silently acquiring an
+# allowlist it never had.
 #
 # CONTENT LINTED IS THE STAGED BLOB, NOT THE WORKING TREE
 # A file staged and then further edited must lint as staged, not as it now
@@ -27,20 +36,162 @@
 #
 # CONFIG RESOLUTION
 # Mirrors lint-doc-prose.ts's project-then-global order (see that file's
-# resolveValeConfig, lines ~85-87): a repo-vendored kit at
-# .claude/tools/prose-lint/.vale.ini first, then the machine-global kit at
-# $HOME/.claude/tools/prose-lint/.vale.ini. No env-var override here — that
-# candidate in lint-doc-prose.ts exists for its own CI callers, not this hook.
+# resolveValeConfig, line 125): a repo-vendored kit at
+# .claude/tools/prose-lint/.vale.ini first, then the machine-global kit under
+# the user's home. No env-var override here — that candidate in
+# lint-doc-prose.ts exists for its own CI callers, not this hook.
+#
+# HOME ON GIT BASH / WINDOWS
+# Git Bash's $HOME is not the Windows user profile — it can point at a
+# Documents subfolder or wherever /etc/passwd or HOME was set to, while the
+# actual per-user kit lives under the real profile. $USERPROFILE (a Windows
+# env var Git Bash still exports, value like C:\Users\name) is the correct
+# per-user root there. Mixed-slash concatenation (C:\Users\name/.claude/...)
+# resolves fine under MSYS's `test -f`, so no separator conversion is needed
+# — just prefer $USERPROFILE over $HOME when it's set and non-empty.
 #
 # ADVISORY, NEVER A GATE
 # `vale` missing from PATH, or no config reachable, degrades to a silent
 # no-op — same fail-open posture as the rest of the harness. Findings print
 # to stderr so `git commit` output shows them, but the exit code never
 # reflects them (see the ponytail note above the final `exit 0`).
+#
+# THE IDENTITY GATE BELOW IS NOT ADVISORY
+# Unlike the Vale pass in the rest of this file, the identity-string check
+# below is a real gate: it can and does `exit 1`. See its own comment block
+# for what it covers and why it lives ahead of Vale rather than after it.
 
 set -u
 
 hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# `git log`/`git show`/`git diff` all honour refs/replace/* by default,
+# silently substituting a replacement object's content, identity and
+# message wherever the real one would read. pre-commit does not walk
+# history the way pre-push does, but every git invocation in this hook
+# still inherits this, and setting it costs nothing when unused. See
+# the pre-push hook, lines 68-79, for the reproduction this closes: a
+# replace ref that made all four push-stage channels read a clean
+# stand-in while the real object shipped to the remote.
+export GIT_NO_REPLACE_OBJECTS=1
+
+# --- identity gate: refuse before Vale ever runs ------------------------
+# security.md's mandate: the operator's legal name, personal email
+# addresses, the workstation username, and the machine hostname must never
+# reach a remote repository, and only a human may waive that. This is the
+# "cheap case" half of that gate (issue #64): the fix here is an edit or an
+# amend, not a rewrite of already-pushed history. core/claude/hooks/pre-push
+# is the authoritative whole-range sweep that catches what this stage
+# cannot — a commit made by another tool, a rebase reintroducing an old
+# author, or a --no-verify bypass.
+#
+# Three of the four channels are cheap enough to check here:
+#   content     — every staged file's blob, not only markdown (Vale's scope
+#                 below is narrower on purpose; this gate's is not).
+#   metadata    — the author and committer identity THIS commit would use,
+#                 read via `git var`, which resolves config plus any
+#                 GIT_AUTHOR_*/GIT_COMMITTER_* env override exactly the way
+#                 git itself will when it writes the commit object. This is
+#                 what would have caught 2026-09-05's incident before the
+#                 fact: thirty commits carried a real name in both fields
+#                 while a content-only scan of the same repository reported
+#                 clean.
+#   branch name — the ref this commit is about to land on.
+# The fourth channel, commit MESSAGE bodies, is not checked here: this hook
+# runs before the message is written (git prompts for it after pre-commit
+# passes, or takes it from -m), so pre-push's whole-range sweep is where
+# that channel lives.
+#
+# Loaded and run unconditionally, not only when something is staged: an
+# --allow-empty commit still writes an author/committer identity and lands
+# on a branch, and neither of those channels depends on staged content
+# existing at all.
+identity_lib="$hook_dir/identity-patterns.sh"
+if [ ! -f "$identity_lib" ]; then
+  echo "pre-commit: identity gate library missing at '$identity_lib'. Refusing rather than silently skipping a security gate." >&2
+  exit 1
+fi
+. "$identity_lib"
+
+# Three states, not two. 0 configured, 1 broken and must refuse, 2 not
+# configured. Only 1 blocks: a file that exists and cannot be read means
+# something was declared and this gate cannot see it. State 2 already printed
+# its own notice to stderr and the rest of this hook still runs, so a project
+# that installs the harness without an identity file gets prose linting rather
+# than a repository it cannot commit to.
+identity_load
+identity_state=$?
+[ "$identity_state" -eq 1 ] && exit 1
+if [ "$identity_state" -eq 0 ]; then
+  identity_control || exit 1
+fi
+
+# `d` (lowercase) excludes only Deleted -- there is no content left to scan
+# for a deleted path. ACMR (uppercase, include-only) used to be here and
+# silently dropped typechanges (symlink <-> regular file, T status): the
+# file just disappeared from this list and was never checked at either
+# stage. Content is read directly below via `git show ":$f"` rather than
+# any `git diff` call, so nothing here depends on how git would render a
+# diff for the path.
+identity_staged=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=d)
+if [ -n "$identity_staged" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    # Path channel first, and its own refusal never echoes $f -- if the path
+    # itself is the identifying string, printing it back would be the leak
+    # this gate exists to prevent.
+    if identity_match "$f"; then
+      echo "pre-commit: refused. A staged file's path carries an identifying string. The matched value is deliberately not printed." >&2
+      echo "  security.md: identifying information must never reach a remote repository," >&2
+      echo "  and only a human can waive that. Fix it at the source, then re-stage." >&2
+      exit 1
+    fi
+    # Content channel: `git show ":$f"` reads the blob straight from the
+    # index, the same way the pre-push hook reads
+    # it via `git cat-file` -- never through a `git diff`/`git log -p` call,
+    # which inherits every diff-shaping knob measured against this gate: a
+    # leading NUL byte git's own binary heuristic reacts to, a `-diff`
+    # gitattributes entry (tracked, untracked, or via the `binary` macro),
+    # core.bigFileThreshold shrunk on the command line or via
+    # GIT_CONFIG_PARAMETERS, and (now moot, since diff-filter no longer
+    # excludes it either) a typechange. A prior revision of this loop asked
+    # `git diff --cached --numstat -- "$f"` per file to decide "binary,
+    # skip" before ever reading content, which carried all of the above plus
+    # its own defect: "$f" there is a pathspec, and git globs pathspecs, so
+    # a bracket in one staged filename could make the numstat check answer
+    # for a DIFFERENT staged file. Reading every staged blob unconditionally
+    # removes the pathspec argument entirely along with the skip it gated.
+    identity_body=$(git show ":$f" 2>/dev/null) || continue
+    [ -n "$identity_body" ] || continue
+    if identity_match "$identity_body"; then
+      identity_line=$(printf '%s\n' "$identity_body" | grep -noiE "$IDENTITY_PATTERN" | head -n1 | cut -d: -f1)
+      echo "pre-commit: refused. '$f' line $identity_line carries an identifying string." >&2
+      echo "  security.md: identifying information must never reach a remote repository," >&2
+      echo "  and only a human can waive that. The matched value is deliberately not" >&2
+      echo "  printed. Fix it at the source, then re-stage." >&2
+      exit 1
+    fi
+  done <<EOF
+$identity_staged
+EOF
+fi
+
+identity_author=$(git var GIT_AUTHOR_IDENT 2>/dev/null) || identity_author=
+if [ -n "$identity_author" ] && identity_match "$identity_author"; then
+  echo "pre-commit: refused. The author identity this commit would use (git var GIT_AUTHOR_IDENT) carries an identifying string." >&2
+  exit 1
+fi
+identity_committer=$(git var GIT_COMMITTER_IDENT 2>/dev/null) || identity_committer=
+if [ -n "$identity_committer" ] && identity_match "$identity_committer"; then
+  echo "pre-commit: refused. The committer identity this commit would use (git var GIT_COMMITTER_IDENT) carries an identifying string." >&2
+  exit 1
+fi
+
+identity_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || identity_branch=
+if [ -n "$identity_branch" ] && identity_match "$identity_branch"; then
+  echo "pre-commit: refused. The current branch name carries an identifying string." >&2
+  exit 1
+fi
 
 # core.quotePath=false: its default (true) makes git emit non-ASCII paths as
 # a quoted C-style literal ("file_\303\251.md"), which `mkdir -p`/`git show`
@@ -52,24 +203,61 @@ staged_md=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=
 vale_bin=$(command -v vale) || exit 0
 
 project_config="$hook_dir/../tools/prose-lint/.vale.ini"
-global_config="$HOME/.claude/tools/prose-lint/.vale.ini"
+home_dir=${USERPROFILE:-$HOME}
+global_config="$home_dir/.claude/tools/prose-lint/.vale.ini"
 
 if [ -f "$project_config" ]; then
   config="$project_config"
 elif [ -f "$global_config" ]; then
   config="$global_config"
 else
+  echo "pre-commit: no Vale config found (checked $project_config and $global_config) — skipping prose lint" >&2
   exit 0
 fi
 
 scratch_dir=$(mktemp -d) || exit 0
 trap 'rm -rf "$scratch_dir"' EXIT
 
+# Internal agent traffic: memory notes, handoffs, scratch, the
+# subagent-driven-development workspace, council transcripts and the project's
+# own .claude/ tree. Written in the compressed register the reader-facing prose
+# rules flag wholesale, so linting it is noise.
+#
+# .superpowers/ is normally gitignored, so this hook may never see it — the arm
+# is here because the three prose-lint mechanisms carry ONE exemption set by
+# contract (writing-style.md row 5 names all three), and a segment present in
+# two of them is the drift that contract exists to stop. The dot is
+# load-bearing either way: a dotless `superpowers/` would also exclude a
+# repository's committed docs/superpowers/{plans,specs}/, which are
+# deliverables.
+#
+# Keyed on the REPO-RELATIVE path git handed us, which is the only path
+# available here. The blob under test lives at "$scratch_dir/$f" (an absolute
+# machine path under a mktemp root), so an absolute-prefix exclusion — e.g.
+# somebody's AppData scratchpad — could never match; the repo-relative tail is
+# the whole of what a project can key on.
+#
+# Two arms per name because a POSIX `case` glob is anchored at both ends:
+# ".claude/*" catches it at the repo root and "*/.claude/*" catches it nested.
+# `*` does cross "/", so the nested arm needs no depth enumeration.
+is_internal_traffic() {
+  case "$1" in
+    .claude/*|memory/*|handoffs/*|scratchpad/*|.scratch/*|.superpowers/*|council-transcripts/*) return 0 ;;
+    */.claude/*|*/memory/*|*/handoffs/*|*/scratchpad/*|*/.scratch/*|*/.superpowers/*|*/council-transcripts/*) return 0 ;;
+  esac
+  return 1
+}
+
 # Here-doc, not a pipe into `while` — a pipe puts the loop in a subshell in
 # some /bin/sh implementations, which would silently drop any state the loop
 # tries to keep.
 while IFS= read -r f; do
   [ -n "$f" ] || continue
+  # Before the blob extraction, not just before vale: an excluded path costs
+  # nothing but the glob match.
+  if is_internal_traffic "$f"; then
+    continue
+  fi
   staged_file="$scratch_dir/$f"
   mkdir -p "$(dirname -- "$staged_file")"
   git show ":$f" >"$staged_file" 2>/dev/null || continue
@@ -80,7 +268,37 @@ while IFS= read -r f; do
   # always correct; the temp path underneath it is a Vale-internal detail.
   findings=$("$vale_bin" --config "$config" --output=line "$staged_file" 2>/dev/null)
   [ -n "$findings" ] || continue
+
+  # Strip the scratch path off every finding BEFORE the identity check below.
+  # Vale reports the absolute path of the file it linted, which here is the
+  # blob copy under mktemp -- and on Windows that resolves to something like
+  # C:\Users\<name>\AppData\Local\Temp\tmp.XXXX\<path>. The username is in
+  # that prefix, so identity_match fired on every finding regardless of
+  # content and this whole lint pass went silent on the author's machine the
+  # day it was written. Measured: five matches across two findings, none of
+  # them from the prose being linted.
+  #
+  # The prefix is an artifact of how this hook works, not something the
+  # commit contains, so removing it is not weakening the check that follows.
+  # Matched on the mktemp directory's leaf name rather than on $scratch_dir
+  # itself, because the two spellings differ: the shell holds a POSIX path
+  # (/tmp/tmp.XXXX) while Vale prints the Windows one for the same directory.
+  # The leaf is common to both.
+  findings=$(printf '%s\n' "$findings" | sed "s|^.*${scratch_dir##*/}[\\\\/]||")
+
   echo "== $f ==" >&2
+  # Vale prints the matched excerpt around each finding, which can itself
+  # carry an identifying string if the content channel above somehow missed
+  # it -- the identity gate above deliberately never prints a matched value,
+  # and an advisory lint pass three code blocks later should not undo that.
+  # Measured: with the content channel bypassed, this echo put a fragment of
+  # the identity string on the commit console. identity_match/IDENTITY_PATTERN
+  # are already loaded (the identity gate above ran first), so this is the
+  # same check, not a new one.
+  if identity_match "$findings"; then
+    echo "(Vale findings withheld: they carry an identifying string. The matched value is deliberately not printed.)" >&2
+    continue
+  fi
   echo "$findings" >&2
 done <<EOF
 $staged_md
