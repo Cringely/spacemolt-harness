@@ -1152,6 +1152,116 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
 }
 
 /**
+ * The exchange's floor on a listing fee, in credits. LIVE CAPTURE, prod event
+ * store 2026-09-06/08 -- the game states its own minimum in the refusal text:
+ *   "insufficient_credits: Insufficient credits for listing fee (minimum 1
+ *    credit). 1x Platinum Ore not listed."
+ * (105 identical blocks on the scout, and the same sentence on a buy order:
+ * "... (minimum 1 credit). Buy order for 1x Survey Scanner".) The vendored
+ * reference gives the RATE and not the floor -- markets.md:35 and openapi-v2's
+ * create_sell_order description both say 1% of the book-resting portion, which
+ * rounds to 0 on a small order; the receipts show it does not. Live capture
+ * outranks the reference (AGENTS.md evidence precedence), so this floor is the
+ * number the guard blocks on.
+ */
+export const LISTING_FEE_MIN_CR = 1;
+
+// Zero-balance order guard (issue #1030).
+//
+// INVARIANT: a plan step must not be SUBMITTED when the pilot's KNOWN credit
+// balance is below the credits the game will provably require for it.
+//
+// The live incident: the scout sat at exactly 0 credits for 31 hours
+// (2026-09-06T22:46Z -> 2026-09-08T05:20Z) and spent 105 ticks on
+// `create_sell_order`, every one returning the same listing-fee refusal, plus
+// 124 more on `create_buy_order` ("Need 4444 credits to escrow (4400 bid + 44
+// sales tax). You have 449."). The planner read the game's own explanation
+// each time and re-planned the identical call.
+//
+// WHY A LOWER BOUND AND NOT A FEE ESTIMATE. Neither branch guesses a number.
+//   - create_sell_order: the requirement is AT LEAST LISTING_FEE_MIN_CR,
+//     because the game says so in its own refusal. The real fee is higher (1%
+//     of the resting value, and a player station may set 0-10% --
+//     stations.md:76, openapi-v2 `listing_fee_bps`), so blocking at the floor
+//     blocks strictly less than a fee model would. No rate is computed here,
+//     which is the point: a computed 1% would UNDERSTATE the fee at a
+//     high-fee station and buy nothing anywhere else.
+//   - create_buy_order: the requirement is AT LEAST the bid (price_each x
+//     quantity), because escrow takes the full bid up front (markets.md:31,
+//     "The credits are escrowed immediately from your wallet") and the game's
+//     refusal itemises bid + sales tax on top of it. Sales tax and listing fee
+//     are deliberately NOT added: they would tighten the bound, and a tighter
+//     bound is a bound that can be wrong.
+//
+// THE ONE FALSE REFUSAL THIS CAN PRODUCE, and why it costs nothing. A sell
+// order that FULLY crosses the book pays no fee at all (markets.md:35, "If
+// your order crosses existing orders and fills instantly, the filled portion
+// pays no fee" -- live receipt: "30 Aluminum Ore at 6cr each (fee: 0cr). 30
+// filled immediately"), so at 0 credits such an order would have succeeded and
+// this guard refuses it. But a fully-crossing sell order is by definition a
+// sell into standing bids at or above the ask, which is exactly what plain
+// `sell` does -- markets.md:36 says a crossing order fills "exactly like
+// buy/sell" -- for the same money and no fee. So the remedy named in the
+// refusal is not a consolation prize, it is the identical trade. A PARTIALLY
+// crossing order is not an exception: the live refusals show the whole call
+// failing ("1x Platinum Ore not listed"), not the crossed half settling.
+//
+// FAIL DIRECTION IS OPEN, four ways, and each is a distinct absence rather
+// than a zero (#94, and the reason client.ts now carries `creditsKnown`): no
+// preStatus, a status whose player block did not parse, a buy order whose
+// price_each is not a number, one whose quantity is not a number. Any of them
+// lets the call through. A wasted call costs one tick; a fabricated block
+// costs the pilot its market access for as long as the balance reads unknown.
+//
+// Receipt for the shape (simplicity rule 3): the rejected alternative was a
+// briefing rule alone. The planner already had the game's own refusal text,
+// naming the fee and the minimum, 229 times across the two actions, and
+// re-planned the same call anyway -- prose is what already failed here. The
+// second rejected alternative was a sell-side-only guard, which is the shape
+// the #757/#736 review threw out: the buy side has 125 live blocks of its own,
+// and a guard covering one of two identical cases is the thing that gets
+// rediscovered.
+//
+// This reopens decisions.md's 2026-08 deferral of a buy-side credit check,
+// whose stated reason was "defends against a failure not yet observed live".
+// That reason has expired. What was deferred there was also a different
+// primitive: a RESERVE FLOOR (hold some balance back), a tunable threshold.
+// This has no threshold -- it compares the balance against what the game
+// itself says it will take.
+function orderCreditBlock(
+  action: string, sendParams: Record<string, unknown>, preStatus: StatusSnapshot | null,
+): StepResult | null {
+  if (action !== "create_sell_order" && action !== "create_buy_order") return null;
+  if (!preStatus || !preStatus.creditsKnown) return null; // balance UNKNOWN -> no verdict
+  const credits = preStatus.credits;
+
+  if (action === "create_sell_order") {
+    if (credits >= LISTING_FEE_MIN_CR) return null;
+    // Remedy FIRST: digest.ts clips a blocked wake's detail at
+    // UNTRUSTED_TEXT_SNIPPET_LEN (200) before the planner ever reads it.
+    return guardBlock(
+      `Use sell{id,quantity} instead -- an instant fill pays no fee. ` +
+      `create_sell_order needs ${LISTING_FEE_MIN_CR}cr for the listing fee, you have ${credits}. ` +
+      `Earn credits first: mine and sell, or finish a mission.`,
+    );
+  }
+
+  // Buy side: bound the escrow by the bid. price_each is already defaulted from
+  // the catalog by the caller, so an undefined one here means the catalog had
+  // no value either -- and that path blocks on its own, ahead of this one.
+  const price = sendParams.price_each;
+  const quantity = sendParams.quantity;
+  if (typeof price !== "number" || typeof quantity !== "number") return null; // UNKNOWN bid
+  const bidCr = price * quantity;
+  if (credits >= bidCr) return null;
+  return guardBlock(
+    `Lower quantity or price_each until the bid fits your balance, or sell cargo first. ` +
+    `create_buy_order escrows the whole bid up front: ${quantity}x${price} = ${bidCr}cr ` +
+    `plus sales tax, and you have ${credits}.`,
+  );
+}
+
+/**
  * Runs exactly one game mutation and reports where the plan stands.
  *
  * `tickStatus` is this tick's status snapshot, already fetched by the caller
@@ -1614,6 +1724,14 @@ export async function executeTick(
     }
     sendParams = { ...sendParams, price_each: value };
   }
+
+  // Zero-balance order guard (issue #1030) -- see orderCreditBlock above. Sits
+  // HERE, after the price default and last before the call, because the buy
+  // side bounds its escrow by the price_each that is actually going out: run it
+  // ahead of the default and a catalog-priced order reads as an unknown bid and
+  // sails through.
+  const creditBlock = orderCreditBlock(step.action, sendParams, preStatus);
+  if (creditBlock) return creditBlock;
 
   let result: V2Result;
   try {

@@ -207,6 +207,11 @@ export function parseStatusText(text: string | null | undefined): StatusSnapshot
 
   return {
     credits,
+    // Issue #1030: `credits` above falls back to 0 when the header carries no
+    // `<n>cr` token, so this path collapses absent into zero exactly the way
+    // the structured path does. Keep the distinction for the blocking consumer
+    // (executor.ts's orderCreditBlock); the display consumers keep the 0.
+    creditsKnown: creditsMatch !== null,
     fuel,
     maxFuel,
     hull,

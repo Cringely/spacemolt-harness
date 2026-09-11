@@ -381,6 +381,24 @@ const SEAMS: Seam[] = [
       /5000cr in a single gift/i, /never set up a standing gift/i],
   },
   {
+    guard: "zero-balance order guard (#1030: create_sell_order under the exchange's 1cr listing-fee " +
+      "floor, or create_buy_order under its own bid, refused before the call -- only on a KNOWN " +
+      "balance, never on a status that failed to report one)",
+    // Pins the CALL SITE, not the helper's interior and not a mention of it.
+    // `orderCreditBlock` appears three times in executor.ts: the definition,
+    // this call, and one comment -- so the bare name would stay green if
+    // the call were deleted and a comment left behind, which is exactly how the
+    // mine seam went vacuous under #757/#736. The assignment prefix appears
+    // only where the guard is actually consulted, and a rename takes it with it.
+    code: { file: "src/agent/executor.ts", marker: /const creditBlock = orderCreditBlock\(/ },
+    // Each anchor is absent from the rest of §4. The neighbouring net-profit
+    // bullet already says "1% listing fee", so /listing fee/ would match it and
+    // pin nothing -- these pin the game's own floor phrase, the escrow fact,
+    // and the remedy, none of which appear anywhere else in the section.
+    anchors: ["minimum 1 credit", /escrows the whole bid/i, /balance of zero/i,
+      /earn before you list/i],
+  },
+  {
     guard: "withdraw storage-contents guard (#706: a withdraw whose personal locker provably holds " +
       "fewer than the requested quantity is refused before the tick. 21 of the miner's 30 lifetime " +
       "withdraws were refused by the game with `insufficient_storage: Storage only has 0 x <item>`, " +

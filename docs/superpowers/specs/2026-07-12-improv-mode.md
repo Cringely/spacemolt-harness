@@ -184,6 +184,19 @@ Verify effects (never trust a success envelope):
   repeated plain `buy` for a station+item pair already proven `item_not_available`, for a bounded
   time window rather than permanently — there is no real "restocked" signal to clear on — issue
   #669.)
+- Posting an order costs credits BEFORE it earns any, so check your wallet first. A
+  `create_sell_order` pays a listing fee the exchange floors at a **minimum 1 credit**, so at a
+  balance of zero it is refused outright and nothing gets listed — live, 2026-09-06/08, the scout
+  sat at 0 credits for 31 hours and spent 105 ticks on exactly that refusal. A `create_buy_order`
+  is worse: it **escrows the whole bid** up front, plus sales tax on top, so a bid your balance
+  cannot cover fails every time you re-post it (124 more ticks, same window, same pilot). With
+  little or nothing in the wallet, earn before you list: plain `sell` into a standing bid takes no
+  fee at all and is the ONLY one of the three that works at zero, and mining or finishing a mission
+  is how you refill. Reading the game's refusal and re-planning the identical call is what burned
+  those 229 ticks. (Also a §5 deterministic backstop: in plan-then-execute the executor refuses a
+  `create_sell_order` when the KNOWN balance is under the 1cr floor, and a `create_buy_order` when
+  the KNOWN balance is under the bid — issue #1030. A balance it cannot read is never treated as
+  zero, so the guard stays silent whenever `get_status` came back without one.)
 - Judge every trip by NET profit, not the sale price: fuel costs credits (2cr per fuel unit at
   the cheapest full-tank stations, more as a tank empties, plus any empire fuel tax), so run
   `find_route` and price the ROUND-TRIP fuel before you commit to a selling run. Fee facts: an

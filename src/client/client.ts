@@ -5,6 +5,25 @@ import { parseMarketText } from "./mcp-text-parser";
 
 export interface StatusSnapshot {
   credits: number;
+  // Issue #1030. `credits` above defaults a missing or non-numeric
+  // `player.credits` to 0 (see status() below), because every DISPLAY consumer
+  // -- the digest line, the ledger delta, the stall monitor -- wants a number.
+  // That default makes "wallet empty" and "the player block did not parse" the
+  // same value, and that is exactly the collapse a BLOCKING consumer must not
+  // inherit: a guard reading `credits === 0` would refuse orders on a pilot
+  // holding 50,000cr on any tick whose get_status came back with a malformed
+  // player block. So whether the field was actually present is preserved
+  // separately here -- the same three-valued treatment `modules` and `stats`
+  // already get -- and the zero-balance order guard (executor.ts,
+  // orderCreditBlock) consults THIS before it reads the number.
+  //
+  // Optional, and `undefined` means UNKNOWN, never "known zero". Both
+  // producers (status() below and parseStatusText in mcp-text-parser.ts) set
+  // it explicitly, so the undefined case is a hand-built snapshot -- every
+  // StatusSnapshot literal in the test suite, and any future one. Those must
+  // fail OPEN, which is what the guard's `!preStatus.creditsKnown` does. Same
+  // "optional, additive" reasoning as systemId/stats above.
+  creditsKnown?: boolean;
   fuel: number;
   maxFuel: number;
   hull: number;
@@ -930,6 +949,11 @@ export class SpacemoltClient implements GameApi {
     const s = StatusSchema.parse(res.structuredContent ?? {});
     return {
       credits: s.player.credits ?? 0,
+      // Issue #1030: the one bit the `?? 0` above destroys. `player` is
+      // `.partial().default({})`, so an absent or non-numeric credits field
+      // arrives here as undefined and is indistinguishable from a real zero
+      // balance in `credits`.
+      creditsKnown: typeof s.player.credits === "number",
       fuel: s.ship.fuel ?? 0, maxFuel: s.ship.max_fuel ?? 0,
       hull: s.ship.hull ?? 0, maxHull: s.ship.max_hull ?? 0,
       cargoUsed: s.ship.cargo_used ?? 0, cargoCapacity: s.ship.cargo_capacity ?? 0,
