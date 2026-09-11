@@ -138,7 +138,12 @@ export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): 
       newSteps.push(step);
       continue;
     }
-    if (step.action === "travel_to" && raw !== surroundings.systemId) {
+    // Case-insensitive on purpose: `raw` is planner-written and its casing is
+    // untrusted, which is why the candidate match below lowercases both sides.
+    // A case-sensitive compare here would latch on a same-system travel_to
+    // spelled "Frontier" and switch validation off for the rest of the plan --
+    // a fail-open in the one direction this latch must never fail.
+    if (step.action === "travel_to" && raw.toLowerCase() !== surroundings.systemId.toLowerCase()) {
       crossedSystem = true;
     }
 

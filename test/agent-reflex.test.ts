@@ -416,8 +416,14 @@ describe("Agent reflex integration", () => {
       // ran. Once the wake is jumps-aware the pilot is no longer frozen, so it resumes its
       // stored travel plan and queries find_route. Both halves of the fix are asserted
       // directly instead: no false refuel, AND the pilot actually proceeds.
-      expect(calls).not.toContain("refuel");
-      expect(calls).toContain("find_route"); // proceeds with the plan rather than freezing (the 8h stall #670 reports)
+      // toEqual, not toContain: this file states twice (lines ~115 and ~288) that
+      // toContain on `calls` masks an extra unwanted call, and that applies here --
+      // it would pass even if a doomed refuel ran alongside the route query.
+      expect(calls).toEqual(["find_route"]);
+      // Fixture-independent half: the pilot resumed its STORED plan, so the planner
+      // was never consulted. This is what #670 is about; the find_route above is a
+      // property of this fixture's stored travel plan, not of the fix.
+      expect(planner.contexts.length).toBe(0);
     });
   });
 });
