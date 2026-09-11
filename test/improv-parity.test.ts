@@ -381,7 +381,6 @@ const SEAMS: Seam[] = [
       /5000cr in a single gift/i, /never set up a standing gift/i],
   },
   {
-<<<<<<< HEAD
     guard: "zero-balance order guard (#1030: create_sell_order under the exchange's 1cr listing-fee " +
       "floor, or create_buy_order under its own bid, refused before the call -- only on a KNOWN " +
       "balance, never on a status that failed to report one)",
@@ -398,7 +397,8 @@ const SEAMS: Seam[] = [
     // and the remedy, none of which appear anywhere else in the section.
     anchors: ["minimum 1 credit", /escrows the whole bid/i, /balance of zero/i,
       /earn before you list/i],
-=======
+  },
+  {
     guard: "withdraw storage-contents guard (#706: a withdraw whose personal locker provably holds " +
       "fewer than the requested quantity is refused before the tick. 21 of the miner's 30 lifetime " +
       "withdraws were refused by the game with `insufficient_storage: Storage only has 0 x <item>`, " +
@@ -423,7 +423,6 @@ const SEAMS: Seam[] = [
     // neighbour's vocabulary. create_buy_order is deliberately NOT an anchor:
     // §4 already says it four times in the market-order rules.
     anchors: ["insufficient_storage", "view_storage", "deliver_to=storage", /waits for a seller/i],
->>>>>>> origin/main
   },
 ];
 
