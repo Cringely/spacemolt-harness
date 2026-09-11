@@ -1194,6 +1194,8 @@ export class Agent {
       heartbeatMs: this.config.heartbeatMinutes * 60_000,
       fuelPct: this.config.fuelPct,
       fuelReservePct: this.config.fuelReservePct,
+      fuelPerJump,
+      keepFuelAboveJumps: this.config.reflex?.keepFuelAboveJumps,
       hullPct: this.config.hullPct,
       wakeNotificationTypes: this.config.wakeNotificationTypes,
       planRemediesFuel,

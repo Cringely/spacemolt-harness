@@ -59,6 +59,24 @@ describe("evaluateWake", () => {
     expect(evaluateWake({ ...base, status: hurt })).toEqual({ reason: "low_hull", detail: "25/100" });
   });
 
+  test("issue #670: 19 jumps of measured range is not a fuel emergency", () => {
+    // Live incident shape: fuel 19/100, but fuelPerJump 1 means 19 jumps of
+    // real range -- floor(19/1)=19 is not below the 5-jump floor, so no wake,
+    // even though the raw percent (19%) is below fuelPct (20).
+    const low = { ...base.status!, fuel: 19 };
+    const r = evaluateWake({ ...base, status: low, fuelPerJump: 1, keepFuelAboveJumps: 5 });
+    expect(r).toBeNull();
+  });
+
+  test("issue #670: unmeasured ship falls back to percent-of-tank", () => {
+    // Same fuel, but fuelPerJump omitted (this ship has never completed a
+    // measured jump) -- keepFuelAboveJumps alone can't drive fuelUrgent, so
+    // the percent check (fuelPct) still applies, unchanged from before.
+    const low = { ...base.status!, fuel: 19 };
+    const r = evaluateWake({ ...base, status: low, keepFuelAboveJumps: 5 });
+    expect(r).toEqual({ reason: "low_fuel", detail: "19/100" });
+  });
+
   test("heartbeat fires after interval", () => {
     const r = evaluateWake({ ...base, now: base.lastPlanAt + base.heartbeatMs + 1 });
     expect(r).toEqual({ reason: "heartbeat" });

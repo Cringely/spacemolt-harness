@@ -251,6 +251,13 @@ const SEAMS: Seam[] = [
     anchors: [/JUMPS OF RANGE/, /28\.5h/, /opposite reality/i],
   },
   {
+    guard: "fuel urgency by jumps in the low_fuel WAKE threshold, the third and last #670 consumer " +
+      "(reflex.ts's auto-refuel and the persona floor shipped 2026-08-01; this is evaluateWake's own " +
+      "percent-of-tank check, replaced by the same shared fuelUrgent so all three can't drift apart)",
+    code: { file: "src/agent/wake.ts", marker: "keepFuelAboveJumps" },
+    anchors: [/JUMPS OF RANGE/, /28\.5h/, /opposite reality/i],
+  },
+  {
     guard: "ambient skill-XP excluded from the no-progress signal (#250: LEVEL counts, sub-level XP drip does not)",
     // The LEVEL-only return line: folding xp back into the signature changes
     // this exact line (it becomes `return levels * WEIGHT + xp;`), so the
