@@ -4,7 +4,7 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-11 (PR #98 merged and deployed. Five P1 pilot defects fixed, prod container on `fb67644`; the #94 consumer gate proven live in both directions; 50 backlog issues closed; PR #99 wires two harness gates git was never reading). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-11 (PR #98 merged and deployed; #99 wires harness gates; #102 closes #757/#736 with module-fitment table). Five P1 pilot defects fixed, prod container on `fb67644`; consumer gate proven live in both directions; 50 backlog issues closed. Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
@@ -18,11 +18,13 @@ _Refreshed 2026-09-11. Boot from this block + `docs/backlog.md` (GitHub Issues a
 
 **TWO HARNESS GATES WERE INSTALLED AND NEVER RAN.** git reads hooks from exactly one directory; this repo points `core.hooksPath` at `.githooks` while the core harness installs into `.claude/hooks/`. The AI-attribution refusal and the identity sweep over the outgoing push range had no shim, so both sat in git unexecuted. PR #99 wires them and pins the silent-inertness modes in a test. Upstream cause filed as `agent-harness-core#136`.
 
-**BACKLOG: 457 open, 345 `machine-filed`** (was 374). 50 closed since 09-06. Seven stale steward PRs closed unmerged (#88, #89, #91, #96 here; #462, #463, #467 in the issues repo), all conflicting and all carrying figures now false. Remote branches are down to `main` plus the open PR.
+**BACKLOG: 459 open** (was 457 at 09-06). Two issues added since last steward pass (PR #99/102 fixes): #1046 (self_destruct improv-parity), #1049 (steward opens empty PRs). Seven stale steward PRs closed unmerged (#88, #89, #91, #96 here; #462, #463, #467 in the issues repo).
 
 **OPEN FROM TODAY.** #1045 (`keep_fuel_above_jumps` bypasses the undocked reserve raise), #1046, #1047 (goal-item truncation), #1048 (standup reads GitHub's `mergeable:UNKNOWN` as merge-ready, a fail-open), #1043 (D1 dispatch gate off 54 days, pipeline idle).
 
-**Next: batch two, seven pilot fixes, six of them touching `executor.ts`/`agent.ts`, so they run sequentially.** #757 and #736 share one cause (an action gated on a module the ship does not carry, with only `mine` guarded today), so build a single fitment-requirement table rather than a guard per action. Then #553, #706, #1030, #592, #696.
+**MODULE-FITMENT TABLE COMPLETED.** PR #102 (`a892877`) closes #757 and #736 by building one fitment-requirement table (`src/registry/fitment.ts`) checked at executor entry, guarding `mine`, `survey_system`, `tow`, and `cloak`. The table is the single source for all module-gated actions, replacing per-action guards. Deployed, not merely merged: prod container now runs image `a892877`.
+
+**Next: batch two, five remaining pilot fixes.** #553 (mission_not_found 2nd-largest failure), #706 (withdraw insufficient_storage), #1030 (sell-order listing fee), #592, #696. Six of batch two touch `executor.ts`/`agent.ts` and run sequentially; the fitment table opened the path.
 
 ## Recent history, 2026-08-11
 
