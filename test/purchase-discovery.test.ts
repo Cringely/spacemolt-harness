@@ -130,6 +130,16 @@ describe("goal item candidates (#220)", () => {
     expect(candidates.map((i) => i.id)).toEqual(["mining_laser_i", "mining_laser_ii", "mining_laser_iii"]);
     expect(dropped).toEqual(["mining_laser_iv", "mining_laser_v"]);
   });
+
+  // Breakage caught (#812): an exact hit on one goal's item must not starve a
+  // DIFFERENT goal's family match. Production had exactly this pair live --
+  // scout's exact fuel_cell goal was silently discarding its own survey
+  // scanner family goal, with no drop signal (dropped stayed []).
+  test("an exact hit on one goal does not starve a family hit on another goal (#812)", () => {
+    const { candidates, dropped } = goalPurchaseCandidates(["buy fuel_cell", "buy a Survey Scanner"]);
+    expect(candidates.map((i) => i.id)).toEqual(["fuel_cell", "survey_scanner_i", "survey_scanner_ii"]);
+    expect(dropped).toEqual([]);
+  });
 });
 
 describe("Agent purchase discovery (#220)", () => {

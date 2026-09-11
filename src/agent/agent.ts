@@ -109,6 +109,12 @@ export interface AgentConfig {
   fuelReservePct?: number;
   stuckWindowMinutes?: number;
   strandAutoSelfDestruct?: boolean;
+  // Issue #705: operator opt-in for a PLAN-issued self_destruct (executor.ts's
+  // guard). Deliberately separate from strandAutoSelfDestruct above -- that
+  // flag arms the autonomous multi-hour strand steward, this one only lets a
+  // plan step fire self_destruct; conflating them would force one to arm the
+  // other. Default OFF (absent from config means refused).
+  selfDestructAuthorized?: boolean;
   // Progress-heartbeat cadence (minutes). Optional so test AgentConfig literals
   // need no update; loadConfig (config.ts) always supplies a concrete value.
   // The heartbeat only REPORTS a per-window progress delta -- it never acts.
@@ -1188,6 +1194,8 @@ export class Agent {
       heartbeatMs: this.config.heartbeatMinutes * 60_000,
       fuelPct: this.config.fuelPct,
       fuelReservePct: this.config.fuelReservePct,
+      fuelPerJump,
+      keepFuelAboveJumps: this.config.reflex?.keepFuelAboveJumps,
       hullPct: this.config.hullPct,
       wakeNotificationTypes: this.config.wakeNotificationTypes,
       planRemediesFuel,
@@ -1230,12 +1238,16 @@ export class Agent {
           this.snapshotThrottle = { lastEmitAt: this.now(), lastKey: snapshotKey(vitals) };
         }
       }
-      if (this.now() < this.plannerBackoffUntil) {
+      if (wake.reason !== "instruction" && this.now() < this.plannerBackoffUntil) {
         // Backoff active (transient failures, or a closed subscription
         // window with no fallback configured): don't call the planner again
         // yet, but don't stall in-progress execution just because a wake
         // (often the heartbeat, which fires regardless of plan state) also
-        // triggered this tick.
+        // triggered this tick. An operator instruction is the human escape
+        // hatch (#815): it must reach the planner even mid-backoff, the same
+        // bypass the plan-budget ceiling below already grants it -- otherwise
+        // /instruct is inert for up to TRANSIENT_BACKOFF_MAX_MS with no way
+        // to steer a pilot stuck on a failing planner.
         if (!reflexSpentTick && this.plan && this.planState === "running") await this.executeOne(status);
         return;
       }
@@ -3230,6 +3242,7 @@ export class Agent {
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
       fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,
+      this.config.selfDestructAuthorized,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of

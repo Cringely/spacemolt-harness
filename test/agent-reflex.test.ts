@@ -411,7 +411,19 @@ describe("Agent reflex integration", () => {
       const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
       const laterAgent = new Agent({ id: "a1", persona: "p", api: dockedApi, store, planner, config: jumpConfig, now: () => 2 });
       await laterAgent.runOnce();
-      expect(calls).toEqual([]); // 19 jumps of range -- not urgent, the #670 false alarm this fix closes
+      // #670, wake half: `toEqual([])` was a PROXY for "does not refuel", and it only held
+      // because the low_fuel WAKE fired at 14.6% and short-circuited the tick before any plan
+      // ran. Once the wake is jumps-aware the pilot is no longer frozen, so it resumes its
+      // stored travel plan and queries find_route. Both halves of the fix are asserted
+      // directly instead: no false refuel, AND the pilot actually proceeds.
+      // toEqual, not toContain: this file states twice (lines ~115 and ~288) that
+      // toContain on `calls` masks an extra unwanted call, and that applies here --
+      // it would pass even if a doomed refuel ran alongside the route query.
+      expect(calls).toEqual(["find_route"]);
+      // Fixture-independent half: the pilot resumed its STORED plan, so the planner
+      // was never consulted. This is what #670 is about; the find_route above is a
+      // property of this fixture's stored travel plan, not of the fix.
+      expect(planner.contexts.length).toBe(0);
     });
   });
 });

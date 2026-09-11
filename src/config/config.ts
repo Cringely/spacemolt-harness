@@ -142,6 +142,11 @@ const AgentEntrySchema = z.object({
   fuel_reserve_pct: z.number().min(0).max(100).default(AGENT_DEFAULTS.fuelReservePct),
   stuck_window_minutes: z.number().int().min(1).default(AGENT_DEFAULTS.stuckWindowMinutes),
   strand_auto_self_destruct: z.boolean().default(false),
+  // Issue #705: separate opt-in for a PLAN-issued self_destruct (executor.ts's
+  // guard), default OFF. Kept apart from strand_auto_self_destruct above --
+  // that one arms the autonomous multi-hour strand steward, this one only
+  // lets a plan step fire self_destruct on its own.
+  self_destruct_authorized: z.boolean().default(false),
   // progress heartbeat cadence (deterministic, dashboard-visible). default 30:
   // an at-a-glance "is the pilot still advancing?" pulse the operator can watch
   // continuously, distinct from heartbeat_minutes (15, the planner wake cadence)
@@ -232,6 +237,7 @@ export interface AgentEntry {
   fuelReservePct: number;
   stuckWindowMinutes: number;
   strandAutoSelfDestruct: boolean;
+  selfDestructAuthorized: boolean;
   progressHeartbeatMinutes: number;
   repeatBlockThreshold: number;
   repeatBlockWindowMinutes: number;
@@ -305,6 +311,7 @@ export function loadConfig(path: string): HarnessConfig {
       fuelReservePct: a.fuel_reserve_pct,
       stuckWindowMinutes: a.stuck_window_minutes,
       strandAutoSelfDestruct: a.strand_auto_self_destruct,
+      selfDestructAuthorized: a.self_destruct_authorized,
       progressHeartbeatMinutes: a.progress_heartbeat_minutes,
       repeatBlockThreshold: a.repeat_block_threshold,
       repeatBlockWindowMinutes: a.repeat_block_window_minutes,

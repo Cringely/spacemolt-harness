@@ -111,6 +111,13 @@ interface Referent {
 export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): NormalizeResult {
   const rewrites: PlanRewrite[] = [];
   const newSteps: PlanStep[] = [];
+  // Issue #813: `surroundings` is ONE pre-plan snapshot taken before this plan
+  // runs (see the enumerated-inputs note above). A step occurring after a
+  // cross-system travel_to no longer has a pilot standing in that snapshot's
+  // system, so its POI/system ref must not be checked against it -- once set,
+  // every remaining step passes through untouched, same as travel_to's own
+  // rejectUnknown:false already does for the travel_to step itself.
+  let crossedSystem = false;
 
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i]!;
@@ -125,6 +132,26 @@ export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): 
     if (typeof raw !== "string") {
       newSteps.push(step);
       continue;
+    }
+
+    if (crossedSystem) {
+      newSteps.push(step);
+      continue;
+    }
+    // Case-insensitive on purpose: `raw` is planner-written and its casing is
+    // untrusted, which is why the candidate match below lowercases both sides.
+    // A case-sensitive compare here would latch on a same-system travel_to
+    // spelled "Frontier" and switch validation off for the rest of the plan --
+    // a fail-open in the one direction this latch must never fail.
+    // systemId is `string | null`. Unknown current system means we cannot tell
+    // whether this travel_to crosses one, and latching is the fail-OPEN direction
+    // (it switches validation off), so an unknown system must not latch.
+    if (
+      step.action === "travel_to" &&
+      surroundings.systemId !== null &&
+      raw.toLowerCase() !== surroundings.systemId.toLowerCase()
+    ) {
+      crossedSystem = true;
     }
 
     const candidates: Referent[] = loc.kind === "poi"

@@ -1,5 +1,6 @@
 import type { EnvelopeNotification } from "../client/http";
 import type { StatusSnapshot } from "../client/client";
+import { fuelUrgent } from "./reflex";
 
 export type WakeReason = {
   reason: "no_plan" | "plan_done" | "blocked" | "instruction" | "notification"
@@ -25,6 +26,14 @@ export interface WakeInput {
   // backstop; true "enough to reach known fuel" needs the fuel-location map
   // from the next spec (per-pilot memory).
   fuelReservePct?: number;
+  // Issue #670: this ship's own measured fuel-per-jump (agent.ts's
+  // lastMeasuredFuelPerJump, from the find_route response travel_to already
+  // fetches) and the jumps-remaining floor to defend, paired with
+  // fuelUrgent below. Both optional -- unset means this ship has never
+  // completed a measured jump this session, and the percent check
+  // (effectiveFuelPct) stays the sole signal, unchanged from before this fix.
+  fuelPerJump?: number;
+  keepFuelAboveJumps?: number;
   hullPct: number;
   wakeNotificationTypes: string[]; // e.g. ["combat", "chat"]
   // Layer 1 (producer fix): the in-flight plan still carries an unexecuted
@@ -117,7 +126,11 @@ export function evaluateWake(i: WakeInput): WakeReason | null {
     const effectiveFuelPct = !docked && i.fuelReservePct != null
       ? Math.max(i.fuelPct, i.fuelReservePct)
       : i.fuelPct;
-    if (maxFuel > 0 && (fuel / maxFuel) * 100 < effectiveFuelPct && !i.planRemediesFuel)
+    // Issue #670: jumps-remaining (fuel / fuelPerJump) replaces percent-of-tank
+    // once this ship has a measured per-jump cost -- see fuelUrgent (reflex.ts)
+    // for why percent alone can't tell 19 jumps of range from 1. effectiveFuelPct
+    // is fuelUrgent's fallback, so an unmeasured ship wakes exactly as before.
+    if (fuelUrgent(fuel, maxFuel, i.fuelPerJump, i.keepFuelAboveJumps, effectiveFuelPct) && !i.planRemediesFuel)
       return { reason: "low_fuel", detail: `${fuel}/${maxFuel}` };
     if (maxHull > 0 && (hull / maxHull) * 100 < i.hullPct && !i.planRemediesHull)
       return { reason: "low_hull", detail: `${hull}/${maxHull}` };

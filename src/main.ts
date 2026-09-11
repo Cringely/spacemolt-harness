@@ -79,6 +79,7 @@ for (const entry of config.agents) {
       fuelReservePct: entry.fuelReservePct,
       stuckWindowMinutes: entry.stuckWindowMinutes,
       strandAutoSelfDestruct: entry.strandAutoSelfDestruct,
+      selfDestructAuthorized: entry.selfDestructAuthorized,
       progressHeartbeatMinutes: entry.progressHeartbeatMinutes,
       repeatBlockThreshold: entry.repeatBlockThreshold,
       repeatBlockWindowMinutes: entry.repeatBlockWindowMinutes,

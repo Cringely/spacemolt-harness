@@ -120,11 +120,30 @@ export function goalPurchaseCandidates(goals: string[], items: ItemMeta[] = cata
     }
   }
 
+  // Resolve exact-vs-family PER ITEM, not per call (#812): an exact hit on one
+  // item must not discard a family hit on an unrelated item. Union alone would
+  // regress the tier-exclusion contract above (an exact tier no longer wins
+  // alone), so a family hit is dropped only when its own tier-stripped base
+  // was ALSO exactly hit -- i.e. an exact hit on the same family, any tier.
+  const exactBases = new Set(
+    exact
+      .map((h) => {
+        const n = h.item.name ? normalize(h.item.name) : "";
+        const b = n.replace(TIER_SUFFIX, "");
+        return b !== n ? b : null;
+      })
+      .filter((b): b is string => b !== null),
+  );
+  const filteredFamily = family.filter((h) => {
+    const n = h.item.name ? normalize(h.item.name) : "";
+    return !exactBases.has(n.replace(TIER_SUFFIX, ""));
+  });
+
   // Stable sort by goal index ALONE: items sharing a goal keep catalog (push)
   // order, which is exactly the documented tie-break -- family members of one
   // base all resolve the same phrase to the same goal, so catalog tier order
   // holds within a family. Array.prototype.sort is stable per the spec.
-  const hits = (exact.length ? exact : family).sort((a, b) => a.goal - b.goal);
+  const hits = exact.concat(filteredFamily).sort((a, b) => a.goal - b.goal);
   return {
     candidates: hits.slice(0, MAX_CANDIDATES).map((h) => h.item),
     dropped: hits.slice(MAX_CANDIDATES).map((h) => h.item.id),
