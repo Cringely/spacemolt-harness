@@ -380,6 +380,32 @@ const SEAMS: Seam[] = [
       /never the short internal id/i,
       /5000cr in a single gift/i, /never set up a standing gift/i],
   },
+  {
+    guard: "withdraw storage-contents guard (#706: a withdraw whose personal locker provably holds " +
+      "fewer than the requested quantity is refused before the tick. 21 of the miner's 30 lifetime " +
+      "withdraws were refused by the game with `insufficient_storage: Storage only has 0 x <item>`, " +
+      "one tick after a create_buy_order the pilot read as delivery)",
+    // Pins the CALL SITE, which is what every other seam in this file does
+    // (`step.action === "undock"`, `step.action === "accept_mission"`). An
+    // earlier version marked `api.getStorage`, the guard's INTERIOR, and review
+    // measured the gap: deleting the `if (step.action === "withdraw")` block in
+    // executeTick leaves the guard defined, dead, and this seam GREEN. Existence
+    // and wiring have to be pinned together or the seam certifies a function
+    // nothing calls.
+    //
+    // A REGEX, and the parens are the point. The interior marker was a regex
+    // for a related reason: ablating it with a rename to `api.getStorageXX`
+    // left a `toContain("api.getStorage")` GREEN, because the old name survives
+    // as a PREFIX of the new one -- the same substring-blindness that let the
+    // #757 marker match two decoys, in its other form. Matching the call with
+    // its arguments refuses both a rename and a bare mention in a comment.
+    code: { file: "src/agent/executor.ts", marker: /withdrawStorageBlock\(api, step\)/ },
+    // Each anchor was absent from §4 before this bullet was added (checked, not
+    // assumed), so deleting the bullet fails here rather than passing on a
+    // neighbour's vocabulary. create_buy_order is deliberately NOT an anchor:
+    // §4 already says it four times in the market-order rules.
+    anchors: ["insufficient_storage", "view_storage", "deliver_to=storage", /waits for a seller/i],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {
