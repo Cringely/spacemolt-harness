@@ -1,0 +1,19 @@
+#!/bin/sh
+# Shim: chain agent-harness-core's commit-msg gate.
+#
+# git reads hooks from exactly ONE directory. This repo sets
+# core.hooksPath=.githooks (AGENTS.md, "Git workflow"), which predates the
+# core harness installing its own hooks under .claude/hooks/. Nothing in git
+# merges the two, so every core hook without a shim here is installed, in
+# git, and never executed. .claude/hooks/commit-msg -- the gate that refuses
+# Co-Authored-By trailers naming Claude, Claude-Session, "Generated with
+# Claude Code", and anthropic.com addresses -- had no shim and had never
+# fired. The operator order it enforces (no AI attribution on commits, PRs,
+# or issues) was holding only because each session remembered it.
+#
+# Same chaining pattern .githooks/pre-commit already uses for the core
+# pre-commit, recommended over repointing core.hooksPath by core's own
+# guardrails.md ("core.hooksPath and other hook managers").
+cd "$(git rev-parse --show-toplevel)" || exit 1
+[ -f .claude/hooks/commit-msg ] || exit 0
+exec sh .claude/hooks/commit-msg "$@"

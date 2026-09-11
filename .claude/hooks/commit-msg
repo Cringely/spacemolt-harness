@@ -1,0 +1,58 @@
+#!/bin/sh
+# Git commit-msg hook. Refuses any commit message carrying AI attribution.
+#
+# WHY THIS EXISTS
+# change-management.md: "All commits must use the user's GitHub identity only.
+# Never add Claude as a co-author or include any Co-Authored-By trailer."
+# On 2026-09-04 thirteen commits on feat/account-layer-portability picked up
+# Co-Authored-By and Claude-Session trailers anyway, because the rule was
+# followed by the orchestrator and never propagated into the subagent briefs
+# that were doing the committing. They had to be stripped with filter-branch.
+# A rule that lives only in a briefing is a rule that holds only while every
+# briefing remembers it.
+#
+# WHY A GIT HOOK
+# Same argument as hooks/pre-commit: git runs on every commit no matter who
+# or what made it. Subagents commit, scripts commit, humans commit. A Claude
+# Code PreToolUse matcher on Bash would have to spawn a process on every Bash
+# call to string-match "git commit", and Bash is the hottest tool in a
+# session.
+#
+# ESCAPE HATCH
+# The trailer checks are anchored to the start of a line, because that is
+# where git trailers live. To write one of these strings in prose (a commit
+# that documents this rule, for instance), indent it by two spaces.
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+# Strip comment lines git will discard anyway, so a commented-out template
+# cannot trip the gate. Then drop lines indented two or more spaces: that is
+# the documented way to write one of these strings as prose, and dropping them
+# once here is what lets the checks below stay simple.
+scan=$(grep -v '^#' "$msg_file" | grep -v '^  ')
+
+fail() {
+    echo "commit-msg: refused. $1" >&2
+    echo "" >&2
+    echo "  change-management.md: commits carry the operator's identity only." >&2
+    echo "  No Co-Authored-By naming Claude or Anthropic, no Claude-Session," >&2
+    echo "  no 'Generated with Claude Code', no anthropic.com address." >&2
+    echo "" >&2
+    echo "  To write one of these strings in prose, indent the line by two spaces." >&2
+    exit 1
+}
+
+printf '%s\n' "$scan" | grep -qiE '^Co-authored-by:.*(claude|anthropic)' &&
+    fail "Co-Authored-By trailer naming Claude or Anthropic."
+
+printf '%s\n' "$scan" | grep -qiE '^Claude-Session:' &&
+    fail "Claude-Session trailer."
+
+printf '%s\n' "$scan" | grep -qiE 'generated with .{0,4}\[?claude code' &&
+    fail "'Generated with Claude Code' attribution line."
+
+printf '%s\n' "$scan" | grep -qiE '(noreply@anthropic\.com|claude\.ai/code/session)' &&
+    fail "Anthropic address or Claude session URL."
+
+exit 0

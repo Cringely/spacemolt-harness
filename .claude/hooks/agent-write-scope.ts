@@ -35,6 +35,24 @@
 // that excludes Bash, or with OS-level sandbox filesystem rules, if the agent
 // is untrusted rather than merely narrow.
 //
+// Second coverage boundary, worse than the first because it is silent and
+// total: SCRATCH_SEGMENTS matches ANY path segment, so a project checked out
+// under a directory named `scratch`, `scratchpad` or `.scratch` — say
+// `/home/x/scratch/myrepo` — puts every file in that repo in scope. decide()
+// then returns allow for every write by every agent, and nothing logs, warns,
+// or reports that the gate has stopped having opinions. It looks exactly like
+// a gate that is passing. Pre-existing and unchanged here, and not yet in the
+// backlog — this comment is the only record of it. If you
+// are relying on this gate, check that no ancestor of the project root is
+// named for scratch.
+//
+// And it is reachable from the payload, not only from where the checkout sits:
+// a relative filePath is resolved against the session cwd, which arrives on
+// stdin as `payload.cwd`. readSessionCwd() below type-checks that field but
+// cannot narrow it further — a cwd IS a directory path — so the honest
+// statement is that this is payload-driven with no narrower shape available,
+// and unchanged from master. Not that it is out of the payload's reach.
+//
 // Fail-open contract, matching agent-worktree-gate.ts: malformed stdin,
 // missing fields, an unreadable definition, or our own bugs all log to stderr
 // and exit 0 with no stdout, which Claude Code reads as "no opinion" and the
@@ -46,9 +64,17 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { isValidAgentName } from "./agent-name";
 
-/** Directory names that count as scratch. A path is in scope if any segment matches. */
-const SCRATCH_SEGMENTS = new Set(["scratchpad", ".scratch"]);
+/**
+ * Directory names that count as scratch. A path is in scope if any segment matches.
+ * `scratch` is here because it is the drop box `install/Install-Harness.ps1` creates
+ * under a project's `.claude`; without it this gate denied the one scratch directory
+ * the harness itself ships. Rejected matching the `.claude/scratch` suffix instead:
+ * that adds a second matching rule beside segment matching to buy precision this gate
+ * does not claim, per the coverage boundary above.
+ */
+const SCRATCH_SEGMENTS = new Set(["scratchpad", ".scratch", "scratch"]);
 
 export type Decision = { action: "allow" } | { action: "deny"; reason: string };
 
@@ -67,9 +93,17 @@ export function inScratch(filePath: string, cwd: string): boolean {
  * The `writeScope` value declared in an agent definition's frontmatter, or null
  * when the file is absent, unreadable, or declares nothing. Null means this
  * hook has no opinion — absence of a declaration is not a reason to block.
+ *
+ * `agentType` is payload text and becomes a path one line down, so it is checked against the
+ * agent-name allowlist first (backlog item 38). A name that fails is treated as a name with no
+ * definition — the same null this returns for an absent file — because that is already the
+ * outcome for every unrecognized type, and because a throw here would break the hook's fail-open
+ * contract. The check subsumes the empty-string guard that used to sit on this line: "" has no
+ * first character, so the allowlist rejects it, and it must be rejected — `${""}.md` names the
+ * readable file `.md`.
  */
 export function readWriteScope(agentType: string, projectDir: string): string | null {
-  if (!agentType) return null;
+  if (!isValidAgentName(agentType)) return null;
   const defPath = join(projectDir, ".claude", "agents", `${agentType}.md`);
   if (!existsSync(defPath)) return null;
   try {
@@ -78,6 +112,28 @@ export function readWriteScope(agentType: string, projectDir: string): string | 
   } catch {
     return null;
   }
+}
+
+/**
+ * The session working directory from the hook payload, or this process's own when the payload
+ * does not carry a usable one.
+ *
+ * Why this is a TYPE check and not the charset check `agent_type` gets. Both fields arrive on the
+ * same stdin, and the difference is what they are, not where they come from. `agent_type` names a
+ * definition file, so a filename-safe segment is the whole of what it may be, and anything else is
+ * malformed. `cwd` IS a directory path — it is the base `inScratch()` resolves a relative write
+ * against, and it stands in for projectDir when CLAUDE_PROJECT_DIR is unset — so there is no
+ * narrower shape to demand. Treating it as untrusted text would mean rejecting the legitimate
+ * value.
+ *
+ * What it does need is to be a string. `join(42, …)` and `resolve({}, …)` throw, the throw is
+ * caught by the outermost handler below, and the hook then exits 0 with no stdout — so a
+ * malformed cwd used to convert a deny this gate would have made into silence. Falling back keeps
+ * the gate deciding. Mirrors review-gate.ts:803's `payload.cwd !== ""` narrowing of the same field.
+ */
+export function readSessionCwd(payload: unknown): string {
+  const value = (payload as Record<string, unknown> | null | undefined)?.cwd;
+  return typeof value === "string" && value !== "" ? value : process.cwd();
 }
 
 /**
@@ -106,7 +162,7 @@ export function decide(
 if (import.meta.main) {
   try {
     const payload = JSON.parse(await Bun.stdin.text());
-    const cwd = payload.cwd ?? process.cwd();
+    const cwd = readSessionCwd(payload);
     const scope = readWriteScope(
       payload.agent_type ?? "",
       process.env.CLAUDE_PROJECT_DIR ?? cwd,

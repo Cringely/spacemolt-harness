@@ -1,8 +1,63 @@
 {
-  "hooks/pre-commit": "78AF867E84DCA76990A05D9176C2E1BBA430B9EB6D57675065C87E7D1FA2A48A",
-  "agents/docker-expert.md": "30A512A0FDE7E2792CF61D194BD343C4400E5B05A999A9E0D5D3935BC69966E1",
-  "hooks/agent-write-scope.ts": "30A9C4EFB4F1E790D944BA33F3F0C438E6D402830733C4BD71E02C90F41D379D",
-  "agents/research-scout.md": "4DB16CAD5FB8BD78545D2B24E4DACFB7200E4A46D49B606316AB94421F551830",
-  "agents/security-auditor.md": "DE63457227529E46FF61A2FA05CB37B0834329848F5444440BF95704188BA321",
-  "scratch/.gitignore": "A9CC1EA20FE525A1DD1BE4567D1F8CB1015855A80C207CB77E82B887B24CAD4A"
+  "coreCommit": "3ccd2e5",
+  "accepted": {
+    "agents/adversarial-reviewer.md": "315494029C751462E1409173CB80D9BD74603F8339C38EEFC4D70D55CFD6572D",
+    "agents/doc-steward.md": "AB764BB7DA800EED7494AA4FFD944170BDFBFF5D794F1B851AA24AE89091DE38",
+    "agents/soc-monitor.md": "A871DB250F0BABEBA19B3DA89D8CC71F186FE5A1A8B3CBAAD4F4CA4FA05ABC3B",
+    "agents/task-reviewer.md": "8DBA4F42890403345B5EDF6CFE61CB5C3A30B1E8B26F990334A4B1FE581C5360",
+    "hooks/agent-worktree-gate.ts": "28E96DE140D9241A22379E0FA7A5E7EE0DB840411272D4274A59BFA1077C7333",
+    "hooks/lint-doc-prose.ts": "DF39F64B50CE353B1B843CAF981C25B95CED3F8137D075F4A599CCD24E8ED18D",
+    "hooks/session-start-guardrails.sh": "61D05E7810798450DEBA186892E0ECF4246758CF7A45D7430B5EEBE49A573AF5",
+    "hooks/wave-close-handoff.sh": "E7F0A1CBB80108A96A577D4FCB12C480863BE0FB18A0B8EE2C2345461D11F43D",
+    "guardrails.md": "E7A7CE550AA590308681870290B7B9F1BF15977F11A046E1E457829AA159E23E"
+  },
+  "coreRepo": "E:\\projects\\agent-harness-core",
+  "files": {
+    "scratch/.gitignore": "A9CC1EA20FE525A1DD1BE4567D1F8CB1015855A80C207CB77E82B887B24CAD4A",
+    "hooks/agent-write-scope.ts": "A82125C48E1A8968B5F4DA79BC8A982CE213A2859935F18385CFF516105C880F",
+    "hooks/memory-transition-log.ts": "071778B33D39B6AC2A817007C737219AF3B735C7472676188D4C3C63CC13759B",
+    "hooks/pre-commit": "BFCACEDB82CD33DC49041BA244E48E498253EF7D3C1DA36AC3C3A93FCFE0AD7C",
+    "hooks/review-gate.ts": "68E766E90B26480F25DF0908588B7960BA970741CA2058F3BB869597EF81F549",
+    "agents/research-scout.md": "4EE211D29CAED3B19C05F5897239D5C7BB15EE9B3D9E59F342BEE4C311BD8E6E",
+    "hooks/model-tier-gate.ts": "611860D790CAB54A9A3675E03CDD1D225F5155AB3417019F833B02004FA12E82",
+    "hooks/agent-name.ts": "5A798D5C710B69B499CC5E70751ECD90CFED0B771F4DECE6E10D63F76C0F3455",
+    "hooks/commit-msg": "E7AF2A2352DC7A722288F2824938133F02729BF92C6AC595408422BDB2BED705",
+    "hooks/identity-patterns.sh": "9CB980711EBD72CD737C8E987C02EACE72D263B16B758ED3D3649DBBE540B694",
+    "hooks/pre-push": "BF10B2E42AFB225923B56844C45A8964C2F39E7BB16FFD315B797919DC8E1D53",
+    "hooks/session-start-drift-check.sh": "44B2B6C5C87428699A629CDB3BCEB53593659D55402AE82E166C44A260E51BAB",
+    "hooks/transcript-utils.ts": "2028754229ED79226343DDBDD84B22175949500660C92EDA30CF65DDB74351CD",
+    "ceremony-ledger.json": "2646070F9A480F0B72E9012900F87078AC3DBD12BCCE49740F6FE79C9EE72EDD"
+  },
+  "stackDetected": {
+    "scannedAt": "2026-09-11T02:40:06Z",
+    "plugins": [
+      "caveman/caveman",
+      "claude-plugin-marketplace/bash-master",
+      "claude-plugin-marketplace/docker-master",
+      "claude-plugin-marketplace/git-master",
+      "claude-plugin-marketplace/powershell-master",
+      "claude-plugins-official/claude-code-setup",
+      "claude-plugins-official/claude-md-management",
+      "claude-plugins-official/code-review",
+      "claude-plugins-official/code-simplifier",
+      "claude-plugins-official/commit-commands",
+      "claude-plugins-official/context7",
+      "claude-plugins-official/feature-dev",
+      "claude-plugins-official/frontend-design",
+      "claude-plugins-official/github",
+      "claude-plugins-official/greptile",
+      "claude-plugins-official/microsoft-docs",
+      "claude-plugins-official/ralph-loop",
+      "claude-plugins-official/security-guidance",
+      "claude-plugins-official/superpowers",
+      "ponytail/ponytail",
+      "trailofbits/ask-questions-if-underspecified",
+      "trailofbits/audit-context-building",
+      "trailofbits/differential-review"
+    ],
+    "outputStyles": [
+      "Explanatory"
+    ],
+    "mcpServers": []
+  }
 }

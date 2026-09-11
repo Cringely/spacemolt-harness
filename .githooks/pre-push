@@ -1,13 +1,42 @@
 #!/bin/sh
-# Blocks direct pushes to main. All changes reach main via pull request
-# (merged server-side with `gh pr merge`), so a local push to main is
-# always a process violation. GitHub-side enforcement needs Pro on private
-# repos; this hook is the free, deterministic substitute.
+# Two gates, in cost order: the core identity sweep over the whole outgoing
+# range, then this repo's block on direct pushes to main.
+#
+# WHY THE CHAIN EXISTS
+# git reads hooks from exactly one directory (core.hooksPath=.githooks here),
+# so agent-harness-core's .claude/hooks/pre-push never fired on its own. That
+# hook is the only stage that scans the FULL range of commits about to leave
+# the clone for identifying strings -- the operator's legal name, personal
+# email, workstation username, machine hostname -- across contents, commit
+# messages, and author/committer metadata. security.md's mandate is explicit
+# that a clean content scan says nothing about metadata, and the 2026-09-05
+# incident was thirty commits carrying a real name in both name fields while
+# the email was already the noreply address. pre-commit cannot catch those:
+# it only ever sees the identity a NEW commit is about to use. Installed and
+# unchained, the one stage that would have caught them did nothing.
+#
+# WHY STDIN IS BUFFERED
+# git feeds the ref list on stdin exactly ONCE. Both the chained hook and the
+# main-branch check below consume it. Read straight through, whichever runs
+# second sees EOF and passes vacuously -- a gate that reports success because
+# it was handed nothing to inspect. Buffer once, replay to each.
+#
 # One-time setup per clone: git config core.hooksPath .githooks
-while read local_ref local_sha remote_ref remote_sha; do
-  if [ "$remote_ref" = "refs/heads/main" ]; then
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+refs=$(cat)
+
+if [ -f .claude/hooks/pre-push ]; then
+    printf '%s\n' "$refs" | sh .claude/hooks/pre-push "$@" || exit 1
+fi
+
+# `while read` in a pipeline runs in a subshell under POSIX sh, so an `exit 1`
+# inside one leaves the parent's status untouched and the push proceeds. awk
+# carries the verdict out through its own exit status instead. Field 3 is the
+# remote ref; an empty range exits nonzero here, which is the pass direction.
+if printf '%s\n' "$refs" | awk '$3 == "refs/heads/main" { found = 1 } END { exit !found }'; then
     echo "pre-push: direct push to main blocked - open a PR (gh pr create) and merge it (gh pr merge) instead." >&2
     exit 1
-  fi
-done
+fi
+
 exit 0
