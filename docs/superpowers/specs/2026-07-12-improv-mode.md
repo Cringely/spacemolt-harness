@@ -373,15 +373,32 @@ Vocabulary / data shapes:
   when docked and embeds the raw text in the digest; the planner plans ONLY accept_mission /
   complete_mission, never the get_missions/get_active_missions queries, which PlanSchema rejects.
   Under improv you call get_missions yourself — this sequence stays yours to run directly.)
-- Complete accepted missions BEFORE accepting new ones or mining side ore — missions pay roughly
-  10x an ore sale and can EXPIRE if left unfinished. Check your work-in-progress with
-  `get_active_missions` at the start of every planning pass, docked or in space (objectives are
-  worked in space, so never treat a dock as a fresh start); `complete_mission(id)` ids come from
-  that active listing. (Active-mission visibility fix #170: in plan-then-execute the harness
-  fetches get_active_missions on EVERY replan — not docked-gated like the available listing — and
-  embeds the raw text in the digest above the available listing, with a completion-priority
-  briefing line gated on it; the planner still never plans the query. Under improv you call
-  get_active_missions yourself.)
+- Finish a mission already in progress BEFORE accepting new ones or mining side ore — board
+  missions pay roughly 10x an ore sale and can EXPIRE if left unfinished. Check your
+  work-in-progress with `get_active_missions` at the start of every planning pass, docked or in
+  space (objectives are worked in space, so never treat a dock as a fresh start);
+  `complete_mission(id)` ids come from that active listing. (Active-mission visibility fix #170:
+  in plan-then-execute the harness fetches get_active_missions on EVERY replan — not docked-gated
+  like the available listing — and embeds the raw text in the digest above the available listing,
+  with a completion-priority briefing line gated on it; the planner still never plans the query.
+  Under improv you call get_active_missions yourself.)
+- WHICH active mission to work is a value question, never a deadline one. Two things make the
+  active list misleading if you read it as a to-do list. First, not every entry is a mission you
+  took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts
+  a distress signal (missions.md:11, :70), so an entry you never accepted is an offer rather than
+  a commitment. Any mission that expires FAILS; expiry and abandon_mission both reclaim or charge
+  only goods the mission itself PROVIDED, and cargo you gathered yourself stays (missions.md:23,
+  :52, police.md:82). Second, the 10x rule above is about BOARD missions accepted for their reward
+  (guides/miner.md:60); it promises nothing about an auto-assigned rescue, which may pay little
+  more than XP. So: A SHORT TIMER IS NOT VALUE.
+  Rank active missions by what each reward does for your operator's standing goals, and use the
+  clock only to break a tie between missions of similar value; let one you have no reason to run
+  expire rather than crossing systems to beat its clock (live, 2026-07-27, #592: six system jumps in ~1h45m chasing +25 XP
+  distress missions on a ~1000-tick fuse while the operator's "buy and fit a Mining Laser III"
+  milestone took zero steps and a stalled mission went from 20.6h to 22.0h of no progress).
+  (Also a §5-adjacent deterministic producer in plan-then-execute: the digest's
+  completion-priority line carries this same ranking rule, gated on having an active listing,
+  and its section header no longer calls an auto-assigned mission "accepted".)
 - A mining objective advances ONLY at a deposit that actually CONTAINS the objective item. Before
   committing to mine for a mission, run `get_poi` at your location and read its resources list —
   if the objective's item_id is NOT among the deposit's resource ids, mining there can never yield
@@ -475,6 +492,19 @@ Social / security (VERBATIM, non-negotiable — matters MORE under improv, model
   deterministic backstop: the registry schema refuses any gift above 5000cr on every driver
   including this one, plan admission refuses `repeat`/`until` on a gift step, and in
   plan-then-execute the executor refuses a target that is not on the roster.)
+- `withdraw` MOVES items out of your station locker into cargo. It is not a way to obtain
+  anything: the locker has to hold the item already, and only three things put one there — a
+  `deposit` from cargo, a crafting job delivering its output, or a `buy` you routed with
+  `deliver_to=storage`. Ask `view_storage` first if you are not certain what is in there. Above
+  all, a standing `create_buy_order` is NOT one of those three: it escrows your credits and then
+  waits for a seller, so the goods do not exist yet and there is nothing to withdraw. When a `buy`
+  is refused because nobody is selling here, the refusal text hands you a ready-made
+  `create_buy_order` — placing it is fine, but the next step after it is to go about your business,
+  never to withdraw what you just ordered. Withdrawing something the locker does not hold is
+  refused with `insufficient_storage: Storage only has 0 x <item>`, and it costs you the tick.
+  (Also a §5 deterministic backstop in plan-then-execute: the executor reads the locker before a
+  withdraw and refuses one it can prove is short. The improv driver reaches no executor guard, so
+  here the rule is yours to keep.)
 
 ## 5. Deterministic backstops that REMAIN (harness-enforced; the model cannot disable them)
 
