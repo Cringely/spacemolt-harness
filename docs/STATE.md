@@ -4,7 +4,7 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-11 (PR #98 merged and deployed. Five P1 pilot defects fixed, prod container on `fb67644`; the #94 consumer gate proven live in both directions; 50 backlog issues closed; PR #99 wires two harness gates git was never reading). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-11 (PR #98–#105 merged. Five P1 pilot defects fixed; consumer gate proven live; #99 wires harness gates; batch two starts shipping — #757/#736 fitment table, #592 digest priority, #706 executor withdraw guard). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
@@ -18,11 +18,11 @@ _Refreshed 2026-09-11. Boot from this block + `docs/backlog.md` (GitHub Issues a
 
 **TWO HARNESS GATES WERE INSTALLED AND NEVER RAN.** git reads hooks from exactly one directory; this repo points `core.hooksPath` at `.githooks` while the core harness installs into `.claude/hooks/`. The AI-attribution refusal and the identity sweep over the outgoing push range had no shim, so both sat in git unexecuted. PR #99 wires them and pins the silent-inertness modes in a test. Upstream cause filed as `agent-harness-core#136`.
 
-**BACKLOG: 457 open, 345 `machine-filed`** (was 374). 50 closed since 09-06. Seven stale steward PRs closed unmerged (#88, #89, #91, #96 here; #462, #463, #467 in the issues repo), all conflicting and all carrying figures now false. Remote branches are down to `main` plus the open PR.
+**BATCH TWO GAINS THREE FIXES TODAY.** PR #102 (`a892877`) closed #757, #736: one module-fitment table replaces per-action guards (decision 2026-09-11, #102). PR #103 (`842e0ef`) closed #592: digest stops asserting mission priority commitment it cannot establish. PR #105 (`af7a8e1`) closed #706: executor refuses withdrawals the personal locker cannot satisfy. All three ablated; deployment pending.
 
-**OPEN FROM TODAY.** #1045 (`keep_fuel_above_jumps` bypasses the undocked reserve raise), #1046, #1047 (goal-item truncation), #1048 (standup reads GitHub's `mergeable:UNKNOWN` as merge-ready, a fail-open), #1043 (D1 dispatch gate off 54 days, pipeline idle).
+**BACKLOG: 459 open, 347 `machine-filed`** (was 457, 345). Three new issues filed: #1045 (`keep_fuel_above_jumps` bypasses undocked reserve raise), #1046, #1047 (goal-item truncation). Standing open: #1048 (standup reads GitHub's `mergeable:UNKNOWN` as merge-ready), #1043 (D1 dispatch gate off 54 days).
 
-**Next: batch two, seven pilot fixes, six of them touching `executor.ts`/`agent.ts`, so they run sequentially.** #757 and #736 share one cause (an action gated on a module the ship does not carry, with only `mine` guarded today), so build a single fitment-requirement table rather than a guard per action. Then #553, #706, #1030, #592, #696.
+**Next: batch two continues.** Three pilots remain on the slate: #553, #1030, #696. Deployment order unchanged: #102/103/105 go live, then redispatch batch-two wave 2.
 
 ## Recent history, 2026-08-11
 
