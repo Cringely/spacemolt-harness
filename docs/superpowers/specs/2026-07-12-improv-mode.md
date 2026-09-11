@@ -519,15 +519,15 @@ The model gets the wheel, not the safety switches:
 - **Operator steer receipt** (operator-facing, REPORT-ONLY, #696): the harness stamps an event at
   each state an operator instruction passes through — `instruction_received` when `Agent.instruct()`
   accepts it onto the inbox (carrying the text and the queue depth behind it), `instruction_consumed`
-  when the tick loop hands it to the planner (carrying the wake reason that got it there), and the
+  when the tick loop hands it to the planner (carrying the depth left behind), and the
   pre-existing `instruction_done` when the planner reports the errand carried out. Three states,
   three events, because they fail differently: a steer stuck in the inbox and a steer the planner
   read and ignored look identical from the outside, and #696 was filed precisely because the feed
   could tell neither from "never arrived". Pure retain-and-expose over a transition the loop already
   makes. No paired §4 briefing rule — it shapes no pilot behavior, only observes — and it stays
   deterministic in both modes, for the same reason the ledger does: a self-driving agent must not be
-  able to suppress the operator's view of whether its own steering lever is reaching the model. The
-  receipt emit is wrapped so an unwritable event store costs the receipt and never the instruction;
+  able to suppress the operator's view of whether its own steering lever is reaching the model. Both
+  emits are wrapped so an unwritable event store costs the receipt and never the instruction;
   the steer channel is the only control lever over a live pilot and it may not acquire a new way to
   fail.
 - **Tick-pacing settle** (SM-12): a "Action pending. Resolves next tick" accept skips exactly one

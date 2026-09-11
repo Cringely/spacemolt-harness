@@ -1572,14 +1572,22 @@ export class Agent {
         // received and then ignored -- two different faults with two different
         // fixes, and #696 was filed because the feed could distinguish neither.
         //
-        // `wakeReason` separates them one step further: "instruction" means the
-        // steer drove its own arrival replan, any other reason means that
-        // arrival wake was suppressed and it rode a later heartbeat/blocked one.
         // `queued` is the depth LEFT BEHIND after the shift, so a still-backed-up
-        // inbox is visible without exposing its contents.
-        this.emit("instruction_consumed", {
-          instruction, wakeReason: wake.reason, queued: this.inbox.length,
-        });
+        // inbox is visible without exposing its contents. How long the steer
+        // waited is the two events' `ts` difference -- no payload field needed,
+        // and no field CAN carry it: evaluateWake returns "instruction" as its
+        // first branch (wake.ts) whenever an instruction is queued, which is the
+        // same condition this emit is guarded on, so wake.reason here is the
+        // constant "instruction".
+        //
+        // Guarded for the same reason the acceptance emit is: the shift above is
+        // irreversible, so a throw here would abort runOnce BEFORE replan() ever
+        // receives the steer -- the instruction destroyed, not merely
+        // unreceipted, with start()'s catch logging a loop_error and the pilot
+        // ticking on. An unwritable store costs the receipt, never the steer.
+        try {
+          this.emit("instruction_consumed", { instruction, queued: this.inbox.length });
+        } catch { /* telemetry is not the control path -- see instruct() */ }
       }
       await this.replan(wake, status, instruction, notifications);
       return;

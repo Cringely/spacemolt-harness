@@ -103,7 +103,7 @@ describe("operator steer channel: instruction receipt (#696)", () => {
 
     const consumed = typed(store, "instruction_consumed");
     expect(consumed).toHaveLength(1);
-    expect(consumed[0]!.payload).toEqual({ instruction: STEER, wakeReason: "instruction", queued: 0 });
+    expect(consumed[0]!.payload).toEqual({ instruction: STEER, queued: 0 });
     // The instruction really did land in the planner's goals on this tick, so
     // the event is reporting a consumption that happened rather than one it
     // merely announced.
@@ -134,5 +134,40 @@ describe("operator steer channel: instruction receipt (#696)", () => {
     await agent.runOnce();
     expect(agent.snapshot().goals).toContain(STEER);
     expect(typed(store, "instruction_consumed")).toHaveLength(1);
+  });
+
+  // The CONSUMPTION half, which the test above does not reach: it stubs only
+  // `instruction_received`, so deleting the try/catch at the consumption site
+  // leaves it green. Review measured exactly that.
+  //
+  // This site is the worse of the two. `this.inbox.shift()` has already run and
+  // is irreversible, so an unguarded throw aborts runOnce BEFORE replan() ever
+  // receives the steer -- the instruction destroyed rather than merely
+  // unreceipted, with start()'s catch emitting a loop_error that fails to write
+  // for the same reason. The operator is left holding an `instruction_received`
+  // with no `instruction_consumed`, reads it as still queued, and is never
+  // prompted to resend: the exact ambiguity #696 exists to remove, except the
+  // steer is now actually gone.
+  //
+  // Reachable as the tick's FIRST write: every earlier emit that tick is
+  // conditional (new notifications only, changed status only, status_snapshot
+  // 60s-throttled).
+  test("a store that fails at consumption loses the receipt, never the steer", async () => {
+    const store = new Store(":memory:");
+    const passthrough = store.appendEvent.bind(store);
+    store.appendEvent = (e: AgentEvent): number => {
+      if (e.type === "instruction_consumed") throw new Error("SQLITE_FULL");
+      return passthrough(e);
+    };
+    const { agent } = makeAgent([plan(1), plan(2)], store);
+
+    agent.instruct(STEER);
+    expect(typed(store, "instruction_received")).toHaveLength(1);
+
+    // The tick must complete and the planner must still get the steer.
+    await agent.runOnce();
+    expect(agent.snapshot().goals).toContain(STEER);
+    // The receipt is what was lost, and only the receipt.
+    expect(typed(store, "instruction_consumed")).toHaveLength(0);
   });
 });
