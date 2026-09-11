@@ -4,27 +4,25 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-06 (26-day pause ended by PR #94, the consumer gate; ceremonies filed 362 issues into an unread queue; all three pilots up 20 days, `RestartCount 0`; #94 deployment to the scheduler LXC in flight, unproven live). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-11 (PR #98 merged and deployed. Five P1 pilot defects fixed, prod container on `fb67644`; the #94 consumer gate proven live in both directions; 50 backlog issues closed; PR #99 wires two harness gates git was never reading). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-06. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-11 block moved down to "Recent history, 2026-08-11"; nothing was dropped._
+_Refreshed 2026-09-11. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-11 block sits below under "Recent history"; nothing was dropped._
 
-**26-DAY PAUSE, THEN ONE MERGE.** Nothing merged between `da2aadd` (2026-08-11) and 2026-09-06. The four cron ceremonies ran the whole time and kept filing: 362 issues since 2026-08-01, 354 still open, last close 2026-08-12 (PR #94 body). A producer with no reader ([L-53](wiki/engineering-lessons.md#l-53--a-producer-with-no-consumer-accumulates)).
+**FIVE P1 PILOT DEFECTS FIXED AND DEPLOYED.** PR #98 (`fb67644`) closed #815, #705, #813, #812, #670. An operator instruction now bypasses planner backoff; `self_destruct` needs an explicit config opt-in; steps after a `travel_to` stop being validated against the system the pilot has left; goal purchase matching resolves exact-vs-family per item; the wake check shares the reflex's fuel helper instead of a second percent-of-tank rule. Each guard ablated red before merge. Deployed, not merely merged: the prod container runs image `fb67644` as of 16:43Z, `RestartCount 0`.
 
-**PR #94 MERGED (`f556bef`), THE CONSUMER GATE.** `fileFinding` now returns `"suppressed"` instead of opening a new issue when no `machine-filed` issue has closed in the last 7 days; bumps of existing issues still go through; one standing "suppression notice" issue, created once and never commented on, is the only visible trace; `failure-alarm` is exempt (code-only parameter). `scheduler.ts health` gained a `filing:` line (never-filed / present-but-unreadable / readable) and a loud `!! CONSUMER PROBE ERROR`. 1,832 tests pass, guards ablated. **Shipped capability, not proven behaviour:** the offline suite proves the gate; only the host's filing log can prove the producer stopped. **IN FLIGHT:** deployment of #94 to the scheduler LXC is being verified as this is written.
+**THE CONSUMER GATE WORKS IN BOTH DIRECTIONS.** PR #94 gates filing on whether any `machine-filed` issue closed in the trailing 7 days. The host filing log now carries live proof of both states: `"outcome":"suppressed","consumer":"absent"` with one standing notice (#1031) while nobody was reading, then `"consumer":"present"` and filing resumed (#1042-#1044) once 50 issues closed. The queue reopens itself once someone starts reading it.
 
-**HOUSEKEEPING, SAME DAY.** Six stale steward PRs closed unmerged (#88, #89, #91 here; #462, #463, #467 in the issues repo): all `CONFLICTING`, 26-48 days old, carrying figures now false. 25 merged local branches pruned. #1029 filed: ceremony dedup fails for anchorless keys, 31 duplicates filed after the tier-3 fix (#85), best pairwise Jaccard 0.50 and 0.57 against the 0.6 bar; the live groom report finds the same 13 clusters (40 collapsible) it found at ship time and nothing newer.
+**A HEADLINE FIGURE HERE WAS WRONG.** This block reported the scout's `sirius_observatory_station` hallucination as 1,250 occurrences. Measured: 30 since 08-04 (#1033). The 1,250 came from a substring match that also counted the known-ids list. It reached a merged STATE.md, which is the part worth remembering.
 
-**PILOTS (prod container, TrueNAS, image `e4f0180`).** Up 20 days, `RestartCount 0`. Miner 26,913cr (226,449 on 08-01; lifetime earned 561,191 → 1,008,267). Corsair 2,364cr, 394 missions, 0 kills despite a combat persona and two autocannons fitted. Scout 55cr, 712 missions, 34,781 lifetime earned. `stranded` alerts clustered 08-10 to 08-29, zero in September. The scout planner has hallucinated POI `sirius_observatory_station` 1,250 times since 08-04: unfixed, non-fatal.
+**TWO HARNESS GATES WERE INSTALLED AND NEVER RAN.** git reads hooks from exactly one directory; this repo points `core.hooksPath` at `.githooks` while the core harness installs into `.claude/hooks/`. The AI-attribution refusal and the identity sweep over the outgoing push range had no shim, so both sat in git unexecuted. PR #99 wires them and pins the silent-inertness modes in a test. Upstream cause filed as `agent-harness-core#136`.
 
-**SCHEDULER.** Cron alive; standup/strategy/council `failStreak: 0`. `gates.json` has never existed on the host, `canDispatch()` is false by default and has no call site, so the stage-3 machinery (breaker, dispatch ledger) runs inert at stage 1.
+**BACKLOG: 457 open, 345 `machine-filed`** (was 374). 50 closed since 09-06. Seven stale steward PRs closed unmerged (#88, #89, #91, #96 here; #462, #463, #467 in the issues repo), all conflicting and all carrying figures now false. Remote branches are down to `main` plus the open PR.
 
-**SPEND.** Ledger stops at 2026-08-16, a sync gap, not zero spend; the $6,809.50 total covers only the first half of the window.
+**OPEN FROM TODAY.** #1045 (`keep_fuel_above_jumps` bypasses the undocked reserve raise), #1046, #1047 (goal-item truncation), #1048 (standup reads GitHub's `mergeable:UNKNOWN` as merge-ready, a fail-open), #1043 (D1 dispatch gate off 54 days, pipeline idle).
 
-**BACKLOG: 374 open `machine-filed` at the groom run.** The 2026-08-11 findings (#812-#821) are unchanged; none merged.
-
-**Next:** prove #94 live from the host filing log; #1029 (anchorless dedup); groom the 13 clusters; then #812-#815.
+**Next: batch two, seven pilot fixes, six of them touching `executor.ts`/`agent.ts`, so they run sequentially.** #757 and #736 share one cause (an action gated on a module the ship does not carry, with only `mine` guarded today), so build a single fitment-requirement table rather than a guard per action. Then #553, #706, #1030, #592, #696.
 
 ## Recent history, 2026-08-11
 
