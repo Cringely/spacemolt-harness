@@ -193,11 +193,13 @@ const REQUIREMENTS: readonly FitmentRequirement[] = [
     // every survey scanner in the vendored catalog; all three contain this.
     typeIdAny: ["survey_scanner"],
     hullCapability: "integrated_survey_scanner",
+    // Kept under UNTRUSTED_TEXT_SNIPPET_LEN (200, digest.ts:24), which clips
+    // ANY blocked wake's detail before the planner reads it. At 295 chars the
+    // install_mod half of the recipe was cut off, leaving a buy with no fit --
+    // the #788 defect. Steer first, then the taxonomy phrase, then both halves.
     reason:
-      "survey_system blocked: stop planning it on this ship -- fit a scanner first or pick a goal " +
-      "that needs none. It needs a survey scanner module (buy{id=survey_scanner_i, quantity=1} " +
-      "while docked, then install_mod{id=survey_scanner_i}); this hull has none, so every " +
-      "survey_system returns no_scanner.",
+      "survey_system blocked: fit a scanner, or pick a goal needing none. It needs a survey scanner " +
+      "module: buy{id=survey_scanner_i, quantity=1} docked, then install_mod{id=survey_scanner_i}.",
   },
   {
     action: "tow",
@@ -207,10 +209,9 @@ const REQUIREMENTS: readonly FitmentRequirement[] = [
     // basic_tow_rig and advanced_tow_rig are both tow rigs in the catalog.
     typeIdAny: ["tow_rig"],
     reason:
-      "tow blocked: loot the wreck where it lies instead -- looting takes its cargo and modules " +
-      "with no tow at all. Towing needs a tow rig module in a utility slot " +
-      "(buy{id=basic_tow_rig, quantity=1} while docked, then install_mod{id=basic_tow_rig}); " +
-      "this hull has none, so every tow returns no_tow_rig.",
+      "tow blocked: loot the wreck instead; looting takes its cargo and modules. It needs a tow rig " +
+      "module (utility slot): buy{id=basic_tow_rig, quantity=1} docked, then " +
+      "install_mod{id=basic_tow_rig}.",
   },
   {
     action: "cloak",
@@ -223,9 +224,9 @@ const REQUIREMENTS: readonly FitmentRequirement[] = [
     typeIdAny: ["cloaking_device"],
     hullCapability: "integrated_cloak",
     reason:
-      "cloak blocked: travel openly, or fit a cloak before planning to hide. Cloaking needs a " +
-      "cloaking device module (buy{id=cloaking_device_i, quantity=1} while docked, then " +
-      "install_mod{id=cloaking_device_i}); this hull has none and does not integrate one.",
+      "cloak blocked: travel openly, or fit a cloak before planning to hide. It needs a cloaking " +
+      "device module: buy{id=cloaking_device_i, quantity=1} docked, then " +
+      "install_mod{id=cloaking_device_i}.",
   },
 ];
 

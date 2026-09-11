@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { executeTick } from "../src/agent/executor";
 import { fitmentRequirement, fitmentRequirements, fitmentVerdict } from "../src/registry/fitment";
+import { failureClass } from "../src/server/failures";
 import type { FittedModule, GameApi, StatusSnapshot } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
 import type { Plan } from "../src/registry/plan";
@@ -107,7 +108,9 @@ describe("module-fitment guard: the blocked cases the two issues report", () => 
   // prevented-steps table instead of grouping under one name.
   test("every table row's reason carries the phrase the failure taxonomy groups on", () => {
     for (const req of fitmentRequirements()) {
-      expect(req.reason).toMatch(/needs a .+ module/i);
+      // Through the real classifier, not a copy of its regex: a duplicated
+      // pattern goes on passing after the producer's own changes.
+      expect(failureClass(req.reason)).toBe("missing_module");
     }
   });
 });

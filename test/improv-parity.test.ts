@@ -75,15 +75,27 @@ const SEAMS: Seam[] = [
   },
   {
     guard: "mine precondition guard (no fitted mining laser -> blocked wake)",
-    code: { file: "src/agent/executor.ts", marker: 'step.action === "mine"' },
+    // Repointed by #757/#736. This used to pin executor.ts's
+    // `step.action === "mine"` fitment check, which that change deleted when it
+    // generalised the check into the requirement table -- and the marker kept
+    // matching two unrelated decoys in the #526 fuel-floor guard, so the seam
+    // went green while pinning nothing. `toContain` over a whole-file read is
+    // identity- and count-blind; it cannot tell which occurrence matched. The
+    // mine requirement now lives as one table row, and deleting that row is
+    // what this must catch.
+    code: { file: "src/registry/fitment.ts", marker: 'action: "mine"' },
     anchors: [/mining laser/i, /fit/i],
   },
   {
     guard: "module-fitment guard (#757/#736: the mine laser check generalised to a requirement " +
       "table -- survey_system/tow/cloak join it; blocks only a PROVEN-absent module, and consults " +
       "the hull's integrated capabilities first for the two the reference says a hull can supply)",
-    // "fitmentBlock" appears in executor.ts only as this guard's definition and
-    // its one call site, so the marker vanishing is the guard vanishing.
+    // "fitmentBlock" appears four times in executor.ts: the definition, the
+    // call site, and two comment mentions. So this marker vanishing proves the
+    // guard is gone, but the guard being gone does not guarantee the marker
+    // vanishes -- deleting the function while leaving a comment keeps this
+    // green. The blocking behaviour is pinned for real by executor-fitment's
+    // refusal tests; this entry pins the PAIRED briefing bullet below.
     code: { file: "src/agent/executor.ts", marker: "fitmentBlock" },
     // Each anchor is absent from the rest of §4 (the mining-laser and
     // POI-type bullets above it talk about lasers and harvesters, never about
