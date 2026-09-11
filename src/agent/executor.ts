@@ -1,6 +1,7 @@
 import { isTransientServerFailure, SpacemoltError, type V2Result } from "../client/http";
 import type { FittedModule, GameApi, ModuleSpec, ShipFit, StatusSnapshot } from "../client/client";
 import type { Plan, PlanStep } from "../registry/plan";
+import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { PlanCursor } from "../store/store";
 import { catalog } from "../catalog/catalog";
 import { fuelUrgent } from "./reflex";
@@ -293,14 +294,70 @@ function cargoQty(status: StatusSnapshot, itemId: string): number {
 // genuinely worthless unknown junk, and the digest rule still covers it.
 export const JETTISON_VALUE_FLOOR = 50;
 
-// Mining-precondition fix (2026-07-12): a mine action is a guaranteed error
-// unless a mining laser is fitted. A module is a mining laser when the game
-// tags it type "mining" OR reports a positive mining_power -- either alone
-// identifies one (see FittedModule, client.ts). Only meaningful when the
-// fitted set is KNOWN: status.modules === undefined means the modules block
-// was absent/malformed, and the caller must NOT treat that as "no laser".
-function hasMiningModule(status: StatusSnapshot): boolean {
-  return (status.modules ?? []).some((m) => m.type === "mining" || (m.miningPower ?? 0) > 0);
+// Module-fitment precondition guard (issues #757 and #736 -- ONE defect, two
+// live reports; the requirement table and the recognition rules are the SSOT
+// in src/registry/fitment.ts, which also carries the audit of every registered
+// action the reference gates on a module).
+//
+// Invariant: a plan step must not be SUBMITTED when the ship's fitted loadout
+// is known and the module the game requires for that action is provably
+// absent. The 2026-07-12 mine guard was this invariant for exactly one action,
+// written as one bespoke predicate; the scout then burned 204 lifetime
+// `survey_system` calls at a 100% loss on `no_scanner` and the miner 6 `tow`
+// calls on `no_tow_rig`, because nothing generalised it.
+//
+// THREE-VALUED, and that is the whole safety argument. fitmentVerdict answers
+// satisfied / absent / UNKNOWN, and only `absent` blocks:
+//   - `modules === undefined` (status read failed, or the block was absent or
+//     malformed -- client.ts maps all three to undefined on purpose) is
+//     UNKNOWN, and the action goes through. Absence of data is never a
+//     verdict here, the same rule every guard in this file follows (#94), and
+//     the direction matters: a wasted call costs one tick, while a fabricated
+//     block costs a capability the ship actually has, for as long as the fit
+//     reads unknown.
+//   - a requirement the reference says a HULL can satisfy without any module
+//     (survey_system, cloak) is not decided by the fitted set at all. The
+//     capability list is not in get_status, so the guard spends one free
+//     catalog query on the ship class (GameApi.getShipClassCapabilities) and
+//     fails open on every way that can come back empty-handed: no class id, no
+//     such method on the api, a thrown query, or a response carrying no
+//     inherent_capabilities key. Without that lookup this guard would refuse
+//     `survey_system` on an exploration hull the reference explicitly says can
+//     run it -- a guard contradicting its own source.
+//
+// Receipt for the query (simplicity rule 3): it fires ONLY on a row that has a
+// documented hull substitute AND whose fitted-module check already came back
+// absent -- never for mine or tow, never on the satisfied path, and never on a
+// normal tick. The rejected alternative was blocking on the fitted set alone
+// and accepting the false block as unlikely; that is the reasoning PR #61's
+// review already threw out once on this same file (the refuel guard's
+// "zero utility-slot modules fitted" premise), and it is cheaper to read the
+// hull than to argue about which hulls exist.
+//
+// Ordering: this sits exactly where the old mine check sat -- after the
+// fuel-floor guard, before mineDepositBlock -- so `mine` keeps its existing
+// precedence and its existing wording (the table carries that string verbatim).
+async function fitmentBlock(
+  api: GameApi, step: PlanStep, preStatus: StatusSnapshot | null,
+): Promise<StepResult | null> {
+  const req = fitmentRequirement(step.action);
+  if (!req) return null; // action has no module requirement in the reference
+  if (fitmentVerdict(req, preStatus?.modules) !== "absent") return null;
+
+  if (req.hullCapability) {
+    const classId = preStatus?.shipClassId;
+    if (!classId || !api.getShipClassCapabilities) return null; // UNKNOWN hull -> no verdict
+    let capabilities: readonly string[] | undefined;
+    try {
+      capabilities = await api.getShipClassCapabilities(classId);
+    } catch {
+      return null; // query failed -> UNKNOWN hull -> no verdict
+    }
+    if (capabilities === undefined) return null; // no capability list -> UNKNOWN
+    if (capabilities.includes(req.hullCapability)) return null; // the hull provides it
+  }
+
+  return guardBlock(req.reason);
 }
 
 // Deposit-lock rule (issue #188). REFERENCE-CHECKED: "an array more than 4x
@@ -1122,24 +1179,17 @@ export async function executeTick(
     if (block) return block;
   }
 
-  // Mine precondition guard (preconditions-are-checked-deterministically, not
-  // remembered -- same family as the undock guard above and the station-
-  // awareness dock briefing). Live miss: the pilot planned `mine` with no
-  // mining laser fitted; the game answers that with a guaranteed error, so the
-  // step blocked and replanned for nothing. Invariant: mine needs a fitted
-  // mining module -- never send a guaranteed-error call. Fires ONLY when the
-  // fitted set is known (preStatus.modules !== undefined) and none of them is a
-  // mining laser; a null/absent-modules snapshot skips the check and lets
-  // classifyGameError catch any real block at the call site (best-effort, like
-  // the guards above). Unlike undock (a satisfiable no-op -> advance), a mine
-  // with no laser is NOT satisfiable, so it is a `blocked` wake: the planner
-  // must acquire/fit a laser or change goal, not silently skip the step.
+  // The "is a mining laser fitted at all" check that used to sit here is now
+  // one row of the module-fitment table (fitmentBlock below, issues
+  // #757/#736): same position in the sequence, same wording, same fail-open
+  // on an unknown fit -- it just no longer has to be rewritten from scratch
+  // for each new module-gated action. Unlike undock (a satisfiable no-op ->
+  // advance), a mine with no laser is NOT satisfiable, so it stays a `blocked`
+  // wake: the planner must acquire and fit a laser or change goal, not
+  // silently skip the step. The fuller "does your mining_power suit THIS
+  // deposit's supported_power" pre-check is a different question and lives in
+  // mineDepositBlock (issue #188), below.
   //
-  // SCOPE: this is the cheap "is a laser fitted at all" check. The fuller
-  // "does your mining_power suit THIS deposit's supported_power" pre-check --
-  // deferred here until the get_poi shape was cited -- now exists below
-  // (mineDepositBlock, issue #188), built on the PoiDepositsSchema citation
-  // that #291/PR #302 landed.
   // Fuel-floor precondition guard (issue #526, live 2026-07-25): the persona
   // prompt already says "keep fuel above 25%" -- a request TO THE MODEL, not
   // a constraint the system enforces. The pilot mined to 2/130 (1.5%) anyway
@@ -1194,9 +1244,12 @@ export async function executeTick(
     return guardBlock(reason, { fuelReserveBlock: true });
   }
 
-  if (step.action === "mine" && preStatus?.modules !== undefined && !hasMiningModule(preStatus)) {
-    const reason = "no mining equipment fitted; a mine action needs a mining laser module";
-    return guardBlock(reason);
+  // Module-fitment guard (issues #757/#736) -- see fitmentBlock above. Covers
+  // mine (where it replaces the 2026-07-12 one-action check, same position,
+  // same wording) plus survey_system, tow and cloak.
+  {
+    const block = await fitmentBlock(api, step, preStatus);
+    if (block) return block;
   }
 
   // Mine deposit precondition (issue #188) -- see mineDepositBlock above.

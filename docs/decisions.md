@@ -1045,3 +1045,15 @@ The accepted cost is blast radius. A stolen `store_bearer` used to buy event rea
 - *(E) Lower `MISSION_STALE_HOURS` so the advisory fires on a 3h mission [rejected].* #700's producer, kept separate.
 
 **Decision.** (A). No new constant, threshold or score: the ranking is stated, not computed, because a ranker needs reward data with no live capture and tuning data nobody has. Paired improv rule in section 4, pinned by an `improv-parity` seam keyed on "A SHORT TIMER IS NOT VALUE". Capability, not result - four offline tests prove the digest says it; only a live window showing the milestone advance while a distress mission expires proves the pilot acts.
+
+## 2026-09-11 - One fitment table, not another per-action guard (#757, #736)
+
+**Context.** Two issues, one cause. The scout planned `survey_system` 204 times and the game refused all 204 for want of a survey scanner, 90 of them inside one 72h window, over half of everything that pilot did. The miner planned `tow` six times and was refused six times for want of a tow rig. Both times the planner proposed an action gated on a module and nothing checked the loadout first. Only `mine` had such a check, written in 2026-07-12 as one bespoke predicate.
+
+**Options.**
+- *(A) A guard for `survey_system`, another for `tow` [rejected].* Fewer lines today, and the shape that produced both issues: the requirement lives in the reference, and scattered predicates cannot be audited against it.
+- *(B) One requirement table, one guard that consults it [CHOSEN].* Four rows (mine, survey_system, tow, cloak), each citing the reference line stating the requirement. A fifth is a row, not a code path.
+- *(C) Recognise a module by its `type` string [rejected].* The OpenAPI declares `Module.type` a bare string with no enum, and one fitted module has been captured live, so every row but `mine` would be a guess; guessing an id cost 86 doomed buys on `fuel_cells`.
+- *(D) Block on the fitted set alone [rejected].* The reference says `survey_system` also works on a hull with an integrated survey scanner, and `get_status` carries no capability list, so this refuses a legal action on an exploration hull and contradicts its own source.
+
+**Decision.** (B), with (C) answered by three independent recognition channels (the module's type, a positive module stat, a catalog `type_id` fragment), any one of which satisfies a row, so refusal is the verdict hardest to reach by accident. The verdict is three-valued: an unreadable fit is UNKNOWN and goes through, because a wasted tick costs one tick while a fabricated block costs a capability the ship has. (D) is answered by one free catalog query for the hull's own integrated capabilities, fired only on a row with a documented hull substitute and only after the fitted check came back absent, so mine and tow never pay it. Fail-open paths emit `fitment_unknown`, so a fit that stops parsing reads as events, not silence. Capability, not result: the offline suite proves the refusal; proof it changed anything is the scout's next window with zero `no_scanner`.

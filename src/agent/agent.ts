@@ -24,6 +24,7 @@ import {
   DOCK_NO_STATION_STREAK_THRESHOLD, DOCK_NO_STATION_CLASS, isDockDeadEnd, dockNoStationStreak,
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
 } from "./stall-monitor";
+import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { EnvelopeNotification } from "../client/http";
 import { SpacemoltError } from "../client/http";
 import { AGENT_DEFAULTS, type DriverMode } from "../config/config";
@@ -3239,6 +3240,28 @@ export class Agent {
       keepFuelAbovePct:
         this.config.reflex?.keepFuelAbovePct ?? this.config.fuelReservePct ?? AGENT_DEFAULTS.fuelReservePct,
     };
+    // Module-fitment telemetry (issues #757/#736). The guard refuses only a
+    // PROVEN-absent module and deliberately lets an unreadable fit through
+    // (fitmentBlock, executor.ts), so the fail-open path is otherwise
+    // invisible: from the outside, "we checked and allowed it" and "we could
+    // not check at all" look identical, and the second one silently restores
+    // the exact waste the guard exists to stop. One event at the seam that
+    // knows, so a fit that stops parsing reads as a run of these rather than
+    // as silence.
+    //
+    // Pure and query-free: fitmentVerdict reads the snapshot this tick has
+    // already paid for, so calling it here and again inside the guard is one
+    // computation at two call sites -- the same shape as the reflex and the
+    // mine guard sharing fuelUrgent, not a second producer that can drift.
+    // The hull-substitute lookup is NOT repeated here: it costs a query, and
+    // its own unknown path is a different (and much rarer) one.
+    if (step) {
+      const fitmentReq = fitmentRequirement(step.action);
+      if (fitmentReq && fitmentVerdict(fitmentReq, status?.modules) === "unknown") {
+        this.emit("fitment_unknown", { action: step.action, module: fitmentReq.module });
+      }
+    }
+
     let result = await executeTick(
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
       fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,

@@ -216,8 +216,63 @@ describe("SpacemoltClient", () => {
     await client.login("TestPilot", "pw");
     const s = await client.status();
     expect(s.modules).toEqual([
-      { typeId: "mining_laser_i", type: "mining", miningPower: 5, slot: "utility", name: "Mining Laser I" },
+      {
+        typeId: "mining_laser_i", type: "mining", miningPower: 5, slot: "utility",
+        name: "Mining Laser I",
+        // Fitment table (#757/#736): the whole stats block now rides along, so
+        // a requirement keyed on survey_power or tow_speed_penalty has
+        // something to read. mining_power appears TWICE on purpose -- the
+        // dedicated field is the 2026-07-12 alias several consumers still use.
+        stats: { mining_power: 5 },
+      },
     ]);
+  });
+
+  // Fitment table (#757): class_id is the key the hull-capability lookup needs,
+  // and it is a DIFFERENT string from the class_name the dashboard shows
+  // ("prospect" vs "Prospect"). Catches a mapping that reaches for the display
+  // name -- the catalog would answer "no such ship class" and the guard would
+  // fail open forever, silently.
+  test("status() maps the live-probe ship class id, distinct from the display name", async () => {
+    server = startFakeServer();
+    server.setHandler("spacemolt", "get_status", () => ({
+      structuredContent: probe.get_status.structuredContent,
+    }));
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+    const s = await client.status();
+    expect(s.shipClassId).toBe("prospect");
+    expect(s.shipClass).toBe("Prospect");
+  });
+
+  // Fitment table (#757): the hull-capability lookup. The three cases are the
+  // three verdicts the guard distinguishes, and the middle one is the bug this
+  // pins -- a ShipClass with no inherent_capabilities key is UNKNOWN, not a
+  // hull that integrates nothing, and collapsing it would let the guard refuse
+  // survey_system on a hull the reference says can run it.
+  test("getShipClassCapabilities() separates a real list, an empty list, and no list at all", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+
+    server.setHandler("spacemolt_catalog", "", () => ({
+      structuredContent: { items: [{ inherent_capabilities: [
+        { type: "integrated_survey_scanner", value: 40 }, { type: "ore_yield_bonus", value: 10 },
+      ] }] },
+    }));
+    expect(await client.getShipClassCapabilities("pathfinder"))
+      .toEqual(["integrated_survey_scanner", "ore_yield_bonus"]);
+
+    server.setHandler("spacemolt_catalog", "", () => ({
+      structuredContent: { items: [{ inherent_capabilities: [] }] },
+    }));
+    expect(await client.getShipClassCapabilities("prospect")).toEqual([]);
+
+    server.setHandler("spacemolt_catalog", "", () => ({ structuredContent: { items: [{ id: "prospect" }] } }));
+    expect(await client.getShipClassCapabilities("prospect")).toBeUndefined();
+
+    server.setHandler("spacemolt_catalog", "", () => ({ structuredContent: { items: [] } }));
+    expect(await client.getShipClassCapabilities("nope")).toBeUndefined();
   });
 
   // Ship tool (issue #219): the fit guard and the digest's fit section BOTH read
