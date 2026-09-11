@@ -1020,9 +1020,11 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
  * verdict rather than a pass -- see that guard's fail-closed receipt.
  *
  * `selfDestructAuthorized` (issue #705) is the operator's opt-in, plain data
- * from agents.yaml (agent.ts derives it from AgentConfig.selfDestructAuthorized,
- * the same config field the strand-escalation steward already gates on --
- * see the self_destruct guard below). Optional and defaults to refusing the
+ * from agents.yaml (agent.ts derives it from AgentConfig.selfDestructAuthorized).
+ * It is a DISTINCT field from strandAutoSelfDestruct, which is what the
+ * strand-escalation steward gates on at agent.ts's rung-2 check -- see the
+ * self_destruct guard below for why the two are deliberately not one flag.
+ * Optional and defaults to refusing the
  * step: absence is a verdict here too, same fail-closed shape as fleetUsernames.
  */
 export async function executeTick(
@@ -1408,7 +1410,7 @@ export async function executeTick(
   // fitted module, and all cargo, and voids insurance -- destructive enough
   // that agent.ts's strand-escalation steward already gates its OWN
   // self_destruct call behind config.strandAutoSelfDestruct, default OFF
-  // (agent.ts ~1911). That gate covers only the steward's deliberate,
+  // (agent.ts's rung-2 strandAutoSelfDestruct check). That gate covers only the steward's deliberate,
   // multi-hour-strand call; a plan step naming self_destruct had no guard at
   // all here and executed on the next tick, reachable from the planner via
   // in-game chat text the pilot cannot distinguish from instruction (issue
