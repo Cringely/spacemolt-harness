@@ -226,6 +226,20 @@ const SEAMS: Seam[] = [
     anchors: ["complete_mission", /mission_incomplete/i, /before completing/i],
   },
   {
+    guard: "complete_mission membership guard (#553: id absent from a PARSED fresh active list -> blocked before the doomed tick)",
+    // Pins the refusal itself, not the enclosing function: `completeMissionBlock`
+    // above already matches a rename or a comment mention, and the #553 branch
+    // lives INSIDE it, so a marker on the name would stay green with the branch
+    // deleted. This one needs the absent-id test AND the guardBlock return AND
+    // the refusal's first words, in that order -- prose about the guard cannot
+    // satisfy it, and reverting the branch to `return null` fails it.
+    code: {
+      file: "src/agent/executor.ts",
+      marker: /if \(!mission\) \{[\s\S]{0,900}?return guardBlock\(\s*`complete_mission blocked: plan a different step/,
+    },
+    anchors: ["get_active_missions", "mission_not_found", /Distress/, /1\.5 minutes/],
+  },
+  {
     guard: "mine deposit guard (#188: array power > 4x every deposit's supported_power -> blocked before the tick; threshold shared with the digest's Deposit check by import)",
     code: { file: "src/agent/executor.ts", marker: "mineDepositBlock" },
     anchors: ["supported_power", /4x/, "get_poi", /mining_power/],

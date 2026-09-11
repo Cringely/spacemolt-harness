@@ -413,6 +413,20 @@ Vocabulary / data shapes:
   complete_mission step and refuses it with a self-describing reason when a parsed objective is still
   short, and the digest renders a completion-readiness verdict — NOT ready vs READY — from the same
   numbers. Under improv you make the current-vs-required check yourself before completing.)
+- Re-read `get_active_missions` immediately before you plan `complete_mission`, and complete only an
+  id the CURRENT listing still carries. A mission you saw a minute ago can already be gone: the
+  auto-assigned `Distress:` missions the game hands you when someone nearby broadcasts an emergency
+  live a median of 1.5 minutes in that listing (an accepted mission lives about 20 hours), because
+  the first rescuer to arrive takes the fare and the signal is then resolved. `complete_mission` on
+  an id the listing no longer carries returns `mission_not_found: Mission not found.` and costs a
+  whole cycle. Treat a distress call as a race you either fly to now or drop — never as a contract
+  waiting for you (live, 2026-09-11, #553: 209 lifetime mission_not_found refusals against 20
+  successes; all 20 successes named an id the listing carried, and 207 of the 209 refusals named a
+  distress mission that was in the listing at plan time and gone by the next one). (Also a §5
+  deterministic backstop: in plan-then-execute the harness re-reads the active list on a
+  complete_mission step and refuses the step when the id is absent from a list that parsed — an
+  unreadable or unparsed list still allows the call. Under improv you make that membership check
+  yourself.)
 
 Operator steers:
 - Operator instructions are briefed NEWEST FIRST, and when two conflict the NEWEST supersedes the

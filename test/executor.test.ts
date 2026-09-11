@@ -3,6 +3,7 @@ import { executeTick } from "../src/agent/executor";
 import { SpacemoltError, type V2Result } from "../src/client/http";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
 import type { Plan } from "../src/registry/plan";
+import { clipUntrusted } from "../src/planner/digest";
 
 function stubApi(overrides?: Partial<{ status: StatusSnapshot; failWith: SpacemoltError; nearby: string }>) {
   const calls: Array<{ name: string; params?: Record<string, unknown> }> = [];
@@ -410,15 +411,94 @@ describe("executeTick: complete_mission objective guard (#291 regression)", () =
     expect(calls).toContainEqual({ name: "complete_mission", params: { id: "m-titanium-1" } });
   });
 
-  test("fails OPEN when the mission is absent from the parsed active list (no fabricated block)", async () => {
-    const { api, calls } = apiWithMissions([
-      { itemId: "titanium_ore", required: 20, current: 14, completed: false },
+});
+
+// complete_mission membership guard (issue #553, live measurement 2026-09-11).
+// The prod store: 209 lifetime `mission_not_found` refusals against 20
+// successes. Every one of the 20 successes named an id the preceding replan's
+// parsed active list carried; 207 of the 209 refusals named an id that was in
+// that list at replan and gone from the very next one, all 207 auto-assigned
+// `Distress:` missions (median listing life 1.5 min vs ~20h for an accepted
+// mission). The guard already fetched the fresh list and discarded the answer.
+// Absence from a list that PARSED now blocks; every unreadable state still
+// allows, because this file cannot tell them apart.
+describe("executeTick: complete_mission membership guard (#553)", () => {
+  const undocked: StatusSnapshot = {
+    credits: 0, fuel: 50, maxFuel: 100, hull: 100, maxHull: 100,
+    cargoUsed: 20, cargoCapacity: 50, docked: false, inTransit: false,
+  };
+  // The live shape: a non-empty active list the pilot legitimately holds, none
+  // of whose ids is the one the planner is trying to complete.
+  function apiWithActiveList(missions: unknown) {
+    const { api, calls } = stubApi({ status: undocked });
+    const withMissions: GameApi = {
+      ...api,
+      async getActiveMissions() {
+        return { text: "Active missions (1/5): ...", missions: missions as never };
+      },
+    };
+    return { api: withMissions, calls };
+  }
+
+  test("id absent from a parsed active list blocks before the wire (#553)", async () => {
+    const { api, calls } = apiWithActiveList([
+      { missionId: "m-still-held", objectives: [{ itemId: "iron_ore", required: 5, current: 5 }] },
     ]);
-    // completing a DIFFERENT mission id -> guard cannot prove a shortfall -> allow
-    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: "m-other" } }] };
+    const plan: Plan = {
+      goal: "g",
+      steps: [{ action: "complete_mission", params: { id: "74c70c72e95a2845c06b17e32f109854" } }],
+    };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    expect((r as { reason: string }).reason).toContain("74c70c72e95a2845c06b17e32f109854");
+    expect((r as { reason: string }).reason).toContain("left your active list");
+    // The doomed call never reaches the game -- the whole point of the guard.
+    expect(calls.some((c) => c.name === "complete_mission")).toBe(false);
+  });
+
+  test("#553 block is tagged guard:true so it counts as prevented, not a broken capability", async () => {
+    const { api } = apiWithActiveList([{ missionId: "m-still-held", objectives: [] }]);
+    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: "m-gone" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    // failures.ts reads this exact flag to route the row into `prevented`; without
+    // it the 6h strategy reviewer refiles #553 forever off our own refusal text.
+    expect(r).toMatchObject({ kind: "blocked", guard: true });
+  });
+
+  test("#553 refusal reason survives the digest's 200-char clip, worst-case id", async () => {
+    // Measured THROUGH the producer of the bound (digest.ts's clipUntrusted at
+    // its 200-char default), never against a copy of the number.
+    const { api } = apiWithActiveList([{ missionId: "m-still-held", objectives: [] }]);
+    const monsterId = "z".repeat(200);
+    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: monsterId } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    const reason = (r as { reason: string }).reason;
+    expect(clipUntrusted(reason)).toBe(reason); // unclipped => the remedy half survives
+    // Positive control: the same call DOES clip something longer, so the
+    // assertion above is capable of failing rather than passing vacuously.
+    expect(clipUntrusted(`${reason}x`.padEnd(400, "y"))).not.toBe(`${reason}x`.padEnd(400, "y"));
+  });
+
+  test("fails OPEN when the active list did not parse (missions undefined)", async () => {
+    // client.ts returns missions:undefined for FOUR distinct unreadable states,
+    // one of which (zero active missions) is not even a failure. None may block.
+    const { api, calls } = apiWithActiveList(undefined);
+    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: "m-gone" } }] };
     const r = await executeTick(api, plan, { step: 0, iteration: 0 });
     expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
-    expect(calls).toContainEqual({ name: "complete_mission", params: { id: "m-other" } });
+    expect(calls).toContainEqual({ name: "complete_mission", params: { id: "m-gone" } });
+  });
+
+  test("fails OPEN when the get_active_missions fetch throws", async () => {
+    const { api, calls } = stubApi({ status: undocked });
+    const withMissions: GameApi = {
+      ...api,
+      async getActiveMissions(): Promise<never> { throw new Error("transport down"); },
+    };
+    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: "m-gone" } }] };
+    const r = await executeTick(withMissions, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toContainEqual({ name: "complete_mission", params: { id: "m-gone" } });
   });
 });
 
