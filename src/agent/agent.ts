@@ -1230,12 +1230,16 @@ export class Agent {
           this.snapshotThrottle = { lastEmitAt: this.now(), lastKey: snapshotKey(vitals) };
         }
       }
-      if (this.now() < this.plannerBackoffUntil) {
+      if (wake.reason !== "instruction" && this.now() < this.plannerBackoffUntil) {
         // Backoff active (transient failures, or a closed subscription
         // window with no fallback configured): don't call the planner again
         // yet, but don't stall in-progress execution just because a wake
         // (often the heartbeat, which fires regardless of plan state) also
-        // triggered this tick.
+        // triggered this tick. An operator instruction is the human escape
+        // hatch (#815): it must reach the planner even mid-backoff, the same
+        // bypass the plan-budget ceiling below already grants it -- otherwise
+        // /instruct is inert for up to TRANSIENT_BACKOFF_MAX_MS with no way
+        // to steer a pilot stuck on a failing planner.
         if (!reflexSpentTick && this.plan && this.planState === "running") await this.executeOne(status);
         return;
       }
