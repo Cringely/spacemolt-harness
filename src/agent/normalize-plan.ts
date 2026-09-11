@@ -143,7 +143,14 @@ export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): 
     // A case-sensitive compare here would latch on a same-system travel_to
     // spelled "Frontier" and switch validation off for the rest of the plan --
     // a fail-open in the one direction this latch must never fail.
-    if (step.action === "travel_to" && raw.toLowerCase() !== surroundings.systemId.toLowerCase()) {
+    // systemId is `string | null`. Unknown current system means we cannot tell
+    // whether this travel_to crosses one, and latching is the fail-OPEN direction
+    // (it switches validation off), so an unknown system must not latch.
+    if (
+      step.action === "travel_to" &&
+      surroundings.systemId !== null &&
+      raw.toLowerCase() !== surroundings.systemId.toLowerCase()
+    ) {
       crossedSystem = true;
     }
 

@@ -248,6 +248,41 @@ describe("normalizePlanLocations", () => {
     expect(result.error).toContain("commerce_fields");
   });
 
+  // The latch is the fail-OPEN direction -- once set, every later step skips
+  // validation -- so it must not engage on a casing difference. `raw` is
+  // planner-written and its casing is untrusted, which is why the candidate
+  // match lowercases both sides; this pins the same rule at the latch.
+  test("a same-system travel_to in different CASE still does not suppress validation", () => {
+    const plan: Plan = {
+      goal: "mine",
+      steps: [
+        { action: "travel_to", params: { system_id: "SYS-1" } },
+        { action: "travel", params: { id: "Nonexistent Place" } },
+      ],
+    };
+    const result = normalizePlanLocations(plan, commerceFieldsSurroundings);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("unknown id 'Nonexistent Place'");
+  });
+
+  // systemId is `string | null`. An unknown current system cannot tell us whether
+  // a travel_to crossed one, and guessing "crossed" would switch validation off on
+  // no evidence, so the latch stays closed.
+  test("an unknown current system does not latch: validation stays on", () => {
+    const plan: Plan = {
+      goal: "mine",
+      steps: [
+        { action: "travel_to", params: { system_id: "sys-9" } },
+        { action: "travel", params: { id: "Nonexistent Place" } },
+      ],
+    };
+    const result = normalizePlanLocations(plan, { ...commerceFieldsSurroundings, systemId: null });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("unknown id 'Nonexistent Place'");
+  });
+
   // jump shares the identical stale-snapshot exposure as travel: its target
   // system id is only ever meaningful against the CURRENT system's
   // connections, which the pre-plan snapshot no longer reflects once an
