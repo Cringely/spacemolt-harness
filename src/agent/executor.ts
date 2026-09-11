@@ -1117,13 +1117,16 @@ async function targetLocalityBlock(api: GameApi, step: PlanStep): Promise<StepRe
 // tick) resolved FRESH at execution time -- more correct than the replan-time
 // snapshot, since cargo/progress can change between plan and completion.
 // Fail-OPEN on missing data (#94, absence is never a verdict): no
-// getActiveMissions on the api, no id in the step, a fetch failure, a mission
-// absent from the parsed active list, or objective counts unparsed -> no block;
-// the call goes through and classifyGameError catches any real rejection at the
-// site. Only a KNOWN shortfall (required and current both parsed, current <
-// required, not completed) blocks. SCOPE: the quantity gate only -- a
-// target-base/location precondition is a separate class the regression does not
-// evidence, so an at-quantity complete elsewhere still reaches the game.
+// getActiveMissions on the api, no id in the step, a fetch failure, an active
+// list that did not parse, or objective counts unparsed -> no block; the call
+// goes through and classifyGameError catches any real rejection at the site.
+// Two verdicts block, each off data this function is holding: a KNOWN shortfall
+// (required and current both parsed, current < required, not completed), and --
+// since #553 -- an id ABSENT from an active list that DID parse (see the
+// membership note at the find below; that case used to fail open and was 209
+// lifetime mission_not_found refusals). SCOPE: quantity and membership only --
+// a target-base/location precondition is a separate class neither regression
+// evidences, so an at-quantity complete elsewhere still reaches the game.
 async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepResult | null> {
   if (!api.getActiveMissions) return null;
   const id = (step.params as { id?: unknown }).id;
@@ -1134,8 +1137,47 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
   } catch {
     return null; // fetch failed -> no fabricated block
   }
-  const mission = missions?.find((m) => m.missionId === id);
-  if (!mission) return null; // not in the parsed active list -> no verdict
+  // Membership precondition (issue #553, live measurement 2026-09-11). This
+  // return used to be `null` -- "not in the parsed active list -> no verdict",
+  // the #291 fail-open. The prod store overturns that read: complete_mission
+  // has 209 lifetime `mission_not_found: Mission not found.` refusals against
+  // 20 successes, and the two sides split cleanly on membership. All 20
+  // successes named an id the preceding replan's parsed active list contained
+  // (20/20); 207 of the 209 refusals named an id that WAS in that replan's
+  // list and was gone from the very next one (207/207 of those resolved), and
+  // all 207 were auto-assigned `Distress:` missions, whose median life in the
+  // listing is 1.5 minutes against ~20 hours for an accepted mission. So the
+  // id is live when the planner reads it and dead 1-5 minutes later when the
+  // step runs -- the fresh fetch two lines up already KNOWS this and was
+  // throwing the answer away. Absence from a list we successfully parsed is a
+  // PROVEN-bad precondition, not an unknown: no observed call ever completed
+  // an id the list did not carry.
+  //
+  // Fail direction is unchanged everywhere it matters. `missions` is undefined
+  // for four DISTINCT unreadable states -- no api method, a thrown fetch, an
+  // envelope whose missions.active did not parse, and the game reporting zero
+  // active missions (client.ts's #170 zero-case returns `{ text: "" }` with
+  // missions undefined) -- and none of them can block, because this file cannot
+  // tell them apart. Only an array we hold decides. A dropped row would
+  // manufacture a false refusal here, so the producer must stay all-or-nothing:
+  // client.ts parses the whole array with ONE safeParse, never per-entry, and
+  // test/client.test.ts ("one unparseable entry ... never a shortened list")
+  // pins that for this consumer.
+  if (!Array.isArray(missions)) return null;
+  const mission = missions.find((m) => m.missionId === id);
+  if (!mission) {
+    // The id is planner output, so it is bounded before it reaches the prompt:
+    // sliced at 40 (the longest malformed id the store holds -- a 40-char
+    // hallucination, against the game's real 32) so the whole reason clears
+    // digest.ts's 200-char untrusted-text clip for any id at all. Pinned by
+    // "#553 refusal reason survives the digest's 200-char clip" in
+    // test/executor.test.ts, which measures it through clipUntrusted itself.
+    const shown = id.slice(0, 40);
+    return guardBlock(
+      `complete_mission blocked: plan a different step -- mission ${shown} left your active list ` +
+      `(distress missions expire in minutes), so it cannot complete.`
+    );
+  }
   const shortfalls: string[] = [];
   for (const o of mission.objectives) {
     if (o.completed) continue;

@@ -761,6 +761,40 @@ describe("SpacemoltClient", () => {
     expect(res.missions).toBeUndefined();
   });
 
+  // Issue #553: the membership half of executor.ts's completeMissionBlock now
+  // BLOCKS a complete_mission whose id is absent from this array, so a single
+  // dropped row would manufacture a false refusal on a mission the pilot really
+  // holds -- the harness's five-time "[] is not undefined" defect class, pointed
+  // at a blocking consumer. The parse is therefore all-or-nothing by design (one
+  // safeParse over the whole array, never per-entry), and this pins it: two good
+  // entries beside one bad one must yield NO list, never a list of two.
+  test("getActiveMissions() drops the whole array, never a row, when one entry is unparseable (#553)", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+    server.setHandler("spacemolt", "get_active_missions", () => ({
+      result: "Active missions (3/5): ...",
+      structuredContent: { missions: { active: [
+        { mission_id: "m-good-1", objectives: [] },
+        { mission_id: 12345, objectives: [] }, // wrong type -> the array fails
+        { mission_id: "m-good-2", objectives: [] },
+      ], max_missions: 5 } },
+    }));
+    const res = await client.getActiveMissions();
+    expect(res.missions).toBeUndefined();
+    // Positive control on the same fixture minus the bad entry: the two good
+    // rows DO parse, so the assertion above measures the bad entry and not a
+    // schema that rejects everything.
+    server.setHandler("spacemolt", "get_active_missions", () => ({
+      result: "Active missions (2/5): ...",
+      structuredContent: { missions: { active: [
+        { mission_id: "m-good-1", objectives: [] },
+        { mission_id: "m-good-2", objectives: [] },
+      ], max_missions: 5 } },
+    }));
+    expect((await client.getActiveMissions()).missions?.map((m) => m.missionId)).toEqual(["m-good-1", "m-good-2"]);
+  });
+
   // Mission-progress bridge (issue #291) / mining preconditions (issue #188):
   // get_poi's deposit list. Shape citation: openapi-v2.json GetPOIResponse
   // branch 0's top-level resources[] (resource_id required, supported_power
