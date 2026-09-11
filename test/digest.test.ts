@@ -672,10 +672,10 @@ describe("buildDigest", () => {
       expect(priorityLineOf(buildDigest({ ...baseCtx, activeMissionsText: active }))!).toMatch(/BOARD missions/);
     });
 
-    test("ranks by what the reward does for the Goals, never by which expires soonest", () => {
+    test("ranks by what the reward does for the Goals, with the clock only as a tiebreak", () => {
       const line = priorityLineOf(buildDigest({ ...baseCtx, activeMissionsText: active }))!;
       expect(line).toMatch(/SHORT TIMER IS NOT VALUE/);
-      expect(line).toMatch(/never by which expires soonest/i);
+      expect(line).toMatch(/use the clock only to break a tie/i);
     });
 
     test("the Goals it points at are rendered ABOVE it, so 'the Goals above' is truthful", () => {

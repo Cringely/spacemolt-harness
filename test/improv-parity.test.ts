@@ -187,7 +187,7 @@ const SEAMS: Seam[] = [
   },
   {
     guard: "mission-priority ranking rule (#592: the digest's completion-priority line ranks active " +
-      "missions by what each reward does for the operator's Goals, never by which expires soonest -- " +
+      "missions by what each reward does for the operator's Goals, with the clock only as a tiebreak -- " +
       "it no longer calls an auto-assigned distress mission 'accepted' (missions.md:11,70) and no " +
       "longer generalises the board-mission '~10x an ore sale' rule (guides/miner.md:60) onto one)",
     // "A SHORT TIMER IS NOT VALUE" appears in digest.ts only inside this
@@ -197,7 +197,10 @@ const SEAMS: Seam[] = [
     // pattern -- the spec wraps prose at ~100 chars, so a phrase straddling
     // that wrap never matches a literal-space regex).
     anchors: [/A SHORT TIMER IS NOT VALUE/, /AUTO-ASSIGNS a rescue mission/,
-      /BOARD missions accepted for their reward/, /never by/i],
+      // /never by/i was vacuous: it already matched the unrelated #670 fuel
+      // rule ("never by percent of tank capacity") elsewhere in the spec, so it
+      // could not fail independently of the three anchors beside it.
+      /BOARD missions accepted for their reward/, /break a tie between missions of similar value/i],
   },
   {
     guard: "mission objective check + deposit cross-ref (#291: objective item vs current POI's deposit resource ids)",
