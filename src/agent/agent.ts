@@ -824,8 +824,37 @@ export class Agent {
     }
   }
 
+  // Instruction receipt (#696): the ACCEPTANCE half of the steer channel's
+  // observability, and the producer site for it. Before this, `instruct()` only
+  // pushed, and the sole instruction event in the whole channel was
+  // `instruction_done` -- emitted later, and only when the planner volunteers
+  // `instruction_done: true` on a plan of its own. So a correctly delivered
+  // steer stayed invisible in the feed until (and unless) the planner said so,
+  // and an operator watching the dashboard could not tell "never arrived" from
+  // "arrived, not acted on yet". That is the #696 symptom exactly: silence was
+  // read as failure because the channel had no received signal to show.
+  //
+  // Three states, three events now: accepted (here), consumed (the inbox shift
+  // in runOnce), reported-done (`instruction_done`). Both steer channels --
+  // the operator's browser POST and the scheduler's /steer -- funnel through
+  // server.ts's acceptInstruction into this one method, so one emit here
+  // covers both by construction.
+  //
+  // `queued` is the inbox depth INCLUDING this one. snapshot()/AgentView
+  // deliberately never exposes inbox contents, so this event is the only place
+  // a backed-up queue ("your steer is third in line") is visible at all.
+  //
+  // The emit must never be able to reject the instruction. This is the
+  // operator's only control lever over a live pilot and `instruct()` had no
+  // failure mode before; an event write that threw would 500 the POST after the
+  // push already succeeded, and an operator who resends on that 500 lands the
+  // steer twice. Push first, then emit inside the catch -- an unwritable event
+  // store loses the receipt, never the instruction.
   instruct(text: string): void {
     this.inbox.push(text);
+    try {
+      this.emit("instruction_received", { text, queued: this.inbox.length });
+    } catch { /* telemetry is not the control path -- see above */ }
   }
 
   // Standing-goal merge (#216): idempotent, so it runs at construction AND at
@@ -1531,7 +1560,27 @@ export class Agent {
           return; // do not replan this tick -- arming exists to stop the spend
         }
       }
-      if (instruction !== undefined) this.inbox.shift(); // now actually consumed
+      if (instruction !== undefined) {
+        this.inbox.shift(); // now actually consumed
+        // Consumption receipt (#696), the MIDDLE of the three instruction
+        // states, and deliberately not folded into `instruction_done`. This
+        // fires when the steer actually reaches the planner; that one fires
+        // only if the planner later volunteers that the errand is finished, on
+        // a plan of its own. With only the two ends, an operator seeing no
+        // `instruction_done` cannot tell a steer still sitting in the inbox
+        // behind a reflex/steward/no-progress early return from one the planner
+        // received and then ignored -- two different faults with two different
+        // fixes, and #696 was filed because the feed could distinguish neither.
+        //
+        // `wakeReason` separates them one step further: "instruction" means the
+        // steer drove its own arrival replan, any other reason means that
+        // arrival wake was suppressed and it rode a later heartbeat/blocked one.
+        // `queued` is the depth LEFT BEHIND after the shift, so a still-backed-up
+        // inbox is visible without exposing its contents.
+        this.emit("instruction_consumed", {
+          instruction, wakeReason: wake.reason, queued: this.inbox.length,
+        });
+      }
       await this.replan(wake, status, instruction, notifications);
       return;
     }
