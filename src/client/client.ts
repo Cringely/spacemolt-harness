@@ -67,6 +67,16 @@ export interface StatusSnapshot {
   // identity line.
   shipName?: string;
   shipClass?: string;
+  // Fitment table (issue #757): the hull's CLASS id -- "prospect", not the
+  // "Prospect" display name above. VERIFIED live in the same probe fixture
+  // (test/fixtures/spacemolt-probe-2026-07-12.json, get_status
+  // .structuredContent.ship.class_id). It went unparsed until now for want of
+  // a consumer; the consumer is the fitment guard, which needs it to ask the
+  // catalog whether this HULL integrates the module the action wants
+  // (spacemolt_catalog{type:"ships", id:<class_id>} -> ShipClass
+  // .inherent_capabilities, openapi-v2.json:25746). undefined = the ship block
+  // did not carry it, which the guard reads as UNKNOWN and fails open on.
+  shipClassId?: string;
   cargo?: CargoItem[]; // SM-6 fix: cargoUsed/cargoCapacity were numbers only --
                             // no item names, so the digest could show "19/50"
                             // but never "19x gold_ore", the thing that actually
@@ -106,6 +116,20 @@ export interface FittedModule {
   typeId: string;      // e.g. "mining_laser_i"
   type: string;        // module category, e.g. "mining"
   miningPower?: number; // stats.mining_power when present
+  // Fitment table (issues #757/#736): the module's WHOLE numeric stats block,
+  // not just the one stat the 2026-07-12 mine guard needed. The fitment
+  // requirements in src/registry/fitment.ts recognise a survey scanner by a
+  // positive survey_power, a tow rig by tow_speed_penalty and a cloak by
+  // cloak_strength -- all real fields of the catalog's Module schema
+  // (openapi-v2.json:20172), none of which had a parsed home here. Numeric
+  // entries only, same filter and the same reason as StatusSnapshot.stats: a
+  // nested or textual stat degrades that one entry instead of the parse.
+  // miningPower stays as its own field rather than being replaced by
+  // stats.mining_power -- it is the same number, and several consumers
+  // (totalMiningPower, miningEquipmentKey, the digest, the eval fixtures)
+  // already read it. undefined = the entry carried no stats block, NOT "no
+  // stats", same UNKNOWN convention as `modules` itself.
+  stats?: Record<string, number>;
   // Ship tool (issue #219): the slot this module occupies -- "weapon",
   // "defense" or "utility" (VERIFIED live: the miner's Mining Laser I reports
   // slot "utility", which is why the fit guard reads the game's own answer
@@ -436,6 +460,32 @@ export interface GameApi {
   // UNKNOWN (not a module id, no catalog entry, or a shape we can't read), and
   // the guard fails open on it. Optional like getMissions.
   getModuleSpec?(typeId: string): Promise<ModuleSpec | undefined>;
+  // Fitment table (issue #757): the capability types a HULL provides without
+  // any module fitted -- ShipClass.inherent_capabilities[].type, whose
+  // documented values include integrated_survey_scanner and integrated_cloak
+  // (openapi-v2.json:25746, the type list at :25755). Free query
+  // (spacemolt_catalog{type:"ships", id:<class_id>}, path at :53301; the
+  // response's own `items` description says ships map to ShipClass, :1559),
+  // fired only when a fitment requirement that HAS a documented hull
+  // substitute found no matching fitted module -- never on the satisfied path,
+  // and never at all for mine or tow.
+  //
+  // It exists because the alternative is a guard that contradicts its own
+  // source: the reference says survey_system works on "a survey scanner module
+  // OR a ship with an integrated survey scanner" (openapi-v2.json:47331), so
+  // blocking on the fitted set alone would refuse a legal action on an
+  // exploration hull, and get_status carries no capability list to rule that
+  // out (the live ship block has class_id and nothing else -- see
+  // StatusSnapshot.shipClassId).
+  //
+  // undefined = UNKNOWN (no such class, a thrown query, or a response with no
+  // inherent_capabilities key at all) and the guard fails open on it. An
+  // EMPTY array is knowledge, not absence: a hull that integrates nothing
+  // reports an empty capability list, and the requirement is then genuinely
+  // unmet. ASSUMED, not captured: this request/response pair has never been
+  // exercised live -- every hop is cited to the vendored spec above, which is
+  // why the failure mode is fail-open rather than a fabricated block.
+  getShipClassCapabilities?(classId: string): Promise<readonly string[] | undefined>;
   // Capability audit (Workflow A, 2026-07-19): dedicated ground truth for
   // cargo contents, backing the buy->install chain fix alongside
   // spacemolt_storage/withdraw (see actions.ts). Deliberately a SEPARATE call
@@ -511,7 +561,12 @@ const CargoItemSchema = z.object({
 const ModuleSchema = z.object({
   type: z.string(),
   type_id: z.string(),
-  stats: z.object({ mining_power: z.number() }).partial().optional(),
+  // Fitment table (issues #757/#736): the stats block is no longer narrowed to
+  // the one key the mine guard reads. Values are z.unknown() and filtered to
+  // numbers in the mapping below -- the same treatment player.stats gets, for
+  // the same reason: a stat that is not a number (or a shape surprise inside
+  // the block) must degrade that entry, never the whole get_status parse.
+  stats: z.record(z.string(), z.unknown()).optional(),
   // Ship tool (issue #219): slot + display name (see FittedModule).
   slot: z.string(),
   name: z.string(),
@@ -530,8 +585,9 @@ const StatusSchema = z.object({
     power_used: z.number(), power_capacity: z.number(),
     weapon_slots: z.number(), defense_slots: z.number(), utility_slots: z.number(),
     // Ship-details panel: identity (see StatusSnapshot.shipName/shipClass).
-    // .partial() above already makes both optional.
-    name: z.string(), class_name: z.string(),
+    // .partial() above already makes both optional. class_id joins them for
+    // the fitment guard's hull lookup (see StatusSnapshot.shipClassId).
+    name: z.string(), class_name: z.string(), class_id: z.string(),
   }).partial().default({}),
   player: z.object({
     credits: z.number(),
@@ -703,6 +759,18 @@ const PoiDepositsSchema = z.object({
   })).optional(),
 });
 
+// Fitment table (issues #757/#736): a fitted module's stats block, numeric
+// entries only (see FittedModule.stats). undefined in stays undefined out --
+// an absent block is UNKNOWN, never an empty stat set, because the fitment
+// requirements read a positive stat as proof a module IS the one the action
+// needs and must not read a parse gap as proof it is not.
+function numericStats(stats: Record<string, unknown> | undefined): Record<string, number> | undefined {
+  if (!stats) return undefined;
+  return Object.fromEntries(
+    Object.entries(stats).filter((e): e is [string, number] => typeof e[1] === "number"),
+  );
+}
+
 // Ship tool (issue #219): the grid, or nothing. All-or-nothing on the two hard
 // caps (cpu_capacity + power_capacity) deliberately: a fit with an unknown cap
 // is a fit the install_mod guard must NOT reason about -- a missing cap read as
@@ -738,6 +806,19 @@ const CatalogModuleSchema = z.object({
     cpu_usage: z.number(),
     power_usage: z.number(),
     slot: z.string().optional(),
+  }).partial()).default([]),
+});
+
+// Fitment table (issue #757): the catalog entry for one SHIP CLASS, trimmed to
+// the capability list (see GameApi.getShipClassCapabilities). Entries whose
+// `type` is missing are dropped rather than throwing, the same per-entry
+// defensiveness the module and cargo schemas use; the whole
+// inherent_capabilities key stays OPTIONAL so its absence maps to UNKNOWN
+// while a present-but-empty array stays the real "this hull integrates
+// nothing".
+const CatalogShipClassSchema = z.object({
+  items: z.array(z.object({
+    inherent_capabilities: z.array(z.object({ type: z.string() }).partial()).optional(),
   }).partial()).default([]),
 });
 
@@ -808,13 +889,17 @@ export class SpacemoltClient implements GameApi {
       // maps entry-by-entry. Missing type/type_id default to "" so the entry is
       // harmless to the mine guard (it matches neither the type nor the power
       // test) rather than throwing.
-      modules: s.modules?.map((m) => ({
-        typeId: m.type_id ?? "", type: m.type ?? "", miningPower: m.stats?.mining_power,
-        slot: m.slot, name: m.name,
-      })),
+      modules: s.modules?.map((m) => {
+        const stats = numericStats(m.stats);
+        return {
+          typeId: m.type_id ?? "", type: m.type ?? "", miningPower: stats?.mining_power,
+          stats, slot: m.slot, name: m.name,
+        };
+      }),
       fit: shipFit(s.ship),
       shipName: s.ship.name,
       shipClass: s.ship.class_name,
+      shipClassId: s.ship.class_id,
     };
   }
 
@@ -1049,6 +1134,19 @@ export class SpacemoltClient implements GameApi {
     const entry = parsed.data.items[0];
     if (entry?.cpu_usage === undefined || entry.power_usage === undefined) return undefined;
     return { cpuUsage: entry.cpu_usage, powerUsage: entry.power_usage, slot: entry.slot };
+  }
+
+  // Fitment table (issue #757): resolve a ship-class id to the capabilities its
+  // HULL provides with no module fitted. Same catalog route and same fail-open
+  // contract as getModuleSpec above -- see GameApi.getShipClassCapabilities for
+  // why an absent capability list is UNKNOWN and an empty one is not.
+  async getShipClassCapabilities(classId: string): Promise<readonly string[] | undefined> {
+    const res = await this.action(CATALOG_ACTION, { type: "ships", id: classId });
+    const parsed = CatalogShipClassSchema.safeParse(res.structuredContent ?? {});
+    if (!parsed.success) return undefined;
+    const capabilities = parsed.data.items[0]?.inherent_capabilities;
+    if (capabilities === undefined) return undefined; // UNKNOWN, never "none"
+    return capabilities.map((c) => c.type).filter((t): t is string => typeof t === "string");
   }
 
   // Capability audit (Workflow A, 2026-07-19): dedicated get_cargo fetch (see
