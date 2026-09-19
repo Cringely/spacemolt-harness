@@ -252,6 +252,47 @@ describe("pinned instructions leave goals only by explicit revoke (#817)", () =>
     expect(agent.snapshot().goals).toContain(MILESTONE);
   });
 
+  // Breakage caught (PR #113 council REVISE, finding 2): the MAX_GOALS (5)
+  // push-side cap evicted the OLDEST goal on overflow with no regard for pin
+  // status -- a pinned instruction sitting in the oldest slot was gone the
+  // moment enough newer steers needed the room, with no revoke and no
+  // receipt, after which it could never be shown, retired, or revoked again.
+  // Same shape PR #294 already ruled REVISE/HIGH for standing CONFIG goals
+  // (see goal-channel.test.ts); this is the pinned-instruction case.
+  test("MAX_GOALS unretired steers do not evict a pinned instruction", async () => {
+    const store = new Store(":memory:");
+    // Pre-seed the state a live session would reach after the pin landed and
+    // 4 unretired steers followed it: STANDING_INSTRUCTION in the oldest
+    // slot, already at the MAX_GOALS (5) cap. Seeded directly (rather than
+    // driven through 5 live replans) so this test isolates the eviction
+    // logic from the harness's own no-progress/thrash guards, which are
+    // orthogonal to #817 and would otherwise throttle a same-fingerprint
+    // replan run this long.
+    store.savePlan("a1", plan(1), [STANDING_INSTRUCTION, "steer 1", "steer 2", "steer 3", "steer 4"]);
+    store.appendEvent({
+      agentId: "a1", ts: 1, type: "instruction_pin_changed",
+      payload: { text: STANDING_INSTRUCTION, pinned: true },
+    });
+    const agent = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store,
+      planner: new MockPlanner([plan(2)]), config, now: () => 1_000_000,
+    });
+    expect(agent.snapshot().goals).toEqual([STANDING_INSTRUCTION, "steer 1", "steer 2", "steer 3", "steer 4"]);
+
+    // One more unretired steer overflows MAX_GOALS (5 -> 6) -- enough on its
+    // own, under the old age-only eviction, to push the pinned instruction
+    // (the oldest slot) straight out with no revoke and no receipt.
+    agent.instruct("steer 5");
+    await agent.runOnce();
+
+    // The pinned instruction survives, still in the oldest slot; the cap
+    // still holds (5 entries), and eviction fell on the oldest UNPINNED
+    // steer ("steer 1") instead.
+    expect(agent.snapshot().goals).toEqual(
+      [STANDING_INSTRUCTION, "steer 2", "steer 3", "steer 4", "steer 5"],
+    );
+  });
+
   // Breakage caught: without restart-safe persistence, a pin is only as
   // durable as the process -- the exact failure this issue is about, just
   // moved from instruction_done time to restart time.
@@ -268,6 +309,54 @@ describe("pinned instructions leave goals only by explicit revoke (#817)", () =>
     // Simulate a restart: a brand new Agent instance resuming the SAME
     // store, the same pattern goal-channel.test.ts uses for the standing
     // CONFIG goal's restart-safety test.
+    const planner2 = new MockPlanner([plan(2, { instruction_done: true })]);
+    const agent2 = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store, planner: planner2, config, now: () => 2_000_000,
+    });
+    await completePlan(agent2); // finishes the resumed step
+    await agent2.runOnce(); // plan_done -> replan reports instruction_done
+    expect(agent2.snapshot().goals).toContain(STANDING_INSTRUCTION);
+  });
+
+  // Breakage caught (PR #113 council REVISE, finding 1): the restart replay
+  // used to read the last MAX_PINNED_INSTRUCTIONS (20) instruction_pin_changed
+  // ROWS GLOBALLY, not per text. Pin, revoke, and re-pin each write a row for
+  // whichever text they target, so 20+ pin-change rows for OTHER texts push
+  // A's own pin row out of that window even though nothing ever un-pinned A --
+  // on restart A loads unpinned, and the very next instruction_done retires
+  // it. The fix replays through latestEventPerPayloadKey (one row per DISTINCT
+  // text, so `limit` bounds PINNED TEXTS, not events), which this reproduces
+  // directly: write more than 20 pin-change rows for texts other than A after
+  // A's own pin, then assert A still survives instruction_done past a restart.
+  test("a pin survives 20+ pin-change rows for OTHER texts after it (restart replay is per-text, not a global row window)", async () => {
+    const store = new Store(":memory:");
+    const agent1 = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store,
+      planner: new MockPlanner([plan(1)]), config, now: () => 1_000_000,
+    });
+    agent1.instruct(STANDING_INSTRUCTION, { standing: true });
+    await agent1.runOnce(); // lands in goals, A's pin event durably written first
+    expect(store.loadPlan("a1")!.goals).toContain(STANDING_INSTRUCTION);
+
+    // 25 pin-change rows, all AFTER A's own row and none of them ever
+    // mentioning A -- more than MAX_PINNED_INSTRUCTIONS (20). Churned across
+    // just 3 OTHER texts (pin/revoke/re-pin), matching the live shape the
+    // finding names: a handful of distinct steers, repeatedly pinned and
+    // unpinned. Kept to few DISTINCT texts on purpose -- MAX_PINNED_
+    // INSTRUCTIONS is also a real cap on distinct pinned texts (same as
+    // MAX_STATION_SIGHTINGS bounding distinct systems), so flooding 20+
+    // distinct OTHER texts would legitimately age A's text out under that
+    // cap -- a different thing from the bug this reproduces: a global window
+    // that evicts by ROW COUNT and can't tell one text's churn from another's.
+    for (let i = 0; i < 25; i++) {
+      store.appendEvent({
+        agentId: "a1", ts: 1_000_001 + i, type: "instruction_pin_changed",
+        payload: { text: `other steer ${i % 3}`, pinned: i % 2 === 0 },
+      });
+    }
+
+    // Simulate a restart: a brand new Agent instance resuming the SAME store,
+    // same pattern as the plain restart test above.
     const planner2 = new MockPlanner([plan(2, { instruction_done: true })]);
     const agent2 = new Agent({
       id: "a1", persona: "test miner", api: stubApi(), store, planner: planner2, config, now: () => 2_000_000,

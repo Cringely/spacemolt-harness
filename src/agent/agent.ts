@@ -761,18 +761,28 @@ export class Agent {
     }
     // Pinned operator instructions (issue #817): rebuild which current goal
     // texts are exempt from instruction_done retirement, from persisted
-    // pin-change events -- same restart-safety pattern as poi_incompatible/
-    // mine_sparse_learned above. ONE event type carries both directions
-    // (pinned true on instruct(standing:true), pinned false on an explicit
-    // revoke) so a straight chronological replay always lands on whichever
-    // action happened last for a given text -- recentEventsByType already
-    // returns oldest-first (it reverses its own id-DESC query), so a plain
-    // forward loop applies them in the order they happened. Tolerant loader,
-    // same discipline as above: a payload missing either field is SKIPPED,
-    // never a crash -- this is also the "predates the change" case (a store
-    // written before #817 has no instruction_pin_changed events at all, so
-    // this loop runs zero times and every goal loads ordinary-retirable).
-    for (const e of this.store.recentEventsByType(this.id, "instruction_pin_changed", MAX_PINNED_INSTRUCTIONS)) {
+    // pin-change events.
+    //
+    // latestEventPerPayloadKey, NOT recentEventsByType (post-merge finding,
+    // same F1 shape as the station_observed comment below): this memory can
+    // write SEVERAL rows per text -- pin, revoke, re-pin -- and every revoke
+    // (including a no-op one, before the fix below made those silent) wrote
+    // its own row too. A most-recent-N-ROWS window mixes those in with every
+    // OTHER text's pin/unpin traffic, so 20 unrelated pin-change rows (or 20
+    // no-op revokes) push a still-pinned text's row out of the window; on
+    // restart it loads unpinned and the next instruction_done retires it --
+    // the #817 incident again, reached at restart instead of at replan.
+    // Grouping on `text` gives each text exactly one row (its newest), so
+    // `limit` bounds distinct PINNED TEXTS and no amount of chatter about
+    // other texts can evict one. Rows arrive oldest-first (same as
+    // recentEventsByType), but with one row per text the loop below doesn't
+    // even need the ordering -- each text's single row already IS its
+    // current state. Tolerant loader, same discipline as above: a payload
+    // missing either field is SKIPPED, never a crash -- this is also the
+    // "predates the change" case (a store written before #817 has no
+    // instruction_pin_changed events at all, so this loop runs zero times
+    // and every goal loads ordinary-retirable).
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "instruction_pin_changed", "text", MAX_PINNED_INSTRUCTIONS)) {
       const p = e.payload as { text?: unknown; pinned?: unknown } | null;
       if (p && typeof p.text === "string" && typeof p.pinned === "boolean") {
         if (p.pinned) this.pinnedInstructions.add(p.text);
@@ -911,7 +921,18 @@ export class Agent {
       this.pinnedInstructions.add(text);
       if (this.pinnedInstructions.size > MAX_PINNED_INSTRUCTIONS) {
         const oldest = this.pinnedInstructions.values().next().value;
-        if (oldest !== undefined) this.pinnedInstructions.delete(oldest);
+        if (oldest !== undefined) {
+          this.pinnedInstructions.delete(oldest);
+          // #817 finding 1 (second trigger): this in-memory cap eviction used
+          // to drop `oldest` with no receipt, so live state (unpinned) and a
+          // restart replay of the persisted events (still pinned -- nothing
+          // ever said otherwise) could disagree. Write the same un-pin event
+          // an explicit revoke writes, so the constructor's replay lands on
+          // the same state this process is already in.
+          try {
+            this.emit("instruction_pin_changed", { text: oldest, pinned: false });
+          } catch { /* telemetry is not the control path -- see above */ }
+        }
       }
       try {
         this.emit("instruction_pin_changed", { text, pinned: true });
@@ -941,13 +962,23 @@ export class Agent {
   // Returns whether a matching goal was actually present, so the caller (the
   // /instruct route) can tell the operator "removed" from "already gone" --
   // see acceptInstruction's revoke branch in server.ts.
+  //
+  // #817 finding 1: the pinned:false event fires ONLY when `text` was
+  // actually pinned (Set.delete's own return value, no separate lookup).
+  // This used to emit unconditionally -- an explicit revoke of goal text
+  // that was never pinned (or already un-pinned) wrote a no-op row into the
+  // events table anyway, and that row counted against the restart replay's
+  // per-text window just like a real one. A no-op revoke is common (the
+  // route accepts any text, not just pinned ones), so a run of them could
+  // push a genuinely pinned text's row out before this fix.
   revokeInstruction(text: string): boolean {
     const had = !this.standingGoals.includes(text) && this.goals.includes(text);
     if (had) this.goals = this.goals.filter((g) => g !== text);
-    this.pinnedInstructions.delete(text);
-    try {
-      this.emit("instruction_pin_changed", { text, pinned: false });
-    } catch { /* telemetry is not the control path -- see instruct() */ }
+    if (this.pinnedInstructions.delete(text)) {
+      try {
+        this.emit("instruction_pin_changed", { text, pinned: false });
+      } catch { /* telemetry is not the control path -- see instruct() */ }
+    }
     return had;
   }
 
@@ -972,7 +1003,42 @@ export class Agent {
     const fresh = this.standingGoals.filter((g) => !this.goals.includes(g));
     if (!fresh.length) return;
     const keep = Math.max(0, MAX_GOALS - fresh.length);
-    this.goals = [...fresh.slice(0, MAX_GOALS), ...(keep ? this.goals.slice(-keep) : [])];
+    this.goals = [...fresh.slice(0, MAX_GOALS), ...(keep ? this.evictOldestUnpinned(this.goals, keep) : [])];
+  }
+
+  // #817 finding 2 (both MAX_GOALS eviction sites: the replan() push below and
+  // mergeStandingGoals above): trim `goals` down to `keep` entries without
+  // ever dropping a PINNED text the ordinary way. A pinned instruction leaves
+  // goals only through an explicit revoke (see revokeInstruction) -- before
+  // this helper existed, both sites evicted purely by AGE, so a pinned rule
+  // sitting in the oldest slot(s) was gone the moment enough newer steers (or
+  // a restored config goal) needed the room, with no revoke and no receipt.
+  // PR #294 already ruled the identical hole REVISE/HIGH for standing CONFIG
+  // goals; this is the same shape for pinned operator ones.
+  //
+  // Pass 1 evicts oldest-first, skipping any text still in pinnedInstructions
+  // -- ordinary steers age out exactly as before. Only if pinned entries
+  // ALONE still exceed `keep` (every unpinned steer already gone) does pass 2
+  // evict the oldest pinned survivor too -- but visibly: the same
+  // instruction_pin_changed{pinned:false} receipt an explicit revoke writes,
+  // so the constructor's restart replay can never disagree with what this
+  // process just did to live state (the same live/replayed divergence finding
+  // 1 fixed for the other two producers of this event).
+  private evictOldestUnpinned(goals: string[], keep: number): string[] {
+    const survivors = goals.slice();
+    for (let i = 0; survivors.length > keep && i < survivors.length; ) {
+      if (this.pinnedInstructions.has(survivors[i]!)) { i++; continue; }
+      survivors.splice(i, 1);
+    }
+    while (survivors.length > keep) {
+      const text = survivors.shift();
+      if (text !== undefined && this.pinnedInstructions.delete(text)) {
+        try {
+          this.emit("instruction_pin_changed", { text, pinned: false });
+        } catch { /* telemetry is not the control path -- see instruct() */ }
+      }
+    }
+    return survivors;
   }
 
   // --- Improv driver-mode seam (Batch B) -----------------------------------
@@ -2182,8 +2248,10 @@ export class Agent {
       // Cap the retained history (issue #186): evict oldest so stale steers
       // age out instead of accumulating forever. See MAX_GOALS for the value
       // receipt; the digest renders survivors newest-first with the paired
-      // supersession rule.
-      if (this.goals.length > MAX_GOALS) this.goals.splice(0, this.goals.length - MAX_GOALS);
+      // supersession rule. #817 finding 2: a PINNED text is exempt from this
+      // eviction -- see evictOldestUnpinned for why and the visible-eviction
+      // fallback when pinned entries alone fill the cap.
+      if (this.goals.length > MAX_GOALS) this.goals = this.evictOldestUnpinned(this.goals, MAX_GOALS);
     }
     // Re-merge the standing config goals AFTER the push-side eviction above:
     // if the cap just pushed a standing goal off the front, this restores it
