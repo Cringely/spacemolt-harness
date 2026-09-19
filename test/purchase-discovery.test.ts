@@ -140,6 +140,25 @@ describe("goal item candidates (#220)", () => {
     expect(candidates.map((i) => i.id)).toEqual(["fuel_cell", "survey_scanner_i", "survey_scanner_ii"]);
     expect(dropped).toEqual([]);
   });
+
+  // Breakage caught (#1047): an EARLIER goal's family spray must not truncate
+  // a LATER goal's exact hit out of the cap. Production had exactly this pair:
+  // "buy a Mining Laser" (5 tiers, no exact tier named) listed before "buy
+  // fuel_cell" (1 exact hit) filled all 3 candidate slots with laser tiers and
+  // silently dropped the exact fuel_cell match -- the cap doing what its own
+  // pre-#1047 comment said ("first-named goals win") with no exact-over-family
+  // precedence before slicing. Checked BOTH goal orders: the bug was order-
+  // dependent (an exact hit named first already worked, per #812 above), so a
+  // test using only the already-working order would not have caught it.
+  test("an exact hit is never truncated out by an earlier goal's 3+-tier family spray (#1047)", () => {
+    const familyFirst = goalPurchaseCandidates(["buy a Mining Laser", "buy fuel_cell"]);
+    expect(familyFirst.candidates.map((i) => i.id)).toEqual(["fuel_cell", "mining_laser_i", "mining_laser_ii"]);
+    expect(familyFirst.dropped).toEqual(["mining_laser_iii", "mining_laser_iv", "mining_laser_v"]);
+
+    const exactFirst = goalPurchaseCandidates(["buy fuel_cell", "buy a Mining Laser"]);
+    expect(exactFirst.candidates.map((i) => i.id)).toEqual(["fuel_cell", "mining_laser_i", "mining_laser_ii"]);
+    expect(exactFirst.dropped).toEqual(["mining_laser_iii", "mining_laser_iv", "mining_laser_v"]);
+  });
 });
 
 describe("Agent purchase discovery (#220)", () => {
