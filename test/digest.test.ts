@@ -42,6 +42,39 @@ describe("buildDigest", () => {
     expect(text).not.toContain("Operator instruction:");
   });
 
+  // #1106: the digest must describe what instruction_done ACTUALLY does for
+  // the standing instruction it just showed, and that differs by pin status
+  // (agent.ts's retirement guard exempts a pinned goal, #817). Before this,
+  // both branches rendered the identical "set instruction_done ... so it
+  // stops being shown" sentence -- true for an unpinned goal, false for a
+  // pinned one, since the guard is built to ignore that flag on a pinned
+  // text. Ablation: reverting digest.ts's pinned branch back to the shared
+  // sentence makes the pinned case assert the FALSE claim below and fails.
+  describe("standing instruction: pinned vs unpinned digest truth (#1106)", () => {
+    test("unpinned: tells the planner instruction_done clears the block", () => {
+      const text = buildDigest({ ...baseCtx, standingInstructionPinned: false });
+      expect(text).toContain(`STANDING OPERATOR INSTRUCTION (not yet done): "${baseCtx.standingInstruction}"`);
+      expect(text).toMatch(/set "instruction_done": true.*so it stops being shown/);
+      expect(text).not.toMatch(/will NOT remove this instruction/);
+    });
+
+    test("pinned: tells the planner instruction_done will NOT clear the block, only a revoke does", () => {
+      const text = buildDigest({ ...baseCtx, standingInstructionPinned: true });
+      expect(text).toContain(`STANDING OPERATOR INSTRUCTION (pinned -- standing until revoked): "${baseCtx.standingInstruction}"`);
+      expect(text).toMatch(/will NOT remove this instruction/);
+      expect(text).toMatch(/explicit revoke/);
+      // The false claim from the unpinned branch must not leak into the
+      // pinned one -- this is the exact bug #1106 reported.
+      expect(text).not.toMatch(/so it stops being shown/);
+    });
+
+    test("standingInstructionPinned undefined (every pre-#1106 caller) renders identically to explicit false", () => {
+      const withUndefined = buildDigest(baseCtx); // baseCtx has no standingInstructionPinned key
+      const withFalse = buildDigest({ ...baseCtx, standingInstructionPinned: false });
+      expect(withUndefined).toBe(withFalse);
+    });
+  });
+
   test("lists every registry mutation action by name (SSOT: derived from REGISTRY)", () => {
     const text = buildDigest(baseCtx);
     for (const name of ["travel", "jump", "dock", "undock", "mine", "sell", "buy", "refuel", "repair", "attack", "scan",

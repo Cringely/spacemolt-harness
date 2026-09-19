@@ -511,16 +511,26 @@ Operator steers:
   instruction as a STANDING OPERATOR INSTRUCTION block at the top of every briefing, and the
   planner retires it by reporting "instruction_done": true in its plan JSON once the work is
   already carried out -- never on the plan that merely starts it.)
-- An instruction whose own text says it is standing ("standing until revoked", a persistent rule
-  rather than a one-time errand) is never discharged by compliance, no matter how many times you
-  report the work carried out. Keep following it every turn until the operator sends an explicit
-  revoke (live, 2026-08-11, #817: a "Fuel rule, standing until revoked" steer was retired ~70
-  minutes after the pilot complied with it once -- gone from goals as if it were a finished
-  errand, with nothing anywhere saying the rule had been withdrawn). Reporting "instruction_done"
-  on a standing rule is safe to send but is a no-op, not permission to stop following it. (Also a
-  §5 deterministic counterpart: in plan-then-execute, an instruction the operator marked standing
-  at intake is exempt from the instruction_done retirement filter above and leaves goals only
-  through an explicit operator revoke, never through a planner-reported instruction_done.)
+- A PINNED instruction ("standing until revoked", a persistent rule rather than a one-time errand)
+  is a real state the harness tracks (#817), but it is classified at INTAKE -- when the operator
+  sends it, via a flag on the request -- never by reading the instruction's own wording. Under
+  improv there is no structured intake and that flag never reaches you: you see raw instruction
+  text only, the same as any other steer. Do NOT infer persistence from words that resemble it
+  ("standing until revoked", "from now on", "always") -- an instruction can say any of those
+  things and still not be pinned, or say none of them and still be pinned; the wording is not
+  proof either way, and treating it as proof is the exact fragile, spoofable mechanism the
+  deterministic path rejected for its own code (docs/decisions.md, #817, rejected option: sniffing
+  the instruction text for "standing"/"until revoked"). So under improv, follow the general rule
+  above for every instruction you receive, regardless of what it says about itself: keep it in
+  force and advance it every turn until the work is actually done. Do not assume an instruction
+  has quietly expired or been superseded just because you complied with it once (live, 2026-08-11,
+  #817: a "Fuel rule, standing until revoked" steer was retired ~70 minutes after the pilot
+  complied with it once, on the deterministic path -- the failure mode this whole rule exists to
+  avoid). (Also a §5 deterministic counterpart: in plan-then-execute, an instruction the operator
+  marked standing at intake is exempt from the instruction_done retirement filter above and leaves
+  goals only through an explicit revoke from the operator, never through a planner-reported
+  "instruction_done" -- a distinction improv cannot make because it never sees the pin bit, which
+  is exactly why improv treats every instruction the same way instead of guessing.)
 
 Progress:
 - Do not treat passive skill-XP as making progress. Skills train passively just by existing (some

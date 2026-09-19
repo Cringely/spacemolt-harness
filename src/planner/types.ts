@@ -123,6 +123,16 @@ export interface PlanContext {
   // and get no nag block). digest.ts renders it as a dedicated top-of-prompt
   // block on every replan until satisfied.
   standingInstruction?: string;
+  // Pin-aware digest truth (issue #1106): whether `standingInstruction` above
+  // is a PINNED ("standing until revoked") instruction, per Agent's
+  // pinnedInstructions set (#817) -- distinct from being merely the newest
+  // unsatisfied one. Without this, digest.ts had no way to tell the two apart
+  // and told the planner to set instruction_done "so it stops being shown"
+  // for EVERY standing instruction, including a pinned one the retirement
+  // guard (agent.ts) is built to never clear on that flag -- a truthful
+  // briefing needs the same fact the guard checks. Always false when
+  // standingInstruction is undefined (nothing to be pinned).
+  standingInstructionPinned?: boolean;
   surroundings?: Surroundings;
   cargo?: CargoManifest;
   previousGoal?: PreviousGoal;

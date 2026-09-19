@@ -335,6 +335,9 @@
   }
   .comms textarea:focus { outline: none; border-color: var(--cyan); }
   .comms textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+  .comms .standing-row { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; font-family: var(--mono); font-size: 0.64rem; color: var(--fg-dim); cursor: pointer; }
+  .comms .standing-row input { margin: 0; cursor: pointer; }
+  .comms .standing-row input:disabled { cursor: not-allowed; }
   .comms .send-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin-top: 0.5rem; }
   .comms .count { font-family: var(--mono); font-size: 0.6rem; color: var(--fg-dim); }
   .comms button {
@@ -532,6 +535,10 @@
     <div class="comms">
       <div class="head"><span>// Comms</span><span>&rarr; <b id="comms-target">&mdash;</b></span></div>
       <textarea id="instruct-text" maxlength="500" rows="2" placeholder="Send an instruction to the selected agent (max 500 chars)" disabled></textarea>
+      <label class="standing-row" for="instruct-standing">
+        <input type="checkbox" id="instruct-standing" disabled />
+        <span>Standing (stays active past instruction_done; only an explicit revoke clears it)</span>
+      </label>
       <div class="send-row">
         <span class="count" id="instruct-count">0 / 500</span>
         <button id="instruct-send" type="button" disabled>Transmit</button>
@@ -621,6 +628,7 @@
   const wsStateEl   = document.getElementById("ws-state");
   const wsDotEl     = document.getElementById("ws-dot");
   const textEl      = document.getElementById("instruct-text");
+  const standingEl  = document.getElementById("instruct-standing");
   const sendBtn     = document.getElementById("instruct-send");
   const errEl       = document.getElementById("instruct-err");
   const countEl     = document.getElementById("instruct-count");
@@ -1364,6 +1372,7 @@
     commsTarget.textContent = id;
     textEl.disabled = false;
     sendBtn.disabled = false;
+    if (standingEl) standingEl.disabled = false;
     renderFleet();
     renderMain();
     refreshUsage(id);
@@ -1380,6 +1389,22 @@
   function updateCount() { countEl.textContent = textEl.value.length + " / 500"; }
   textEl.addEventListener("input", updateCount);
 
+  // --- pure instruct-body helper (BEGIN; tested by test/instruct-body.test.ts) ---
+  // #1106: the standing checkbox is the only reachable way for an operator to
+  // set server.ts's InstructBodySchema `standing` field -- before this, no
+  // caller (dashboard, scripts/strategy-store.ts) ever sent it, so the #817
+  // pin mechanism agent.ts shipped had no way to be triggered and the
+  // incident it was built to stop (a "standing until revoked" steer retired
+  // ~70 minutes after one compliance) could still recur. `standing` is
+  // included ONLY when true -- an absent field must parse and behave exactly
+  // like every pre-#1106 caller (InstructBodySchema treats a missing/false
+  // `standing` identically). Pulled into a pure function, no DOM, so this
+  // exact shipped logic is unit-testable without a browser.
+  function buildInstructBody(text, standing) {
+    return standing ? { text: text, standing: true } : { text: text };
+  }
+  // --- pure instruct-body helper (END) ---
+
   sendBtn.addEventListener("click", async function () {
     errEl.textContent = "";
     const text = textEl.value.trim();
@@ -1389,10 +1414,13 @@
       await fetchJson("/api/agents/" + encodeURIComponent(selectedId) + "/instruct", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: text }),
+        body: JSON.stringify(buildInstructBody(text, !!(standingEl && standingEl.checked))),
       });
       textEl.value = "";
       updateCount();
+      // Reset per-send, not sticky -- an operator who forgets to uncheck it
+      // must not pin their NEXT one-shot errand by accident.
+      if (standingEl) standingEl.checked = false;
     } catch (e) {
       errEl.textContent = "failed to send: " + e.message;
     } finally {

@@ -224,6 +224,33 @@ describe("pinned instructions leave goals only by explicit revoke (#817)", () =>
     expect(agent.snapshot().goals).toContain(STANDING_INSTRUCTION);
   });
 
+  // #1106: PlanContext must carry the SAME pin fact the retirement guard
+  // (agent.ts:2731) checks, or the digest can brief a rule the guard is
+  // built to ignore. Ablation: reverting agent.ts's
+  // `standingInstructionPinned` assignment (or hardcoding it false) makes
+  // this fail on the pinned assertion while the unpinned twin below stays
+  // green -- proving the two cases actually diverge because of THIS field,
+  // not some other difference between them.
+  test("PlanContext.standingInstructionPinned is true for a pinned instruction, false for an ordinary one", async () => {
+    const { agent: pinnedAgent, planner: pinnedPlanner } = makeAgent([plan(1), plan(2)]);
+    pinnedAgent.instruct(STANDING_INSTRUCTION, { standing: true });
+    await pinnedAgent.runOnce(); // arrival -> replan 1
+    await completePlan(pinnedAgent);
+    await pinnedAgent.runOnce(); // replan 2: block shown
+    const pinnedCtx = pinnedPlanner.contexts[1]!;
+    expect(pinnedCtx.standingInstructionPinned).toBe(true);
+    expect(buildDigest(pinnedCtx)).toContain("pinned -- standing until revoked");
+
+    const { agent: ordinaryAgent, planner: ordinaryPlanner } = makeAgent([plan(1), plan(2)]);
+    ordinaryAgent.instruct(INSTRUCTION); // no {standing: true} -- ordinary one-shot steer
+    await ordinaryAgent.runOnce();
+    await completePlan(ordinaryAgent);
+    await ordinaryAgent.runOnce();
+    const ordinaryCtx = ordinaryPlanner.contexts[1]!;
+    expect(ordinaryCtx.standingInstructionPinned).toBe(false);
+    expect(buildDigest(ordinaryCtx)).toContain('STANDING OPERATOR INSTRUCTION (not yet done): "' + INSTRUCTION + '"');
+  });
+
   test("revokeInstruction removes a pinned instruction immediately and reports whether one was found", async () => {
     const { agent, planner } = makeAgent([plan(1), plan(2)]);
     agent.instruct(STANDING_INSTRUCTION, { standing: true });
