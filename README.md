@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-56).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-57).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -91,9 +91,9 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts + secrets DONE, both flying; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: development paused for 26 days after 2026-08-11 while the pilots kept flying (all three up 20 days on image `e4f0180`, zero `stranded` alerts in September) and the cron ceremonies kept filing issues nobody read (362 since 2026-08-01, 354 still open). PR #94 (M-56, 2026-09-06) is the consumer gate: new-issue filing now pauses whenever no machine-filed issue has been closed in 7 days. That is shipped capability, not proven behaviour; its scheduler deployment is in flight. Fleet-flight (#591) F1 and F2 are closed (M-52 to M-54); F3 (#534/#569/#592) and the 2026-08-11 findings (#812-#821) remain. See [docs/STATE.md](docs/STATE.md).
+Current work: PR #94 (M-56, 2026-09-06) merged the consumer gate (new-issue filing pauses when no machine-filed issue has closed in 7 days); its scheduler deployment status was last checked 2026-09-11. Fleet-flight (#591) F1, F2, and now F3 are closed (M-52 to M-57, the last F3 issue closing 2026-09-19); F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) and the 2026-08-11 findings (#812-#821) remain. A five-PR wave on 2026-09-19 (#112-#116) closed #534, #669, #458, #672, and #817, plus #681 and #569 by re-triage; deploy state as of that wave is unconfirmed, last known prod image `a892877` (2026-09-11). See [docs/STATE.md](docs/STATE.md).
 
-The major-milestone timeline (M-01..M-56) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-57) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 

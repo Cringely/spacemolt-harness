@@ -4,25 +4,33 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-11 (PR #98 merged and deployed. Five P1 pilot defects fixed, prod container on `fb67644`; the #94 consumer gate proven live in both directions; 50 backlog issues closed; PR #99 wires two harness gates git was never reading). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-19, doc-steward pass after the P1 wave (PRs #112-#116). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-11. Boot from this block + `docs/backlog.md` (GitHub Issues are SSOT) + `docs/game-reference/commands.md`. The 2026-08-11 block sits below under "Recent history"; nothing was dropped._
+_Refreshed 2026-09-19. Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`. This block last moved 2026-09-11 (PR #100); the batch-two cluster and today's wave both landed since without a refresh (batch two's own facts are preserved below under "Recent history, 2026-09-11", nothing dropped)._
 
-**FIVE P1 PILOT DEFECTS FIXED AND DEPLOYED.** PR #98 (`fb67644`) closed #815, #705, #813, #812, #670. An operator instruction now bypasses planner backoff; `self_destruct` needs an explicit config opt-in; steps after a `travel_to` stop being validated against the system the pilot has left; goal purchase matching resolves exact-vs-family per item; the wake check shares the reflex's fuel helper instead of a second percent-of-tank rule. Each guard ablated red before merge. Deployed, not merely merged: the prod container runs image `fb67644` as of 16:43Z, `RestartCount 0`.
+**TODAY, FIVE PRs MERGED, FLEET-FLIGHT GATE F3 CLOSED.** #114 (`746c4aa`) escalates a frozen Layer-4 no-progress arm to a held stop instead of a longer periodic retry, closing #534. #112 (`09972b7`) surfaces `item_not_available` memory to the planner before it repeats a doomed buy, closing #669. #115 (`45f8da1`) adds a value-aware buy price-sanity guard and teaches mine objectives not to buy, closing #458. #116 (`532acfc`) recognizes a proven-fuel destination as a fuel remedy, closing #672. #113 (`4eb1c64`) pins a standing operator instruction against `instruction_done`, closing #817; needed two fix rounds, the other four needed one. Re-triage separately closed #681 and #569 as already fixed by earlier merged work (an independent skeptic pass could not refute either). That finishes epic #591's F3 gate ("loops terminate": #534/#569/#571/#592 per the epic's 2026-07-28 comment), with all four issues now closed. F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) is next. Filed: #1106 (P2, #817 follow-ups: no caller sends `standing` yet, the digest still contradicts the guard, improv-spec drift) and #1107 (P3 umbrella, council findings below the must-fix floor).
 
-**THE CONSUMER GATE WORKS IN BOTH DIRECTIONS.** PR #94 gates filing on whether any `machine-filed` issue closed in the trailing 7 days. The host filing log now carries live proof of both states: `"outcome":"suppressed","consumer":"absent"` with one standing notice (#1031) while nobody was reading, then `"consumer":"present"` and filing resumed (#1042-#1044) once 50 issues closed. The queue reopens itself once someone starts reading it.
+**#107 AND #108 NOW CONFLICT WITH MAIN.** Both sat REVISE with a specified fix at the 09-11 close (#107/#553 needs one guard clause plus a test; #108/#1030 needs only an attribution correction). GitHub now reports both `CONFLICTING`; rebase before landing, the specified fixes are unchanged.
 
-**A HEADLINE FIGURE HERE WAS WRONG.** This block reported the scout's `sirius_observatory_station` hallucination as 1,250 occurrences. Measured: 30 since 08-04 (#1033). The 1,250 came from a substring match that also counted the known-ids list. It reached a merged STATE.md, which is the part worth remembering.
+**DEPLOY STATE UNKNOWN.** Last confirmed: prod on `a892877` (09-11 18:33Z). Nobody checked or redeployed today. Neither batch two (#99/#102/#103/#105/#109) nor any of today's five PRs are known deployed; every behavior claim above is offline-tested only.
 
-**TWO HARNESS GATES WERE INSTALLED AND NEVER RAN.** git reads hooks from exactly one directory; this repo points `core.hooksPath` at `.githooks` while the core harness installs into `.claude/hooks/`. The AI-attribution refusal and the identity sweep over the outgoing push range had no shim, so both sat in git unexecuted. PR #99 wires them and pins the silent-inertness modes in a test. Upstream cause filed as `agent-harness-core#136`.
+**PROCESS NOTE.** A fix-round agent pasted a verification command containing identifying tokens into a public comment on #116; caught by a post-wave scan of PR bodies/comments, reposted scrubbed, original deleted. See L-56 in `docs/wiki/engineering-lessons.md`.
 
-**BACKLOG: 457 open, 345 `machine-filed`** (was 374). 50 closed since 09-06. Seven stale steward PRs closed unmerged (#88, #89, #91, #96 here; #462, #463, #467 in the issues repo), all conflicting and all carrying figures now false. Remote branches are down to `main` plus the open PR.
+**BACKLOG:** see `docs/backlog.md`, regenerated this pass.
 
-**OPEN FROM TODAY.** #1045 (`keep_fuel_above_jumps` bypasses the undocked reserve raise), #1046, #1047 (goal-item truncation), #1048 (standup reads GitHub's `mergeable:UNKNOWN` as merge-ready, a fail-open), #1043 (D1 dispatch gate off 54 days, pipeline idle).
+**Next:** operator sign-off, then redeploy prod past `a892877`; rebase and land #107 and #108; then #1106 and #1053 (the `failures.ts:65` message-discarding producer, still the top structural item).
 
-**Next: batch two, seven pilot fixes, six of them touching `executor.ts`/`agent.ts`, so they run sequentially.** #757 and #736 share one cause (an action gated on a module the ship does not carry, with only `mine` guarded today), so build a single fitment-requirement table rather than a guard per action. Then #553, #706, #1030, #592, #696.
+## Recent history, 2026-09-11
+
+Moved out of `## NOW` on 2026-09-19 to fit the 500-word cap; last verified 2026-09-11, superseded only where the block above says so.
+
+**BATCH TWO: FIVE PRs MERGED, DEPLOYED AS OF 09-11 18:33Z (`a892877`).** PR #99 wired two harness gates git had never executed (`core.hooksPath` pointed at `.githooks`, the core harness installs into `.claude/hooks/`; upstream cause `agent-harness-core#136`). PR #102 (`a892877`) built one module-fitment table, closing #757 and #736. PR #103 (`842e0ef`) stopped the mission-priority digest line asserting commitment and value it could not establish, closing #592. PR #105 (`af7a8e1`) refuses a withdraw the personal locker cannot satisfy, closing #706. PR #109 (`c5aaf12`) gave the operator steer channel a received/consumed receipt, closing #696.
+
+**PREMISE WORK WAS THE SESSION'S REAL YIELD.** Four issues had their stated cause overturned by the agent fixing them: #592's "cap of 5" does not exist, #706's "mining_laser_iii" is 1 of 30 withdraws, #553 is 209 refusals not 28 with the re-fetch already happening and discarded, and #1030's asked-for remedy was already failing. The common producer is `failures.ts:65`, which keeps an error's leading code as the class and discards the message naming the cause. Filed as #1053.
+
+**A RECURRING DEFECT CLASS, six instances by 09-11.** A guard that cannot distinguish absent from empty from zero. #105 merged a per-row `.catch(null)` that would have refused every withdraw forever; #108 found both `StatusSnapshot` parsers collapsing a missing balance into 0; #107 carried the open one. All caught in review, none by a gate.
 
 ## Recent history, 2026-08-11
 
