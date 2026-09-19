@@ -84,14 +84,15 @@ Resources / survival:
 - The fuel-reserve floor (`fuel_reserve_pct`, 25% by default) is a SEPARATE, unconditional
   trip-wire from the jumps check above: it fires whenever your raw fuel percentage drops under
   the floor, and a good jumps-of-range reading must never talk you out of heading for fuel once
-  you're under it. Cargo mass raises fuel-per-jump on the NEXT leg (a route measured empty can
-  cost more once loaded), so a jumps reading from an earlier, lighter hop is not a guarantee for
-  this one. Live, #1045: a ship at 2.3% fuel with 3 measured jumps of range sat unrefueled nine
-  times under its 25% reserve line before the reserve became a required OR instead of a fallback
-  the jumps branch could silently discard. Treat both signals as OR'd, and let whichever one says
-  urgent win; a good jumps reading never cancels the other. (Also a §5 deterministic backstop:
-  in plan-then-execute the wake's low_fuel check ORs an independent reserve trip-wire alongside
-  the jumps/percent verdict, instead of folding it into the percent fallback, issue #1045.)
+  you're under it. A measured `fuel_per_jump` is a point-in-time reading that goes stale once
+  speed, scale, or fitment changes, and an intra-system leg scales with AU distance, so a reading
+  from an earlier hop is not a promise about this one. Live, #1045: a ship at 2.3% fuel with 3
+  measured jumps of range sat unrefueled nine times under its 25% reserve line before the
+  reserve became a required OR instead of a fallback the jumps branch could silently discard.
+  Treat both signals as OR'd, and let whichever one says urgent win; a good jumps reading never
+  cancels the other. (Also a §5 deterministic backstop: in plan-then-execute the wake's low_fuel
+  check ORs an independent reserve trip-wire alongside the jumps/percent verdict, instead of
+  folding it into the percent fallback, issue #1045.)
 - A `mine` action is refused once fuel reads below the reserve floor (25% of tank by default, or
   the jumps-remaining check above once this ship's fuel-per-jump has been measured). Mining itself
   burns no fuel, but a mining trip that never turns back does. Live 2026-07-25: a pilot mined to
