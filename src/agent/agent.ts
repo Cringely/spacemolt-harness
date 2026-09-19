@@ -20,7 +20,7 @@ import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
 import {
-  NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
+  NO_PROGRESS_REPLANS, UNRECOVERABLE_ARMS_THRESHOLD, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
   DOCK_NO_STATION_STREAK_THRESHOLD, DOCK_NO_STATION_CLASS, isDockDeadEnd, dockNoStationStreak,
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
 } from "./stall-monitor";
@@ -534,6 +534,12 @@ export class Agent {
   private lastFingerprint: string | undefined;
   private noProgressReplans = 0;
   private stuck = false;
+  // #534: consecutive Layer-4 ARMS (not replans) against the SAME frozen
+  // fingerprint, spanning across backoff-then-rearm cycles. Set to 1 on a
+  // fresh arm (this.stuck was false going in) and incremented on a re-arm
+  // (this.stuck was already true, meaning no differing fingerprint was
+  // observed in between -- see the arm branch and the "differs" branch below).
+  private consecutiveArmsSameFingerprint = 0;
 
   // SM-6 fix: executeOne()'s "plan_done" branch nulls this.plan out (see
   // below) before replan() ever runs for the resulting "plan_done" wake, so
@@ -1454,20 +1460,24 @@ export class Agent {
           // BLOCKED_THRASH_THRESHOLD identical-identity wakes to re-arm.
           this.consecutiveThrashWakes = 0;
           this.lastThrashKey = undefined;
-          // Hand off to the damper: the string-keyed thrash gate has armed, so
-          // it OWNS this thrash episode. Clear Layer 4's freeze counter so the
-          // two guards don't double-arm on the same identical-key thrash. With
-          // NO_PROGRESS_REPLANS (6) > BLOCKED_THRASH_THRESHOLD (3), the damper
-          // always reaches its threshold first on identical-key thrash and this
-          // reset keeps Layer 4 below 6; Layer 4 only arms when the damper
-          // CAN'T (a varying key that never builds a streak) -- its intended
-          // backstop role.
-          this.noProgressReplans = 0;
-          this.lastFingerprint = undefined;
+          // The consecutive thrash gate (Layer 2) arms and alerts here on its
+          // own terms -- backoff bookkeeping only, no planner call. It used to
+          // also clear Layer 4's freeze counter (noProgressReplans /
+          // lastFingerprint) on arm, on the theory that the two guards would
+          // otherwise double-arm on the same identical-key thrash. That
+          // handoff was itself a defect (review finding on #534): resetting
+          // on anything weaker than a genuinely differing game-state
+          // fingerprint (Layer 4's own fp-differs branch, below) silently
+          // zeroed noProgressReplans on every Layer 2 arm. Since
+          // BLOCKED_THRASH_THRESHOLD (3) is below NO_PROGRESS_REPLANS (6), a
+          // frozen episode that re-arms Layer 2 every 3 wakes never let
+          // noProgressReplans reach 6, so Layer 4's escalation
+          // (UNRECOVERABLE_ARMS_THRESHOLD) was unreachable for as long as
+          // Layer 2 kept arming. Layer 4 owns its own reset on real progress;
+          // Layer 2 no longer touches its counters.
           // #95: the consecutive gate owns this thrash episode, so floor the
           // windowed same-error breaker past these blocks -- it must not
-          // re-fire on repeats the gate already broke (mirrors the Layer 4
-          // reset just above).
+          // re-fire on repeats the gate already broke.
           this.repeatBreakFloorTs = this.now();
           return;
         }
@@ -1615,6 +1625,26 @@ export class Agent {
       // couldn't.
       if (status) {
         const fp = progressFingerprint(status, this.cursor.step);
+        // Escalation short-circuit (#534). Once the SAME frozen fingerprint
+        // has already armed Layer 4 UNRECOVERABLE_ARMS_THRESHOLD times
+        // running (set in the arm branch below), one more same-fingerprint
+        // confirmation is a foregone conclusion: extend backoff directly
+        // instead of spending a fresh NO_PROGRESS_REPLANS-replan burst to
+        // re-derive an answer already known. This is what actually stops the
+        // periodic arm-burn-arm cycle rather than just re-labeling it: the
+        // ONLY ways out are a differing fingerprint (this `fp ===` check
+        // fails, so control falls to the branches below) or an operator
+        // instruction, which this guard excludes so it always reaches
+        // replan() at the bottom, the same escape the backoff check above
+        // already grants it (#815).
+        if (
+          wake.reason !== "instruction" && this.stuck &&
+          this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD &&
+          fp === this.lastFingerprint
+        ) {
+          this.plannerBackoffUntil = this.now() + this.config.heartbeatMinutes * 60_000;
+          return; // do not replan -- already confirmed unrecoverable on this state
+        }
         if (fp === this.lastFingerprint) {
           this.noProgressReplans++;
         } else {
@@ -1623,22 +1653,50 @@ export class Agent {
           // -- the differing state is observed at the boundary just before the
           // replan that consumes it -- consolidated to a single locus so the
           // fingerprint isn't recomputed inside replan() (simplicity: one
-          // producer for the flag, not two).
+          // producer for the flag, not two). Also clears the escalation counter
+          // (#534): a genuinely different state means any future arm is a
+          // fresh episode, not a continuation of this one -- the reset
+          // condition the counter exists to enforce.
           this.noProgressReplans = 1;
           this.lastFingerprint = fp;
           this.stuck = false;
+          this.consecutiveArmsSameFingerprint = 0;
         }
         if (this.noProgressReplans >= NO_PROGRESS_REPLANS) {
+          // #534: count consecutive arms against the SAME fingerprint.
+          // `this.stuck` read here is still its PRE-arm value -- true means a
+          // re-arm (the fingerprint never differed since the last arm, so
+          // increment); false means a fresh arm (start at 1). Nothing weaker
+          // than the genuinely-differing-fingerprint branch above may reset
+          // this counter -- that IS the bug this counter fixes (see
+          // test/no-progress.test.ts's "does not reset on backoff expiry
+          // alone" ablation).
+          this.consecutiveArmsSameFingerprint = this.stuck ? this.consecutiveArmsSameFingerprint + 1 : 1;
           this.stuck = true;
           this.plannerBackoffUntil = this.now() + this.config.heartbeatMinutes * 60_000;
-          this.emit("operator_alert", {
-            class: "no_progress", fingerprint: fp, replans: this.noProgressReplans,
-          });
-          // Reset the run like the thrash gate does: after backoff expires, the
-          // next still-frozen wake starts counting again and needs another full
-          // NO_PROGRESS_REPLANS run to re-arm -- a damped duty cycle, not a
-          // permanent latch. `stuck` deliberately stays true across this reset;
-          // only a differing fingerprint (above) clears it.
+          if (this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD) {
+            // Distinct alert class (#534) so the dashboard and any downstream
+            // tooling can tell a STOPPED episode from a merely THROTTLED one.
+            // plannerHealth.stuck (already true either way, read via
+            // snapshot()) still drives the dashboard's existing Stuck banner
+            // unchanged -- this alert only adds the finer distinction.
+            this.emit("operator_alert", {
+              class: "unrecoverable", fingerprint: fp, replans: this.noProgressReplans,
+              arms: this.consecutiveArmsSameFingerprint,
+            });
+          } else {
+            this.emit("operator_alert", {
+              class: "no_progress", fingerprint: fp, replans: this.noProgressReplans,
+            });
+          }
+          // Reset the run like the thrash gate does: after backoff expires, a
+          // still-frozen wake below the escalation threshold starts counting
+          // again and needs another full NO_PROGRESS_REPLANS run to re-arm --
+          // a damped duty cycle. Past the threshold the short-circuit above
+          // takes over instead, so this reset stops mattering for spend
+          // (noProgressReplans just idles at 0). `stuck` deliberately stays
+          // true across this reset; only a differing fingerprint (above)
+          // clears it.
           this.noProgressReplans = 0;
           return; // do not replan this tick -- arming exists to stop the spend
         }
@@ -2323,6 +2381,11 @@ export class Agent {
         // fuel-acquisition briefing (exact catalog fuel ids + dock/buy/refuel).
         lowFuel: statusSnap ? this.fuelBelowReserve(statusSnap) : undefined,
         marketRows,
+        // Repeated-buy remainder (issue #669): the buy-side counterpart to
+        // marketRows above, read fresh every replan off the docked station
+        // (same status snapshot statusSummary is built from -- no extra
+        // fetch, no game call; see unavailableItemIdsAtStation).
+        unavailableItemsAtStation: this.unavailableItemIdsAtStation(statusSnap?.dockedAt),
         // Ship tool (issue #219): from the SAME snapshot as statusSummary --
         // get_status already carries the ship's CPU/power grid and fitted
         // modules, so the fit costs no extra query (see StatusSnapshot.fit).
@@ -2793,6 +2856,36 @@ export class Agent {
     const itemId = (params as { id?: unknown } | undefined)?.id;
     if (typeof itemId !== "string" || itemId.length === 0) return;
     this.emit("item_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
+  }
+
+  // Repeated-buy remainder (issue #669, skeptic finding upheld on the
+  // triage): the executor guard (executeTick's itemUnavailableAtStation,
+  // below) answers "is THIS ONE proposed buy step blocked" for the executor
+  // alone -- digest construction never received this memory at all, so the
+  // planner kept PROPOSING the same doomed buy even though every attempt was
+  // refused pre-call. This is the digest-side read: every item id proven
+  // item_not_available at `stationKey`, within the same
+  // repeatBlockWindowMinutes window the guard uses, for
+  // PlanContext.unavailableItemsAtStation (types.ts). Deliberately a
+  // SEPARATE query from the guard's rather than a shared helper: the guard's
+  // read matches one exact (station,item) pair and is pinned by three PR
+  // rounds of tests (#58, #73) this fix must not touch; this one enumerates a
+  // whole station's blocked set. Sharing one helper would need its own
+  // branching for "match one" vs "collect all", which is not simpler than
+  // two short reads of the same event stream.
+  private unavailableItemIdsAtStation(stationKey: string | null | undefined): string[] {
+    if (!stationKey) return [];
+    const windowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    const now = this.now();
+    const ids = new Set<string>();
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "item_unavailable", "key", ITEM_UNAVAILABLE_LOOKBACK)) {
+      const r = e.payload as { stationKey?: unknown; itemId?: unknown };
+      if (r.stationKey === stationKey && typeof r.itemId === "string" && (now - e.ts) < windowMs) {
+        ids.add(r.itemId);
+      }
+    }
+    return [...ids].sort();
   }
 
   // Clearing half of the memory above. `predicate` decides which open
