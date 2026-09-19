@@ -1366,6 +1366,7 @@
   }
 
   // ---- selection ----
+  // --- selectAgent (BEGIN; tested by test/select-agent.test.ts) ---
   function selectAgent(id) {
     if (!snapshots.has(id)) return;
     selectedId = id;
@@ -1373,12 +1374,19 @@
     textEl.disabled = false;
     sendBtn.disabled = false;
     if (standingEl) standingEl.disabled = false;
+    // #1106 fix round: the send handler resets standingEl.checked per-send
+    // ("Reset per-send, not sticky" below), but switching agents skipped this
+    // reset entirely -- a box left checked while agent A was selected stayed
+    // checked after clicking agent B, silently pinning the operator's next
+    // one-shot instruction to the wrong pilot. Same reset, both sites.
+    if (standingEl) standingEl.checked = false;
     renderFleet();
     renderMain();
     refreshUsage(id);
     refreshFailures(id);
     refreshMissions(id);
   }
+  // --- selectAgent (END) ---
 
   agentsEl.addEventListener("click", function (ev) {
     const btn = ev.target.closest ? ev.target.closest(".nav-item") : null;
