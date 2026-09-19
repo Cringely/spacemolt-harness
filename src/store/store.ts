@@ -169,18 +169,42 @@ export class Store {
    * absent or null are skipped, which is the same tolerance the callers' own
    * loaders apply. `key` is restricted to an identifier because it is
    * interpolated into the JSON path.
+   *
+   * `filter` (#817 round 2), when given, drops a key from the result unless
+   * its LATEST row's `filter.field` equals `filter.equals` -- applied to the
+   * already-grouped one-row-per-key result, before `limit`, not to raw rows
+   * before grouping. That ordering is the fix: without it, `limit` still
+   * bounds distinct keys regardless of their current field value, so a key
+   * whose latest row fails the filter (e.g. a pin that was revoked) still
+   * spends one of the `limit` slots and can push out a key that would pass.
+   * Grouping first and filtering the grouped result means a filtered-out key
+   * costs nothing -- churn on OTHER keys can never evict one that matches.
+   * `filter.field` is restricted the same way `key` is, for the same reason.
    */
   latestEventPerPayloadKey(
     agentId: string, type: string, key: string, limit: number,
+    filter?: { field: string; equals: boolean },
   ): Array<AgentEvent & { id: number }> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid payload key: ${key}`);
-    const rows = this.db
-      .query(`SELECT id, agent_id, ts, type, payload FROM events
+    const grouped = `SELECT id, agent_id, ts, type, payload FROM events
               WHERE agent_id = ? AND type = ? AND json_extract(payload, '$.${key}') IS NOT NULL
               GROUP BY json_extract(payload, '$.${key}')
-              HAVING id = MAX(id)
-              ORDER BY id DESC LIMIT ?`)
-      .all(agentId, type, limit) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
+              HAVING id = MAX(id)`;
+    const params: Array<string | number> = [agentId, type];
+    let sql: string;
+    if (filter) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(filter.field)) throw new Error(`invalid payload key: ${filter.field}`);
+      sql = `SELECT id, agent_id, ts, type, payload FROM (${grouped})
+             WHERE json_extract(payload, '$.${filter.field}') = ?
+             ORDER BY id DESC LIMIT ?`;
+      params.push(filter.equals ? 1 : 0, limit);
+    } else {
+      sql = `${grouped} ORDER BY id DESC LIMIT ?`;
+      params.push(limit);
+    }
+    const rows = this.db
+      .query(sql)
+      .all(...params) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
     return rows.reverse().map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
     }));

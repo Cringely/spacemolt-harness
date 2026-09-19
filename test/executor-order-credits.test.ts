@@ -9,13 +9,14 @@ import type { AgentEvent } from "../src/store/store";
 
 // Zero-balance order guard (issue #1030).
 //
-// The live incident, read from the prod event store 2026-09-11: the scout sat
-// at exactly 0 credits from 2026-09-06T22:46Z to 2026-09-08T05:20Z and spent
-// 105 ticks on `create_sell_order`, every one refused with
+// Two live incidents, read from the prod event store, weeks apart. The scout
+// sat at exactly 0 credits from 2026-09-06T22:46Z to 2026-09-08T05:20Z and
+// spent 105 ticks on `create_sell_order`, every one refused with
 //   "insufficient_credits: Insufficient credits for listing fee (minimum 1
 //    credit). 1x Platinum Ore not listed."
-// plus 124 more on `create_buy_order` ("Need 4444 credits to escrow (4400 bid
-// + 44 sales tax). You have 449."). 229 doomed calls, one cause.
+// Separately, 2026-08-22T19:43Z to 2026-09-03T04:10Z, the same scout put 124
+// blocks on `create_buy_order` at a nonzero balance (449-861cr); 4 of the 124
+// read "Need 4444 credits to escrow (4400 bid + 44 sales tax). You have 449."
 //
 // What each test below catches is named on it. What is deliberately NOT here:
 // a test that the reason strings are spelled a particular way (prose is tuned

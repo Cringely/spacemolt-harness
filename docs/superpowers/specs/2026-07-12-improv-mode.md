@@ -93,7 +93,16 @@ Resources / survival:
   auto-refuel reflex above, issue #526.)
 - If you've already committed to a remedy (heading to refuel), don't re-open that decision every
   tick just because the condition still reads bad. Commit until it completes or provably fails —
-  re-deciding a fix already under way is the classic token-burning livelock.
+  re-deciding a fix already under way is the classic token-burning livelock. Heading toward fuel
+  counts as committing even before you arrive: if you're traveling to a station you've PROVEN has
+  fuel (a past dock or a `get_poi`/`get_system` reading showed its tank above zero), that trip IS
+  the remedy — don't cancel it mid-flight just because the tank reads low right now, and don't
+  treat "traveling somewhere" in general as a remedy when you don't actually know the destination
+  has fuel (#672: a pilot's `[travel to Haven, dock]` plan sat frozen for hours because the
+  harness's OLDER logic only recognized an already-present refuel step, not a trip toward a proven
+  station — matching that mistake in your own reasoning, by assuming any destination has fuel,
+  recreates the OTHER failure this fixed, #526, a pilot that mined itself down to 2/130 fuel
+  because nothing was watching the tank during an unrelated trip).
 - When you need a station and none is here, go to one you have ALREADY DOCKED AT — your briefing
   lists them as confirmed station systems, and `travel_to{system_id}` reaches any of them from
   anywhere, no adjacency needed. Exploring for a station is the expensive mistake: live
@@ -189,11 +198,12 @@ Verify effects (never trust a success envelope):
   balance of zero it is refused outright and nothing gets listed — live, 2026-09-06/08, the scout
   sat at 0 credits for 31 hours and spent 105 ticks on exactly that refusal. A `create_buy_order`
   is worse: it **escrows the whole bid** up front, plus sales tax on top, so a bid your balance
-  cannot cover fails every time you re-post it (124 more ticks, same window, same pilot). With
-  little or nothing in the wallet, earn before you list: plain `sell` into a standing bid takes no
-  fee at all and is the ONLY one of the three that works at zero, and mining or finishing a mission
-  is how you refill. Reading the game's refusal and re-planning the identical call is what burned
-  those 229 ticks. (Also a §5 deterministic backstop: in plan-then-execute the executor refuses a
+  cannot cover fails every time you re-post it — a separate live window, 2026-08-22/09-03, put 124
+  more blocks on the same pilot at a nonzero balance (449-861cr). With little or nothing in the
+  wallet, earn before you list: plain `sell` into a standing bid takes no fee at all and is the
+  ONLY one of the three that works at zero, and mining or finishing a mission is how you refill.
+  Reading the game's refusal and re-planning the identical call is what burned both windows. (Also
+  a §5 deterministic backstop: in plan-then-execute the executor refuses a
   `create_sell_order` when the KNOWN balance is under the 1cr floor, and a `create_buy_order` when
   the KNOWN balance is under the bid — issue #1030. A balance it cannot read is never treated as
   zero, so the guard stays silent whenever `get_status` came back without one.)
@@ -354,6 +364,18 @@ Vocabulary / data shapes:
   plan-then-execute the harness runs this check for you every replan when docked — estimate_purchase
   is kind:"query", so a plan cannot contain it — and briefs the answer; in improv you call it yourself,
   and only while docked. Absence of an answer is never a "not purchasable" verdict, in either mode.)
+- A `buy` priced far above the item's catalog value is usually a trap, not a bargain. Before paying an
+  unusually high ask, sanity-check it: `view_market` or `estimate_purchase` both surface the price you'd
+  pay, and the item's catalog base_value is a rough floor for what it should cost. Two live incidents
+  already cost real credits ignoring this -- 100,500cr for 10 titanium_ore against a 25cr base (about
+  400x), and 220,108cr for 49 fuel_cell against a 43cr base (about 104x, 89% of a window's gross earnings)
+  (issue #458). A real premium buy happens too and is not a trap -- Mining Laser III at about 1.7x its
+  base was a legitimate purchase the same night -- so the line is roughly an order of magnitude over base,
+  not any premium at all. If a price looks absurd (tens or hundreds of times base), do not spot-buy it:
+  post `create_buy_order` naming your OWN price_each instead, a deliberate, cancelable bid rather than an
+  unreviewed spend. (Also a §5 deterministic backstop: in plan-then-execute the executor refuses a spot
+  `buy` whose estimate_purchase quote prices it over 8x the catalog base_value, on every iteration of
+  a repeat/until buy, and steers the same create_buy_order remedy -- issue #458.)
 - Item ids for buy/sell/jettison are exact snake_case CATALOG ids — copy them from listings or
   the catalog, never derive them from prose. Game prose pluralizes and paraphrases: refuel's own
   error says "Buy fuel cells" but the item id is `fuel_cell`, SINGULAR — 86/86 lifetime buy
@@ -420,8 +442,13 @@ Vocabulary / data shapes:
   a belt for titanium the belt does not contain). (Also a §5-adjacent deterministic producer in
   plan-then-execute: the harness fetches get_poi when a mineable POI is the location and an
   active mission still needs an item, and the digest renders the membership verdict — the
-  mission objective check, #291. Under improv you run the get_poi check yourself.) This deposit
-  check applies to MINING objectives only. A deliver_item/haul objective carries an item_id too but
+  mission objective check, #291. Under improv you run the get_poi check yourself.) Buying the item
+  does NOT count toward a mine-type objective's progress, however many units you end up holding
+  (live, 2026-07-20, #458: 12 titanium_ore bought for 120,600cr, then
+  complete_mission still blocked "titanium_ore 8/20 (mine 12 more)" 41 seconds later -- the purchase
+  changed nothing about the objective). (Also a §5-adjacent deterministic producer: the digest's
+  mission objective check states this in its own shortfall hint for a mine-type objective, #458.)
+  This deposit check applies to MINING objectives only. A deliver_item/haul objective carries an item_id too but
   is fulfilled by buying and hauling the goods to a target base, never by mining — do NOT read a
   belt's resource list as abandon-pressure on a delivery contract (#330). (Deterministic backstop:
   the digest's deposit check now skips the reference-enumerated non-mining objective types —
@@ -470,6 +497,16 @@ Operator steers:
   instruction as a STANDING OPERATOR INSTRUCTION block at the top of every briefing, and the
   planner retires it by reporting "instruction_done": true in its plan JSON once the work is
   already carried out -- never on the plan that merely starts it.)
+- An instruction whose own text says it is standing ("standing until revoked", a persistent rule
+  rather than a one-time errand) is never discharged by compliance, no matter how many times you
+  report the work carried out. Keep following it every turn until the operator sends an explicit
+  revoke (live, 2026-08-11, #817: a "Fuel rule, standing until revoked" steer was retired ~70
+  minutes after the pilot complied with it once -- gone from goals as if it were a finished
+  errand, with nothing anywhere saying the rule had been withdrawn). Reporting "instruction_done"
+  on a standing rule is safe to send but is a no-op, not permission to stop following it. (Also a
+  §5 deterministic counterpart: in plan-then-execute, an instruction the operator marked standing
+  at intake is exempt from the instruction_done retirement filter above and leaves goals only
+  through an explicit operator revoke, never through a planner-reported instruction_done.)
 
 Progress:
 - Do not treat passive skill-XP as making progress. Skills train passively just by existing (some
@@ -543,7 +580,13 @@ The model gets the wheel, not the safety switches:
   accrues per facility owned, every skill drips as you act), so an XP trickle is not evidence the
   pilot is getting anywhere. Deterministic backstop that stays on in both modes; the safety net
   under the paired §4 "Progress" briefing rule (a self-driving agent that mistakes an XP drip for
-  progress is still caught and re-steered by the harness).
+  progress is still caught and re-steered by the harness). The watcher's own alert-and-revert is
+  itself rate-limited, not a stop (#534): 3 consecutive re-arms on the IDENTICAL fingerprint (no
+  differing state observed in between) escalate to a held stop (`operator_alert{class:
+  "unrecoverable"}`) instead of repeating the alert-then-revert cycle forever. Only a differing
+  fingerprint or an operator instruction clears it, nothing weaker does, by design. Applies to
+  plan-then-execute's own no-progress detector (agent.ts's Layer 4) the same way regardless of
+  mode, so no separate improv briefing rule is needed for the escalation itself.
 - **Heartbeat liveness floor**: no resolved action in one window → force re-evaluate / revert.
 - **Progress heartbeat** (operator-facing, REPORT-ONLY): every `progress_heartbeat_minutes` the
   harness emits a `progress_heartbeat` event whose progressing/stalled verdict is the SAME
@@ -559,6 +602,20 @@ The model gets the wheel, not the safety switches:
   — they shape no pilot behavior, only observe — and they stay deterministic in both modes (a
   self-driving agent must not be able to fake or suppress the operator's view of what it actually
   gained and lost; the ledger is derived from game state outside the planner's control).
+- **Operator steer receipt** (operator-facing, REPORT-ONLY, #696): the harness stamps an event at
+  each state an operator instruction passes through — `instruction_received` when `Agent.instruct()`
+  accepts it onto the inbox (carrying the text and the queue depth behind it), `instruction_consumed`
+  when the tick loop hands it to the planner (carrying the depth left behind), and the
+  pre-existing `instruction_done` when the planner reports the errand carried out. Three states,
+  three events, because they fail differently: a steer stuck in the inbox and a steer the planner
+  read and ignored look identical from the outside, and #696 was filed precisely because the feed
+  could tell neither from "never arrived". Pure retain-and-expose over a transition the loop already
+  makes. No paired §4 briefing rule — it shapes no pilot behavior, only observes — and it stays
+  deterministic in both modes, for the same reason the ledger does: a self-driving agent must not be
+  able to suppress the operator's view of whether its own steering lever is reaching the model. Both
+  emits are wrapped so an unwritable event store costs the receipt and never the instruction;
+  the steer channel is the only control lever over a live pilot and it may not acquire a new way to
+  fail.
 - **Tick-pacing settle** (SM-12): a "Action pending. Resolves next tick" accept skips exactly one
   submission before the same repeated step re-fires, so the pilot paces to the tick instead of
   racing a still-resolving action into an "already in progress" block. Deterministic in both modes;

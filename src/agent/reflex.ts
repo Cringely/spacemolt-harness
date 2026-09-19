@@ -68,17 +68,22 @@ export interface ReflexFire {
  * was already correctly suppressed, but the reflex sat upstream of it,
  * unconditionally re-attempting the same doomed action.
  *
- * Issue #672 (the #543 livelock in a new costume): planRemediesFuel only
- * recognizes a plan that already carries an unexecuted refuel step. A plan
- * that instead TRAVELS toward fuel (no refuel step yet -- the destination
- * hasn't been reached) is invisible to it, so the reflex kept retrying a
- * terminal `station_fuel_empty` every tick while a correct
- * travel-then-refuel plan sat frozen at step 0. fuelGaveUpHere/hullGaveUpHere
- * are agent.ts's per-station backstop for exactly that gap (see
- * reflexGaveUpAt below): once a reflex attempt has failed with a TERMINAL
- * reason at the CURRENT station, withhold further attempts there -- retrying
- * a call the game has already told us cannot succeed here spends the tick
- * for nothing and blocks whatever the plan itself could do instead.
+ * Issue #672 (the #543 livelock in a new costume): planRemediesFuel
+ * originally recognized only a plan that already carries an unexecuted
+ * refuel step. A plan that instead TRAVELS toward fuel (no refuel step yet
+ * -- the destination hasn't been reached) was invisible to it, so the
+ * reflex kept retrying a terminal `station_fuel_empty` every tick while a
+ * correct travel-then-refuel plan sat frozen at step 0.
+ * fuelGaveUpHere/hullGaveUpHere are agent.ts's per-station backstop for a
+ * DIFFERENT slice of that gap (see reflexGaveUpAt below): once a reflex
+ * attempt has failed with a TERMINAL reason at the CURRENT (docked) station,
+ * withhold further attempts there -- retrying a call the game has already
+ * told us cannot succeed here spends the tick for nothing and blocks
+ * whatever the plan itself could do instead. planRemediesFuel itself
+ * (agent.ts) now also recognizes a plan traveling toward a DIFFERENT,
+ * destination-proven-to-have-fuel system, so the two mechanisms cover
+ * complementary ground: the give-up here protects the station the pilot is
+ * AT, the destination check there protects a station it is headed TO.
  */
 // Issue #526: the same jumps-vs-percent urgency check evaluateReflex uses
 // below (issue #670) also has to drive an UNDOCKED consumer -- the mine-step

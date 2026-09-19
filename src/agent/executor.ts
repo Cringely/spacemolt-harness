@@ -1,5 +1,5 @@
 import { isTransientServerFailure, SpacemoltError, type V2Result } from "../client/http";
-import type { FittedModule, GameApi, ModuleSpec, ShipFit, StatusSnapshot } from "../client/client";
+import type { FittedModule, GameApi, ModuleSpec, PurchaseCostEstimate, ShipFit, StatusSnapshot } from "../client/client";
 import type { Plan, PlanStep } from "../registry/plan";
 import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { PlanCursor } from "../store/store";
@@ -809,6 +809,105 @@ async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepR
   return guardBlock(reason);
 }
 
+// Buy price-sanity guard (issue #458). Invariant: a market `buy`'s per-unit
+// cost should never clear BUY_PRICE_SANITY_MULTIPLIER times the item's
+// catalog base_value without the plan naming a reason -- catalog.data.json is
+// the base_value SSOT (same floor JETTISON_VALUE_FLOOR above compares
+// against on the sell side). Three live incidents, all in this issue: 10
+// titanium_ore for 100,500cr against a 25cr base (~400x, resold minutes later
+// for 500cr), 12 more titanium_ore for 120,600cr at the same ~400x ask, and
+// 49 fuel_cell for 220,108cr against a 43cr base (~104x) -- the last one 89%
+// of the pilot's gross earnings for that window.
+//
+// N=8: the issue's own receipt, computed over the 89 priced rows of a
+// 482-row market capture (test/fixtures/mcp-probe-2026-07-12.json) --
+// median ask/base 1.38x, p75 2.54x, p90 3.25x, only 4/89 rows over 10x. The
+// issue recommends N between 5 and 10 ("blocks the whole pathological tail
+// while passing 93% of real asks"); 8 sits inside that band, clears the
+// night's live positive control (Mining Laser III at ~1.7x base) with 4.7x of
+// headroom, and still blocks every observed incident (104x-400x) by more than
+// an order of magnitude. Reference-tier, not proven live across the game: one
+// station, one day, per the issue's own caveat.
+//
+// Deliberately NOT the SELL-side guard the #112 net-profit rule comment
+// rejects ("catalog value does not BOUND revenue in a player-driven market"):
+// that rejection is about a value FLOOR on what a sale can earn, which a
+// motivated buyer can legitimately clear by any margin. This is a cost
+// CEILING on what the PILOT'S OWN buy pays, and the harm it blocks -- paying
+// 400x base for goods nobody is forcing you to buy -- is bounded by
+// definition; a plan with a real reason to overpay has create_buy_order
+// (bounded, cancelable escrow) as the deliberate alternative, named in the
+// blocked reason below.
+//
+// UNLIKE mineDepositBlock/withdrawStorageBlock, this fires on EVERY
+// submission of the step, not just the first (review finding on this same
+// issue: a repeat/until buy re-enters the same step and buys fresh units
+// deeper in the book, because the prior iteration already consumed the
+// cheaper levels -- 5 units at 30cr followed by a 10,050cr ask both pass a
+// once-only check the way `buy qty 5 repeat 3` did before this guard covered
+// every iteration). mineDepositBlock's iteration-0-only shape is safe there
+// because the game's own error reports mid-run depletion the moment it
+// happens (deposit_too_sparse); an overpriced buy has no such error --
+// it just succeeds -- so this guard has no analogous backstop to lean on
+// and must re-check the live quote on every iteration instead.
+//
+// FAIL OPEN on every rung, like every guard in this file (#94): an unparsed
+// step, no estimatePurchaseCost on the api, a thrown fetch, an unparsed
+// estimate, or no catalog value all skip the check -- never fabricate a
+// block from data we cannot read. The catalog value is the one thing this
+// guard treats as a KNOWN floor rather than an estimate: its absence, not
+// the live estimate's, is what makes this fail open instead of blocking on
+// nothing.
+//
+// Reason text MEASURED, not eyeballed, the same discipline
+// withdrawStorageBlock's comment explains: digest.ts clips a blocked wake's
+// detail at UNTRUSTED_TEXT_SNIPPET_LEN (200) on the NEXT replan, and a reason
+// that loses its remedy half to that clip teaches nothing. The item id
+// appears ONCE (inside the command, for the same reason withdraw's comment
+// gives), and the whole reason is asserted under 200 chars at the real
+// catalog's longest id (test/executor-buy-price-guard.test.ts).
+export const BUY_PRICE_SANITY_MULTIPLIER = 8;
+
+async function buyPriceGuard(api: GameApi, step: PlanStep): Promise<StepResult | null> {
+  const p = step.params as { id?: unknown; quantity?: unknown };
+  if (typeof p.id !== "string" || !p.id) return null;
+  if (typeof p.quantity !== "number" || p.quantity <= 0) return null;
+  if (!api.estimatePurchaseCost) return null; // no capability to consult -> fail open
+
+  const baseValue = catalog.itemValue(p.id);
+  if (baseValue === undefined) return null; // no catalog floor to compare against -> fail open
+
+  let estimate: PurchaseCostEstimate | undefined;
+  try {
+    estimate = await api.estimatePurchaseCost(p.id, p.quantity);
+  } catch {
+    return null; // query threw -> UNKNOWN cost -> fail open
+  }
+  if (estimate?.quantityRequested === undefined || estimate.totalCost === undefined) return null;
+  if (estimate.quantityRequested <= 0) return null;
+
+  // Partial-fill correction (review finding on this same issue): total_cost
+  // prices only the FILLED units (markets.md:18, a buy "fills until your
+  // quantity is filled or the book runs out"), so dividing by the REQUESTED
+  // quantity dilutes the per-unit price whenever the book runs out early --
+  // 5 units at 104x the catalog base read as under-ceiling once diluted
+  // across a 70-unit request. `unfilled` defaults to 0 (assume a full fill)
+  // when the field is absent, the same fail-open-per-field discipline every
+  // other rung here uses; a filled count of zero or less has no price signal
+  // to check, so it skips rather than dividing by a non-positive number.
+  const filled = estimate.quantityRequested - (estimate.unfilled ?? 0);
+  if (filled <= 0) return null;
+
+  const perUnit = estimate.totalCost / filled;
+  const ceiling = baseValue * BUY_PRICE_SANITY_MULTIPLIER;
+  if (perUnit <= ceiling) return null;
+
+  const reason =
+    `buy refused: ${Math.round(perUnit)}cr/unit over ${BUY_PRICE_SANITY_MULTIPLIER}x catalog value ${baseValue}cr. ` +
+    `Deliberate? create_buy_order{item_id=${p.id}, quantity=${p.quantity}, price_each=<price>} instead.`;
+  return guardBlock(reason);
+}
+
 // refuel target precondition guard (issue #595): target selects ship-to-ship
 // transfer mode, which the vendored reference requires the RECIPIENT be
 // present at the caller's own location for (fuel.md:235, a rescuer "must be
@@ -1171,12 +1270,14 @@ export const LISTING_FEE_MIN_CR = 1;
 // INVARIANT: a plan step must not be SUBMITTED when the pilot's KNOWN credit
 // balance is below the credits the game will provably require for it.
 //
-// The live incident: the scout sat at exactly 0 credits for 31 hours
-// (2026-09-06T22:46Z -> 2026-09-08T05:20Z) and spent 105 ticks on
-// `create_sell_order`, every one returning the same listing-fee refusal, plus
-// 124 more on `create_buy_order` ("Need 4444 credits to escrow (4400 bid + 44
-// sales tax). You have 449."). The planner read the game's own explanation
-// each time and re-planned the identical call.
+// Two live incidents, weeks apart. The scout sat at exactly 0 credits for 31
+// hours (2026-09-06T22:46Z -> 2026-09-08T05:20Z) and spent 105 ticks on
+// `create_sell_order`, every one returning the same listing-fee refusal.
+// Separately, 2026-08-22T19:43Z -> 2026-09-03T04:10Z, the same scout put 124
+// blocks on `create_buy_order` at a nonzero balance (449-861cr); four of them
+// read "Need 4444 credits to escrow (4400 bid + 44 sales tax). You have
+// 449." -- not the 0cr window above. The planner read the game's own
+// explanation each time and re-planned the identical call.
 //
 // WHY A LOWER BOUND AND NOT A FEE ESTIMATE. Neither branch guesses a number.
 //   - create_sell_order: the requirement is AT LEAST LISTING_FEE_MIN_CR,
@@ -1215,12 +1316,12 @@ export const LISTING_FEE_MIN_CR = 1;
 //
 // Receipt for the shape (simplicity rule 3): the rejected alternative was a
 // briefing rule alone. The planner already had the game's own refusal text,
-// naming the fee and the minimum, 229 times across the two actions, and
-// re-planned the same call anyway -- prose is what already failed here. The
-// second rejected alternative was a sell-side-only guard, which is the shape
-// the #757/#736 review threw out: the buy side has 125 live blocks of its own,
-// and a guard covering one of two identical cases is the thing that gets
-// rediscovered.
+// naming the fee and the minimum -- 105 times on the sell side, 124 more on
+// the buy side in its own window -- and re-planned the same call anyway each
+// time; prose is what already failed here. The second rejected alternative
+// was a sell-side-only guard, which is the shape the #757/#736 review threw
+// out: the buy side has 125 live blocks fleet-wide of its own, and a guard
+// covering one of two identical cases is the thing that gets rediscovered.
 //
 // This reopens decisions.md's 2026-08 deferral of a buy-side credit check,
 // whose stated reason was "defends against a failure not yet observed live".
@@ -1539,6 +1640,15 @@ export async function executeTick(
 
   if (step.action === "travel_to") {
     return travelToTick(api, plan, cursor, step.params.system_id, preStatus);
+  }
+
+  // Buy price-sanity guard (issue #458) -- see buyPriceGuard above. Fires on
+  // EVERY iteration of a repeat/until buy, not just the first: a later
+  // iteration buys deeper in the book at a fresh price the game hasn't
+  // reported a problem with, so only a per-iteration check catches it.
+  if (step.action === "buy") {
+    const block = await buyPriceGuard(api, step);
+    if (block) return block;
   }
 
   // Repeated-buy guard (issue #669). Invariant: a `buy` is not resubmitted for

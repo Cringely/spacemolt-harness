@@ -26,6 +26,25 @@ import { failureClass } from "../server/failures";
 // than the ~3 hours the live incident ran.
 export const NO_PROGRESS_REPLANS = 6;
 
+// Layer 4 escalation (issue #534). The arm branch in agent.ts's runOnce()
+// resets noProgressReplans to 0 but leaves `stuck` and the frozen
+// lastFingerprint in place, so an unchanging fingerprint re-arms the same
+// NO_PROGRESS_REPLANS-replan burst every backoff window forever -- a damped
+// duty cycle, never a stop. This is how many CONSECUTIVE arms against the
+// IDENTICAL fingerprint (no differing fingerprint in between -- see the
+// counter's reset condition at the arm site) it takes to escalate: emit a
+// distinct operator_alert{class:"unrecoverable"} and, from the next
+// same-fingerprint check onward, skip re-deriving "still frozen" through a
+// fresh NO_PROGRESS_REPLANS-replan burst (the answer is already known) and
+// extend backoff directly instead. 3 mirrors STRAND_FUEL_BLOCK_THRESHOLD /
+// DOCK_NO_STATION_STREAK_THRESHOLD's convention below -- enough arms (3 x 6 =
+// 18 corroborating replans) to rule out a slow-but-real multi-window
+// recovery, few enough that escalation still lands well inside the live
+// incident's observed 2h09m window. No measured data behind the exact value
+// -- picked conservatively per fix-quality.md's complexity-receipt rule, and
+// documented here as an assumption rather than a derived number.
+export const UNRECOVERABLE_ARMS_THRESHOLD = 3;
+
 // NOTE: the tunable defaults the stall path also uses -- the undocked fuel
 // reserve (fuelReservePct) and the long stuck window (stuckWindowMinutes) --
 // are NOT defined here. They live in config.ts's AGENT_DEFAULTS, the single
