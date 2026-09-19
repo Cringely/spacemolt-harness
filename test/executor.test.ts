@@ -508,6 +508,24 @@ describe("executeTick: complete_mission membership guard (#553)", () => {
     expect(calls).toContainEqual({ name: "complete_mission", params: { id: "M-77" } });
   });
 
+  test("a matched target's real shortfall is not skipped by an id-less row elsewhere in the list (#553 revise round B1)", async () => {
+    // Council REVISE regression: the id-less-row check used to run BEFORE
+    // `.find()`, so one row without `mission_id` anywhere in the active list
+    // skipped the #291 shortfall guard even for a DIFFERENT row that parsed
+    // cleanly, matched the target id, and had a real shortfall. Ablated by
+    // hoisting the check back above `.find()` -- this test then goes red
+    // (plan_done, complete_mission reaches the game).
+    const { api, calls } = apiWithActiveList([
+      { missionId: "m-target", objectives: [{ itemId: "titanium_ore", required: 20, current: 5, completed: false }] },
+      { missionId: undefined, objectives: [] },
+    ]);
+    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: "m-target" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toMatchObject({ kind: "blocked", guard: true });
+    expect((r as { reason: string }).reason).toContain("titanium_ore 5/20 (mine 15 more)");
+    expect(calls.some((c) => c.name === "complete_mission")).toBe(false);
+  });
+
   test("fails OPEN when the get_active_missions fetch throws", async () => {
     const { api, calls } = stubApi({ status: undocked });
     const withMissions: GameApi = {

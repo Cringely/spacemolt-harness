@@ -1262,28 +1262,17 @@ async function completeMissionBlock(api: GameApi, step: PlanStep): Promise<StepR
   // client.ts parses the whole array with ONE safeParse, never per-entry, and
   // test/client.test.ts ("one unparseable entry ... never a shortened list")
   // pins that for this consumer.
-  if (!Array.isArray(missions)) return null;
-  // Fifth unreadable state the container check above misses (#553 review,
-  // B1): an array that DID parse but whose entries carry no `mission_id`.
-  // V2GameState.missions.active.items has no `required` array and
-  // client.ts:295 mirrors it as `missionId?: string`, so a safeParse can
-  // succeed on entries this guard cannot match against anything -- the
-  // membership verdict below needs a `missionId` on every entry to mean
-  // anything. Without this check that state reads as "no entry has this id"
-  // for every id, refusing every complete_mission for the deployment's life
-  // while guard:true routes each one into `prevented`, hiding it from
-  // brokenCapabilities (failures.ts:217) -- the same signal the #553 fix
-  // itself relies on as outcome proof. UNKNOWN, not a verdict: fail open,
-  // same as the four states `missions: undefined` already collapses.
-  if (missions.some((m) => m.missionId === undefined)) return null;
-  const mission = missions.find((m) => m.missionId === id);
+  const mission = missions?.find((m) => m.missionId === id);
   if (!mission) {
-    // The id is planner output, so it is bounded before it reaches the prompt:
-    // sliced at 40 (the longest malformed id the store holds -- a 40-char
-    // hallucination, against the game's real 32) so the whole reason clears
-    // digest.ts's 200-char untrusted-text clip for any id at all. Pinned by
-    // "#553 refusal reason survives the digest's 200-char clip" in
-    // test/executor.test.ts, which measures it through clipUntrusted itself.
+    // Fifth unreadable state past the array check above (#553 review, B1):
+    // entries with no `mission_id` (client.ts:295, optional). Checked here,
+    // after `.find()`, so an id-less row elsewhere in the list can't skip
+    // the shortfall guard for a row that matched (#553 revise round B1).
+    // UNKNOWN, not a verdict: fail open, same as `missions: undefined`.
+    if (!missions || missions.some((m) => m.missionId === undefined)) return null;
+    // id is planner output: sliced at 40 (longest malformed id held, vs the
+    // real 32) so the reason clears digest.ts's 200-char clip. Pinned by
+    // "#553 refusal reason survives the digest's 200-char clip".
     const shown = id.slice(0, 40);
     return guardBlock(
       `complete_mission blocked: plan a different step -- mission ${shown} left your active list ` +
