@@ -25,7 +25,8 @@
 // script sets the same precedent). An absent/unreadable store exits 2 LOUDLY:
 // an empty store looks exactly like a healthy quiet pilot (L-21), never a skip.
 import { Database } from "bun:sqlite";
-import { failureTaxonomy, type FailureTaxonomy } from "../src/server/failures";
+import { failureTaxonomy, type FailureClassRow, type FailureTaxonomy } from "../src/server/failures";
+import { clipUntrusted } from "../src/planner/digest";
 import type { AgentEvent } from "../src/store/store";
 
 // Trend window for BOTH datasets. Charter Method §1 trends "over 48-72h"; 72h
@@ -52,7 +53,10 @@ export interface StrategyReviewDump {
   // reviewer without a second shape to keep in sync -- that is how #571/#581's
   // `failures.prevented` (blocks OUR pre-call guards authored, never sent to
   // the game) arrives here. The charter's Failure-mining section says what to
-  // do with it: a planner-quality signal, never a broken capability.
+  // do with it: a planner-quality signal, never a broken capability. Each
+  // row's `sample` is bound to UNTRUSTED_TEXT_SNIPPET_LEN before it reaches
+  // this shape (#1053, boundTaxonomySamples below) -- everything else about
+  // FailureTaxonomy's shape is untouched.
   failures: FailureTaxonomy;
 }
 
@@ -88,6 +92,24 @@ function toHeartbeatPoint(e: AgentEvent & { id: number }): HeartbeatPoint {
   };
 }
 
+// #1053: `FailureClassRow.sample` (src/server/failures.ts) carries the full,
+// unbounded raw game result text -- correct for its other consumer
+// (dashboard.html's hover tooltip, already HTML-escaped there) but this dump
+// is read directly as an LLM's input, the same untrusted-text seam
+// src/planner/digest.ts already guards for chat/wake-detail/listing text. Bound
+// it here, at the boundary where the taxonomy becomes LLM-facing, reusing
+// digest.ts's own clipUntrusted/UNTRUSTED_TEXT_SNIPPET_LEN rather than a new
+// cap -- exported from there for exactly this ("a second consumer bounds text
+// to the SAME length the prompt does rather than inventing its own number").
+// failures.ts itself is not touched: digest.ts imports failureClass FROM it,
+// so importing clipUntrusted back would cycle (the same reason executor.ts's
+// deposit-gift guard gives for not importing clipUntrusted there either).
+function boundTaxonomySamples(t: FailureTaxonomy): FailureTaxonomy {
+  const bound = (rows: FailureClassRow[]): FailureClassRow[] =>
+    rows.map((r) => (r.sample ? { ...r, sample: clipUntrusted(r.sample) } : r));
+  return { ...t, classes: bound(t.classes), prevented: bound(t.prevented) };
+}
+
 /**
  * Assemble the fixed dump dataset from a readable DB handle. Pure over the DB:
  * two indexed reads (idx_events_agent_ts), no writes -- safe on a readonly
@@ -106,7 +128,7 @@ export function readDump(
   const actionRows = db
     .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND type = 'action' ORDER BY id ASC")
     .all(agentId) as Row[];
-  const failures = failureTaxonomy(agentId, rowsToEvents(actionRows), now, windowHours);
+  const failures = boundTaxonomySamples(failureTaxonomy(agentId, rowsToEvents(actionRows), now, windowHours));
 
   // Method §1: progress_heartbeat inside the window only -- the trend, not the
   // lifetime series (a multi-day heartbeat history would bloat the payload the
