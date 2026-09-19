@@ -2240,6 +2240,11 @@ export class Agent {
         // fuel-acquisition briefing (exact catalog fuel ids + dock/buy/refuel).
         lowFuel: statusSnap ? this.fuelBelowReserve(statusSnap) : undefined,
         marketRows,
+        // Repeated-buy remainder (issue #669): the buy-side counterpart to
+        // marketRows above, read fresh every replan off the docked station
+        // (same status snapshot statusSummary is built from -- no extra
+        // fetch, no game call; see unavailableItemIdsAtStation).
+        unavailableItemsAtStation: this.unavailableItemIdsAtStation(statusSnap?.dockedAt),
         // Ship tool (issue #219): from the SAME snapshot as statusSummary --
         // get_status already carries the ship's CPU/power grid and fitted
         // modules, so the fit costs no extra query (see StatusSnapshot.fit).
@@ -2703,6 +2708,36 @@ export class Agent {
     const itemId = (params as { id?: unknown } | undefined)?.id;
     if (typeof itemId !== "string" || itemId.length === 0) return;
     this.emit("item_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
+  }
+
+  // Repeated-buy remainder (issue #669, skeptic finding upheld on the
+  // triage): the executor guard (executeTick's itemUnavailableAtStation,
+  // below) answers "is THIS ONE proposed buy step blocked" for the executor
+  // alone -- digest construction never received this memory at all, so the
+  // planner kept PROPOSING the same doomed buy even though every attempt was
+  // refused pre-call. This is the digest-side read: every item id proven
+  // item_not_available at `stationKey`, within the same
+  // repeatBlockWindowMinutes window the guard uses, for
+  // PlanContext.unavailableItemsAtStation (types.ts). Deliberately a
+  // SEPARATE query from the guard's rather than a shared helper: the guard's
+  // read matches one exact (station,item) pair and is pinned by three PR
+  // rounds of tests (#58, #73) this fix must not touch; this one enumerates a
+  // whole station's blocked set. Sharing one helper would need its own
+  // branching for "match one" vs "collect all", which is not simpler than
+  // two short reads of the same event stream.
+  private unavailableItemIdsAtStation(stationKey: string | null | undefined): string[] {
+    if (!stationKey) return [];
+    const windowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    const now = this.now();
+    const ids = new Set<string>();
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "item_unavailable", "key", ITEM_UNAVAILABLE_LOOKBACK)) {
+      const r = e.payload as { stationKey?: unknown; itemId?: unknown };
+      if (r.stationKey === stationKey && typeof r.itemId === "string" && (now - e.ts) < windowMs) {
+        ids.add(r.itemId);
+      }
+    }
+    return [...ids].sort();
   }
 
   // Clearing half of the memory above. `predicate` decides which open
