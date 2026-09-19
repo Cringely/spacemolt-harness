@@ -77,6 +77,29 @@ describe("evaluateWake", () => {
     expect(r).toEqual({ reason: "low_fuel", detail: "19/100" });
   });
 
+  test("issue #1045: a measured, well-ranged ship still wakes below its reserve floor", () => {
+    // The issue's own receipt: undocked, fuel 3/130 (2.3%), fuelReservePct 25,
+    // fuelPerJump 1, keepFuelAboveJumps 2 -- floor(3/1)=3 is not below 2, so
+    // fuelUrgent's jumps branch says "fine" nine times over on the 25% floor.
+    // Before this fix that verdict alone decided the outcome (null, no wake);
+    // reserveUrgent must now fire independently since 2.3% < 25%.
+    const low = { ...base.status!, fuel: 3, maxFuel: 130 };
+    const r = evaluateWake({
+      ...base, status: low, fuelReservePct: 25, fuelPerJump: 1, keepFuelAboveJumps: 2,
+    });
+    expect(r).toEqual({ reason: "low_fuel", detail: "3/130" });
+  });
+
+  test("issue #1045: docked stays on fuelPct even with a reserve configured", () => {
+    // reserveUrgent is gated !docked -- a docked ship below the reserve but
+    // above fuelPct must NOT wake (the reflex refuels it there instead).
+    const dockedLow = { ...base.status!, fuel: 3, maxFuel: 130, docked: true };
+    const r = evaluateWake({
+      ...base, status: dockedLow, fuelReservePct: 25, fuelPerJump: 1, keepFuelAboveJumps: 2,
+    });
+    expect(r).toBeNull();
+  });
+
   test("heartbeat fires after interval", () => {
     const r = evaluateWake({ ...base, now: base.lastPlanAt + base.heartbeatMs + 1 });
     expect(r).toEqual({ reason: "heartbeat" });
