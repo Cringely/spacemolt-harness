@@ -67,8 +67,9 @@ must not swallow its window.
      briefing line or deterministic guard);
    - BROKEN capabilities: an action failing at ~100% BOTH across its lifetime and inside the
      window (the buy action failed 86/86 for days before anyone looked). Read from #158's
-     deterministic taxonomy (GET /api/agents/:id/failures or the failureTaxonomy Docker import) —
-     deterministic aggregation, LLM interpretation only on the summary. Each entry carries two
+     deterministic taxonomy via the dump op named in Data discipline above (`bun
+     scripts/strategy-store.ts dump <agentId>`) — deterministic aggregation, LLM interpretation
+     only on the summary. Each entry carries two
      pairs: `attempts`/`failures` are LIFETIME, `windowAttempts`/`windowFailures` are the window
      the report is written against. **Quote the window pair when you claim a rate over the
      window, and label the lifetime pair as lifetime** — issue #491 published a lifetime 27/27
