@@ -963,12 +963,20 @@ const NON_MINING_OBJECTIVE_TYPES = new Set([
 // reading "mine N more" as "get N more by any means" can spend real credits
 // on a buy that leaves the shortfall exactly where it was. missions.md names
 // no mine-type objective explicitly (its taxonomy is delivery/visit/kill/
-// community, docs/game-reference/upstream/docs/missions.md:47-50); the
-// vocabulary for this type is entirely this live capture and the #291
-// fixture NON_MINING_OBJECTIVE_TYPES already cites above.
+// community, docs/game-reference/upstream/docs/missions.md:47-50). That #458
+// capture is proof of the digest's OWN rendered text ("mine 12 more"), not of
+// the game's raw type field -- the "mine" spelling is the #291 fixture's
+// guess at the reference shape, built with no live capture backing it
+// (client.test.ts:690). The one in-repo live capture of an active mining
+// objective (test/fixtures/eval-cases.json:2618, case prod-39932-notification,
+// harvested from the production pilot, event 39932, 2026-07-16, same Titanium
+// Extraction Contract) reads type "mine_resource", not "mine" -- so both
+// spellings are handled below, and a mine_resource objective is what
+// production actually sends.
 function shortfallHint(o: ActiveMissionObjective, need: number): string {
   switch (o.type) {
     case "mine":
+    case "mine_resource":
       return `mine ${need} more -- buying it does NOT advance this objective, only the mine action does`;
     case "deliver_item":
       return o.targetBase ? `deliver ${need} more to ${o.targetBase}` : `deliver ${need} more`;

@@ -351,8 +351,8 @@ Vocabulary / data shapes:
   not any premium at all. If a price looks absurd (tens or hundreds of times base), do not spot-buy it:
   post `create_buy_order` naming your OWN price_each instead, a deliberate, cancelable bid rather than an
   unreviewed spend. (Also a §5 deterministic backstop: in plan-then-execute the executor refuses a spot
-  `buy` whose estimate_purchase quote prices it over 8x the catalog base_value, on the step's first
-  submission only, and steers the same create_buy_order remedy -- issue #458.)
+  `buy` whose estimate_purchase quote prices it over 8x the catalog base_value, on every iteration of
+  a repeat/until buy, and steers the same create_buy_order remedy -- issue #458.)
 - Item ids for buy/sell/jettison are exact snake_case CATALOG ids — copy them from listings or
   the catalog, never derive them from prose. Game prose pluralizes and paraphrases: refuel's own
   error says "Buy fuel cells" but the item id is `fuel_cell`, SINGULAR — 86/86 lifetime buy

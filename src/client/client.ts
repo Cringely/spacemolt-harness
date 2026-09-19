@@ -335,7 +335,7 @@ export interface PoiDepositsResult {
 }
 
 // Buy price-sanity guard (issue #458): a typed subset of estimate_purchase's
-// structuredContent -- the three fields executor.ts's buyPriceGuard compares
+// structuredContent -- the fields executor.ts's buyPriceGuard compares
 // against the catalog's base_value. Every field optional: the
 // EstimatePurchaseResponse schema (docs/game-reference/upstream/
 // openapi-v2.json) marks all eleven of its fields required, but
@@ -343,10 +343,18 @@ export interface PoiDepositsResult {
 // captured live -- so this is REFERENCE-BACKED, NOT LIVE-VERIFIED, and a
 // shape surprise degrades one field to undefined rather than failing the
 // whole parse (fail-open, same discipline as PoiDepositsResult above).
+// `unfilled` (review finding on this same issue): markets.md:18 says a buy
+// "fills until your quantity is filled or the book runs out", and total_cost
+// prices only the FILLED units -- dividing it by quantityRequested dilutes
+// the per-unit price on any partial fill (5 units at 104x the catalog base
+// read as under-ceiling once diluted across a 70-unit request). No `item`
+// field: it was carried once as itemId but buyPriceGuard never reads it, and
+// no other caller does either (the item id it needs comes from the plan step
+// itself, not the estimate echoing it back).
 export interface PurchaseCostEstimate {
-  itemId?: string;
   quantityRequested?: number;
   totalCost?: number;
+  unfilled?: number;
 }
 
 // Capability-audit follow-up (2026-07-19): get_location's `location` object,
@@ -934,9 +942,9 @@ const StorageViewSchema = z.object({
 // degrades to undefined and the guard fails open on it rather than the whole
 // parse failing on one absent key.
 const EstimatePurchaseCostSchema = z.object({
-  item: z.string().optional(),
   quantity_requested: z.number().optional(),
   total_cost: z.number().optional(),
+  unfilled: z.number().optional(),
 });
 
 export class SpacemoltClient implements GameApi {
@@ -1331,9 +1339,9 @@ export class SpacemoltClient implements GameApi {
     const parsed = EstimatePurchaseCostSchema.safeParse(res.structuredContent ?? {});
     if (!parsed.success) return undefined;
     return {
-      itemId: parsed.data.item,
       quantityRequested: parsed.data.quantity_requested,
       totalCost: parsed.data.total_cost,
+      unfilled: parsed.data.unfilled,
     };
   }
 

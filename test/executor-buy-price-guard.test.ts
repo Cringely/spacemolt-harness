@@ -25,7 +25,7 @@ import type { Plan } from "../src/registry/plan";
 type Overrides = {
   totalCost?: number;
   quantityRequested?: number;
-  itemId?: string;
+  unfilled?: number;
   estimateThrows?: boolean;
   omitEstimateApi?: boolean;
 };
@@ -51,10 +51,10 @@ function stubApi(o: Overrides = {}) {
       async estimatePurchaseCost(): Promise<PurchaseCostEstimate | undefined> {
         estimateLookups++;
         if (o.estimateThrows) throw new Error("estimate unreadable");
-        if (o.totalCost === undefined && o.quantityRequested === undefined && o.itemId === undefined) {
+        if (o.totalCost === undefined && o.quantityRequested === undefined) {
           return undefined;
         }
-        return { itemId: o.itemId, quantityRequested: o.quantityRequested, totalCost: o.totalCost };
+        return { quantityRequested: o.quantityRequested, totalCost: o.totalCost, unfilled: o.unfilled };
       },
     }),
   };
@@ -68,7 +68,7 @@ describe("buy price-sanity guard: the incidents it exists to stop", () => {
   // The larger of the two titanium_ore incidents (#458): 12 units for
   // 120,600cr against a real 25cr catalog base -- 4,020cr/unit, ~161x.
   test("titanium_ore at ~161x catalog base is refused before the buy goes out", async () => {
-    const { api, calls, lookups } = stubApi({ itemId: "titanium_ore", quantityRequested: 12, totalCost: 120_600 });
+    const { api, calls, lookups } = stubApi({ quantityRequested: 12, totalCost: 120_600 });
     const r = await executeTick(api, buy("titanium_ore", 12), { step: 0, iteration: 0 });
     expect(r.kind).toBe("blocked");
     expect(r.kind === "blocked" && r.guard).toBe(true); // OUR refusal, not the game's
@@ -81,11 +81,36 @@ describe("buy price-sanity guard: the incidents it exists to stop", () => {
   // The fuel_cell incident (#458, "third incident"): 49 units for 220,108cr
   // against a real 43cr catalog base -- ~4,492cr/unit, ~104x.
   test("fuel_cell at ~104x catalog base is refused before the buy goes out", async () => {
-    const { api, calls } = stubApi({ itemId: "fuel_cell", quantityRequested: 49, totalCost: 220_108 });
+    const { api, calls } = stubApi({ quantityRequested: 49, totalCost: 220_108 });
     const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
     expect(r.kind).toBe("blocked");
     expect(r.kind === "blocked" && r.reason).toContain("over 8x catalog value 43cr");
     expect(calls.length).toBe(0);
+  });
+
+  // Partial-fill dilution (review finding on this same issue): the book only
+  // had 5 fuel_cell at ~104x base (4,492cr/unit) to sell, the plan requested
+  // 70, and estimate_purchase prices only what it can actually FILL --
+  // total_cost 22,460cr for 5 units, unfilled 65. Dividing by the REQUESTED
+  // 70 (22,460/70 = 321cr/unit) reads as under the 344cr ceiling and lets the
+  // buy through; dividing by the FILLED 5 (22,460/5 = 4,492cr/unit) catches
+  // the same ~104x ask the undiluted incident above catches.
+  test("a partial fill is priced by the FILLED quantity, not the requested one", async () => {
+    const { api, calls } = stubApi({ quantityRequested: 70, totalCost: 22_460, unfilled: 65 });
+    const r = await executeTick(api, buy("fuel_cell", 70), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    expect(r.kind === "blocked" && r.reason).toContain("over 8x catalog value 43cr");
+    expect(calls.length).toBe(0);
+  });
+
+  // Fail-open twin: unfilled >= the requested quantity means NOTHING filled,
+  // so there is no per-unit price to compare -- the guard must skip rather
+  // than divide by zero or a negative number.
+  test("nothing filled at all (unfilled === quantity_requested) is not price-checked", async () => {
+    const { api, lookups } = stubApi({ quantityRequested: 70, totalCost: 0, unfilled: 70 });
+    const r = await executeTick(api, buy("fuel_cell", 70), { step: 0, iteration: 0 });
+    expect(r.kind).not.toBe("blocked");
+    expect(lookups()).toBe(1); // the query ran; the guard just had nothing to check
   });
 });
 
@@ -94,7 +119,7 @@ describe("buy price-sanity guard: the buys it must let through", () => {
   // for 13,458cr against a real 7,900cr base -- ~1.7x, a legitimate premium
   // the guard must not treat as absurd.
   test("Mining Laser III at ~1.7x catalog base (the issue's positive control) is not refused", async () => {
-    const { api, calls } = stubApi({ itemId: "mining_laser_iii", quantityRequested: 1, totalCost: 13_458 });
+    const { api, calls } = stubApi({ quantityRequested: 1, totalCost: 13_458 });
     const r = await executeTick(api, buy("mining_laser_iii", 1), { step: 0, iteration: 0 });
     expect(r.kind).not.toBe("blocked");
     expect(calls.map((c) => c.name)).toEqual(["buy"]);
@@ -108,7 +133,7 @@ describe("buy price-sanity guard: the buys it must let through", () => {
   test("exactly BUY_PRICE_SANITY_MULTIPLIER x base_value is not refused", async () => {
     // titanium_ore base_value is 25cr; 8x25 = 200cr total for 1 unit.
     const ceiling = 25 * BUY_PRICE_SANITY_MULTIPLIER;
-    const { api } = stubApi({ itemId: "titanium_ore", quantityRequested: 1, totalCost: ceiling });
+    const { api } = stubApi({ quantityRequested: 1, totalCost: ceiling });
     const r = await executeTick(api, buy("titanium_ore", 1), { step: 0, iteration: 0 });
     expect(r.kind).not.toBe("blocked");
   });
@@ -117,7 +142,7 @@ describe("buy price-sanity guard: the buys it must let through", () => {
   // two tests together pin the exact threshold rather than "somewhere near 8x".
   test("one credit over BUY_PRICE_SANITY_MULTIPLIER x base_value is refused", async () => {
     const ceiling = 25 * BUY_PRICE_SANITY_MULTIPLIER;
-    const { api } = stubApi({ itemId: "titanium_ore", quantityRequested: 1, totalCost: ceiling + 1 });
+    const { api } = stubApi({ quantityRequested: 1, totalCost: ceiling + 1 });
     const r = await executeTick(api, buy("titanium_ore", 1), { step: 0, iteration: 0 });
     expect(r.kind).toBe("blocked");
   });
@@ -143,21 +168,26 @@ describe("buy price-sanity guard: the buys it must let through", () => {
   test("an item absent from the catalog is not price-checked at all", async () => {
     // "not_a_real_catalog_item" has no base_value entry, so there is no floor
     // to compare an estimate against -- the guard must not invent one.
-    const { api, lookups } = stubApi({ itemId: "not_a_real_catalog_item", quantityRequested: 1, totalCost: 999_999 });
+    const { api, lookups } = stubApi({ quantityRequested: 1, totalCost: 999_999 });
     const r = await executeTick(api, buy("not_a_real_catalog_item", 1), { step: 0, iteration: 0 });
     expect(r.kind).not.toBe("blocked");
     expect(lookups()).toBe(0); // never spent the query: the catalog check comes first
   });
 
-  // Rationing: a repeat submission of the SAME buy step (executeOne re-firing
-  // after e.g. a transient block) must not re-spend the free query -- only
-  // the step's first submission (cursor.iteration === 0) prices it, the same
-  // rationing mineDepositBlock's call site uses for `mine`.
-  test("a repeat submission of the same buy step does not re-query the estimate", async () => {
-    const { api, lookups } = stubApi({ itemId: "titanium_ore", quantityRequested: 12, totalCost: 120_600 });
+  // Reversed from the guard's original iteration-0-only shape (review finding
+  // on this same issue): a repeat/until buy re-enters this same step and buys
+  // fresh units deeper in the book, so a later iteration is priced and
+  // refused exactly like the first -- unlike mineDepositBlock's mine guard,
+  // which stays iteration-0-only because the game's own error reports
+  // mid-run depletion the moment it happens; an overpriced buy has no such
+  // error, it just succeeds.
+  test("a repeat iteration of the same buy step is priced and blocked like the first", async () => {
+    const { api, calls, lookups } = stubApi({ quantityRequested: 12, totalCost: 120_600 });
     const r = await executeTick(api, buy("titanium_ore", 12), { step: 0, iteration: 1 });
-    expect(r.kind).not.toBe("blocked"); // the guard never ran, so nothing refused it
-    expect(lookups()).toBe(0);
+    expect(r.kind).toBe("blocked");
+    expect(r.kind === "blocked" && r.reason).toContain("over 8x catalog value 25cr");
+    expect(calls.length).toBe(0); // the buy itself never reached the game
+    expect(lookups()).toBe(1); // the guard ran again on this iteration
   });
 });
 
@@ -177,7 +207,7 @@ describe("buy price-sanity guard: the refusal text the planner actually reads", 
       .reduce((a, b) => (b.length > a.length ? b : a), "");
     expect(longest.length).toBeGreaterThan(20); // the catalog really was read
 
-    const { api } = stubApi({ itemId: longest, quantityRequested: 999_999, totalCost: 999_999_000_000 });
+    const { api } = stubApi({ quantityRequested: 999_999, totalCost: 999_999_000_000 });
     const r = await executeTick(api, buy(longest, 999_999), { step: 0, iteration: 0 });
     expect(r.kind).toBe("blocked");
     const reason = r.kind === "blocked" ? r.reason : "";

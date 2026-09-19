@@ -414,6 +414,28 @@ describe("shortfall phrasing by objective type (issue #571)", () => {
     expect(digest).not.toContain("(mine ");
   });
 
+  // Issue #458 follow-up: the only in-repo LIVE capture of an active mining
+  // objective (test/fixtures/eval-cases.json:2618, case prod-39932-notification,
+  // production pilot, event 39932, 2026-07-16, Titanium Extraction Contract)
+  // reads type "mine_resource", not "mine". The #291 fixture's "mine" spelling
+  // has no live capture behind it (client.test.ts:690), so a real pilot's
+  // active objective falls through to `default` unless "mine_resource" is
+  // also handled -- this pins the buy-does-not-advance teaching actually
+  // renders for the shape production sends.
+  test("mine_resource objective (the live-observed type) gets the mine hint and the buy-does-not-advance warning", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-titanium-live",
+        objectives: [{ type: "mine_resource", itemId: "titanium_ore", required: 20, current: 8, completed: false }],
+      }],
+    });
+    expect(digest).toContain(
+      "titanium_ore 8/20 (mine 12 more -- buying it does NOT advance this objective, only the mine action does)",
+    );
+    expect(digest).not.toContain("not recognized, verify manually");
+  });
+
   test("deliver_item objective says deliver and names the destination base", () => {
     const digest = buildDigest({
       ...baseCtx,

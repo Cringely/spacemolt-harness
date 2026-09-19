@@ -839,10 +839,17 @@ async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepR
 // (bounded, cancelable escrow) as the deliberate alternative, named in the
 // blocked reason below.
 //
-// Same precondition-guard shape as mineDepositBlock/withdrawStorageBlock: one
-// free estimate_purchase query, fired by the caller only on the step's FIRST
-// submission (cursor.iteration === 0) -- a repeat tick of the same buy step
-// would just re-ask a question this guard already answered once.
+// UNLIKE mineDepositBlock/withdrawStorageBlock, this fires on EVERY
+// submission of the step, not just the first (review finding on this same
+// issue: a repeat/until buy re-enters the same step and buys fresh units
+// deeper in the book, because the prior iteration already consumed the
+// cheaper levels -- 5 units at 30cr followed by a 10,050cr ask both pass a
+// once-only check the way `buy qty 5 repeat 3` did before this guard covered
+// every iteration). mineDepositBlock's iteration-0-only shape is safe there
+// because the game's own error reports mid-run depletion the moment it
+// happens (deposit_too_sparse); an overpriced buy has no such error --
+// it just succeeds -- so this guard has no analogous backstop to lean on
+// and must re-check the live quote on every iteration instead.
 //
 // FAIL OPEN on every rung, like every guard in this file (#94): an unparsed
 // step, no estimatePurchaseCost on the api, a thrown fetch, an unparsed
@@ -879,7 +886,19 @@ async function buyPriceGuard(api: GameApi, step: PlanStep): Promise<StepResult |
   if (estimate?.quantityRequested === undefined || estimate.totalCost === undefined) return null;
   if (estimate.quantityRequested <= 0) return null;
 
-  const perUnit = estimate.totalCost / estimate.quantityRequested;
+  // Partial-fill correction (review finding on this same issue): total_cost
+  // prices only the FILLED units (markets.md:18, a buy "fills until your
+  // quantity is filled or the book runs out"), so dividing by the REQUESTED
+  // quantity dilutes the per-unit price whenever the book runs out early --
+  // 5 units at 104x the catalog base read as under-ceiling once diluted
+  // across a 70-unit request. `unfilled` defaults to 0 (assume a full fill)
+  // when the field is absent, the same fail-open-per-field discipline every
+  // other rung here uses; a filled count of zero or less has no price signal
+  // to check, so it skips rather than dividing by a non-positive number.
+  const filled = estimate.quantityRequested - (estimate.unfilled ?? 0);
+  if (filled <= 0) return null;
+
+  const perUnit = estimate.totalCost / filled;
   const ceiling = baseValue * BUY_PRICE_SANITY_MULTIPLIER;
   if (perUnit <= ceiling) return null;
 
@@ -1511,10 +1530,11 @@ export async function executeTick(
     return travelToTick(api, plan, cursor, step.params.system_id, preStatus);
   }
 
-  // Buy price-sanity guard (issue #458) -- see buyPriceGuard above. Only on
-  // the step's first submission: one free estimate_purchase per buy STEP, not
-  // per repeat tick, same rationing mineDepositBlock's call site above uses.
-  if (step.action === "buy" && cursor.iteration === 0) {
+  // Buy price-sanity guard (issue #458) -- see buyPriceGuard above. Fires on
+  // EVERY iteration of a repeat/until buy, not just the first: a later
+  // iteration buys deeper in the book at a fresh price the game hasn't
+  // reported a problem with, so only a per-iteration check catches it.
+  if (step.action === "buy") {
     const block = await buyPriceGuard(api, step);
     if (block) return block;
   }
