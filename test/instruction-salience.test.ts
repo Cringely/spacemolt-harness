@@ -182,3 +182,118 @@ describe("instruction salience across replans (#355)", () => {
     expect(PlanSchema.parse({ ...plan(1), instruction_done: true }).instruction_done).toBe(true);
   });
 });
+
+// Pinned ("standing until revoked") instructions (issue #817). The live
+// incident: a fuel rule sent as "standing until revoked" was retired ~70
+// minutes after the pilot complied with it once -- instruction_done treated
+// a persistent rule exactly like a one-shot errand. Invariant: an instruction
+// the operator explicitly marks standing at intake must leave goals ONLY
+// through an explicit revoke, never solely because the planner reports
+// instruction_done. Default is unpinned (false) -- every existing caller that
+// sends only `text` keeps today's one-shot-retirable behavior untouched.
+const STANDING_INSTRUCTION =
+  "Fuel rule, standing until revoked: refuel at stations, never buy fuel_cell on the market";
+
+describe("pinned instructions leave goals only by explicit revoke (#817)", () => {
+  // Breakage caught: the live incident itself, reproduced offline -- a
+  // PINNED instruction must survive not just one earned instruction_done but
+  // every subsequent one too, and keep being re-raised each cycle exactly
+  // like the "not yet done" case already does for an ordinary instruction.
+  test("instruction_done never retires a pinned instruction, however many times it's reported done", async () => {
+    const { agent, store, planner } = makeAgent([
+      plan(1), plan(2, { instruction_done: true }), plan(3, { instruction_done: true }),
+    ]);
+    agent.instruct(STANDING_INSTRUCTION, { standing: true });
+    await agent.runOnce(); // arrival -> replan 1
+    await completePlan(agent);
+    await agent.runOnce(); // replan 2: block shown, planner reports done (earned, but pinned)
+    expect(planner.contexts[1]!.standingInstruction).toBe(STANDING_INSTRUCTION);
+    expect(agent.snapshot().goals).toContain(STANDING_INSTRUCTION);
+    // No instruction_done event: the guard's whole body, including the
+    // emit, is skipped for a pinned instruction -- same fail-open shape as
+    // the existing "unearned flag" case above, just triggered by pin status
+    // instead of by wake timing.
+    expect(store.recentEventsByType("a1", "instruction_done", 5)).toHaveLength(0);
+    expect(store.loadPlan("a1")!.goals).toContain(STANDING_INSTRUCTION);
+
+    await completePlan(agent);
+    await agent.runOnce(); // replan 3: reported done AGAIN -- still refused
+    const ctx3 = planner.contexts[2]!;
+    expect(ctx3.standingInstruction).toBe(STANDING_INSTRUCTION);
+    expect(buildDigest(ctx3)).toContain(BLOCK);
+    expect(agent.snapshot().goals).toContain(STANDING_INSTRUCTION);
+  });
+
+  test("revokeInstruction removes a pinned instruction immediately and reports whether one was found", async () => {
+    const { agent, planner } = makeAgent([plan(1), plan(2)]);
+    agent.instruct(STANDING_INSTRUCTION, { standing: true });
+    await agent.runOnce(); // arrival -> lands in goals
+    expect(agent.snapshot().goals).toContain(STANDING_INSTRUCTION);
+
+    expect(agent.revokeInstruction(STANDING_INSTRUCTION)).toBe(true);
+    // Synchronous: visible in snapshot() immediately, no replan round-trip.
+    expect(agent.snapshot().goals).not.toContain(STANDING_INSTRUCTION);
+    // Idempotent: revoking an already-absent text finds nothing to remove.
+    expect(agent.revokeInstruction(STANDING_INSTRUCTION)).toBe(false);
+
+    await completePlan(agent);
+    await agent.runOnce(); // nothing standing left -- the revoke did the work, not a planner report
+    expect(planner.contexts[1]!.standingInstruction).toBeUndefined();
+  });
+
+  test("revokeInstruction is a no-op on a standing CONFIG goal (agents.yaml, #216)", () => {
+    const MILESTONE = "Milestone: buy and fit a Mining Laser III";
+    const { agent } = makeAgent([plan(1)], [MILESTONE]);
+    // Config goals are not operator steers, and mergeStandingGoals would
+    // restore one next replan even if this DID remove it -- the point here
+    // is that revoke refuses outright rather than producing a one-replan
+    // flicker.
+    expect(agent.revokeInstruction(MILESTONE)).toBe(false);
+    expect(agent.snapshot().goals).toContain(MILESTONE);
+  });
+
+  // Breakage caught: without restart-safe persistence, a pin is only as
+  // durable as the process -- the exact failure this issue is about, just
+  // moved from instruction_done time to restart time.
+  test("a pin survives a restart: a fresh Agent on the same store still refuses to retire it", async () => {
+    const store = new Store(":memory:");
+    const agent1 = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store,
+      planner: new MockPlanner([plan(1)]), config, now: () => 1_000_000,
+    });
+    agent1.instruct(STANDING_INSTRUCTION, { standing: true });
+    await agent1.runOnce(); // lands in goals, pin event durably written
+    expect(store.loadPlan("a1")!.goals).toContain(STANDING_INSTRUCTION);
+
+    // Simulate a restart: a brand new Agent instance resuming the SAME
+    // store, the same pattern goal-channel.test.ts uses for the standing
+    // CONFIG goal's restart-safety test.
+    const planner2 = new MockPlanner([plan(2, { instruction_done: true })]);
+    const agent2 = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store, planner: planner2, config, now: () => 2_000_000,
+    });
+    await completePlan(agent2); // finishes the resumed step
+    await agent2.runOnce(); // plan_done -> replan reports instruction_done
+    expect(agent2.snapshot().goals).toContain(STANDING_INSTRUCTION);
+  });
+
+  // Persisted-state schema tolerance (AGENTS.md binding convention): a store
+  // written before #817 has goals but zero instruction_pin_changed events.
+  // The loader must not crash, and -- since nothing ever marked the goal
+  // pinned -- it must behave exactly as it always has: ordinary-retirable.
+  test("a store predating #817 (goals present, no pin events) loads and stays ordinary-retirable", async () => {
+    const store = new Store(":memory:");
+    // Hand-written to match exactly what a pre-#817 build persisted: a goal
+    // in the plans row, no pin events at all.
+    store.savePlan("a1", plan(1), [INSTRUCTION]);
+    expect(store.recentEventsByType("a1", "instruction_pin_changed", 20)).toHaveLength(0);
+
+    const agent = new Agent({
+      id: "a1", persona: "p", api: stubApi(), store,
+      planner: new MockPlanner([plan(2, { instruction_done: true })]), config, now: () => 1_000_000,
+    });
+    await completePlan(agent); // resumes plan(1)'s step -> plan_done
+    await agent.runOnce(); // replan reports instruction_done against the pre-existing goal
+    expect(agent.snapshot().goals).not.toContain(INSTRUCTION);
+  });
+});

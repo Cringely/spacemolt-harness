@@ -351,6 +351,15 @@ const MAX_INCOMPATIBLE_POIS = 32;
 const MAX_SPARSE_RULES = 32;
 const SPARSE_RULE_TTL_HOURS = 6;
 
+// Pinned ("standing until revoked") operator instructions (issue #817): cap on
+// both the in-memory pin set (oldest-evicted, same as incompatiblePois/
+// sparseRules above) and the persisted-event reload window below. Same sizing
+// receipt as MAX_GOALS (5): steers are rare, a handful per session,
+// operator-typed, and pin/unpin toggles rarer still, so 20 is generous
+// headroom for a full goals-cap's worth of pin/unpin history without letting
+// the set grow unboundedly over a long-lived process.
+const MAX_PINNED_INSTRUCTIONS = 20;
+
 // The too-sparse refusal class, matched via the SAME classifier the failure
 // taxonomy uses (failureClass, src/server/failures.ts: /deposits too sparse|
 // beam disperses/i -> "too_sparse") so the learner and the dashboard can
@@ -588,6 +597,21 @@ export class Agent {
   // in the key (a refit stops the match), and the DEPOSIT state -- which
   // regenerates with no change signal -- ages out on SPARSE_RULE_TTL_HOURS.
   private sparseRules = new Map<string, { equipmentKey: string; detail: string; learnedAt: number }>();
+  // Pinned operator instructions (issue #817): the set of CURRENT goal texts
+  // the operator explicitly marked standing ("standing until revoked") at
+  // intake -- exempt from the instruction_done retirement filter below, no
+  // matter how many times the planner reports the rule already followed.
+  // Deliberately named "pinned", not "standing", to stay out of the way of
+  // this file's PRE-EXISTING "standingGoals" (agents.yaml config objectives,
+  // #216) and "standingInstruction" (the derived newest-non-config goal under
+  // consideration THIS wake, #355) -- three different concepts that would
+  // collide under one name. Bounded and restart-safe via persisted
+  // instruction_pin_changed events, the same events-table-as-durable-state
+  // pattern as incompatiblePois/sparseRules above -- see the constructor
+  // reload and MAX_PINNED_INSTRUCTIONS for the sizing receipt. Left by an
+  // explicit instruct() with standing:true; cleared only by
+  // Agent.revokeInstruction(), never by instruction_done.
+  private pinnedInstructions = new Set<string>();
   // Station geography (issue #517): systemId -> the station confirmed there by
   // the pilot's own successful dock, plus whatever services a docked success has
   // since proven (see src/agent/stations.ts for the whole mechanism and the live
@@ -735,6 +759,26 @@ export class Agent {
         });
       }
     }
+    // Pinned operator instructions (issue #817): rebuild which current goal
+    // texts are exempt from instruction_done retirement, from persisted
+    // pin-change events -- same restart-safety pattern as poi_incompatible/
+    // mine_sparse_learned above. ONE event type carries both directions
+    // (pinned true on instruct(standing:true), pinned false on an explicit
+    // revoke) so a straight chronological replay always lands on whichever
+    // action happened last for a given text -- recentEventsByType already
+    // returns oldest-first (it reverses its own id-DESC query), so a plain
+    // forward loop applies them in the order they happened. Tolerant loader,
+    // same discipline as above: a payload missing either field is SKIPPED,
+    // never a crash -- this is also the "predates the change" case (a store
+    // written before #817 has no instruction_pin_changed events at all, so
+    // this loop runs zero times and every goal loads ordinary-retirable).
+    for (const e of this.store.recentEventsByType(this.id, "instruction_pin_changed", MAX_PINNED_INSTRUCTIONS)) {
+      const p = e.payload as { text?: unknown; pinned?: unknown } | null;
+      if (p && typeof p.text === "string" && typeof p.pinned === "boolean") {
+        if (p.pinned) this.pinnedInstructions.add(p.text);
+        else this.pinnedInstructions.delete(p.text);
+      }
+    }
     // Station geography (issue #517): rebuild the confirmed-station map from
     // persisted events, same tolerant-loader discipline as the two reloads
     // above. Each stored event carries the FULL entry as of the change, so
@@ -850,11 +894,61 @@ export class Agent {
   // push already succeeded, and an operator who resends on that 500 lands the
   // steer twice. Push first, then emit inside the catch -- an unwritable event
   // store loses the receipt, never the instruction.
-  instruct(text: string): void {
+  //
+  // `opts.standing` (issue #817): classify the instruction at INTAKE, before it
+  // ever reaches goals. Default false -- an un-passed field preserves today's
+  // behavior for every existing caller (dashboard, scripts/strategy-store.ts,
+  // the scheduler's /steer transport) byte-for-byte; only a caller that opts in
+  // gets the new never-auto-retire behavior. Recorded by TEXT, the same
+  // identity goals already uses everywhere (exact-string filtering, dedup
+  // against standingGoals) -- not a new identity scheme. Marking happens here,
+  // one tick before the text can possibly land in goals (inbox drains one item
+  // per tick in runOnce), so the pin is always in place by the time the
+  // retirement guard could ever consult it.
+  instruct(text: string, opts: { standing?: boolean } = {}): void {
     this.inbox.push(text);
+    if (opts.standing) {
+      this.pinnedInstructions.add(text);
+      if (this.pinnedInstructions.size > MAX_PINNED_INSTRUCTIONS) {
+        const oldest = this.pinnedInstructions.values().next().value;
+        if (oldest !== undefined) this.pinnedInstructions.delete(oldest);
+      }
+      try {
+        this.emit("instruction_pin_changed", { text, pinned: true });
+      } catch { /* telemetry is not the control path -- see above */ }
+    }
     try {
       this.emit("instruction_received", { text, queued: this.inbox.length });
     } catch { /* telemetry is not the control path -- see above */ }
+  }
+
+  // Explicit revoke (issue #817): the ONLY way a pinned ("standing until
+  // revoked") instruction leaves goals, since the instruction_done retirement
+  // guard below refuses to clear one. Acts synchronously and directly on the
+  // live goals array -- unlike instruct(), which only queues onto the inbox
+  // for the next tick to consume -- so the removal is visible in snapshot()
+  // (and therefore the dashboard) immediately, with no replan round-trip.
+  // Declassifying is durable via the same instruction_pin_changed event the
+  // constructor replays: a crash between this call and the next savePlan
+  // still reloads with the text un-pinned (ordinarily retirable) rather than
+  // silently re-armored, even though the goals-column removal itself only
+  // lands on the next savePlan like any other goals mutation in this class.
+  // Config goals (agents.yaml, #216) are immune by construction -- they are
+  // not operator steers, and mergeStandingGoals restores one on the very next
+  // replan regardless, so revoking one would be a confusing no-op dressed up
+  // as success.
+  //
+  // Returns whether a matching goal was actually present, so the caller (the
+  // /instruct route) can tell the operator "removed" from "already gone" --
+  // see acceptInstruction's revoke branch in server.ts.
+  revokeInstruction(text: string): boolean {
+    const had = !this.standingGoals.includes(text) && this.goals.includes(text);
+    if (had) this.goals = this.goals.filter((g) => g !== text);
+    this.pinnedInstructions.delete(text);
+    try {
+      this.emit("instruction_pin_changed", { text, pinned: false });
+    } catch { /* telemetry is not the control path -- see instruct() */ }
+    return had;
   }
 
   // Standing-goal merge (#216): idempotent, so it runs at construction AND at
@@ -2378,7 +2472,19 @@ export class Agent {
       // direction (an unearned flag is ignored; a missing flag just keeps the
       // block showing). The exact-string filter can never remove a standing
       // config goal, because the derivation above excluded those.
-      if (plan.instruction_done && standingInstruction) {
+      //
+      // Pin guard (issue #817): a PINNED instruction (operator called
+      // instruct() with standing:true -- "standing until revoked", a
+      // persistent rule rather than a one-time errand) is exempt from this
+      // retirement, no matter how many times the planner reports it done.
+      // The one-shot case above already treats an unearned flag as a no-op;
+      // this extends the exact same fail-open posture to a flag that IS
+      // earned but reported against an instruction the operator marked
+      // non-retirable -- compliance this cycle is not permission to drop a
+      // rule meant to keep applying every cycle. The digest keeps re-raising
+      // it (standingInstruction's derivation is unchanged) until the operator
+      // calls revokeInstruction(), the only path that clears a pinned entry.
+      if (plan.instruction_done && standingInstruction && !this.pinnedInstructions.has(standingInstruction)) {
         this.goals = this.goals.filter((g) => g !== standingInstruction);
         this.emit("instruction_done", { instruction: standingInstruction });
       }
