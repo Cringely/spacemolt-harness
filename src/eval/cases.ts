@@ -64,6 +64,11 @@ const PlanContextSchema = z.object({
   // Instruction salience (issue #355): the standing operator instruction the
   // digest re-raises every replan until the planner reports it done.
   standingInstruction: z.string().optional(),
+  // Pin-aware digest truth (issue #1106): mirrors PlanContext.standingInstructionPinned.
+  // Optional so a harvested case recorded before #1106 still loads (persisted
+  // state outlives the schema that wrote it) -- it simply replays as the
+  // unpinned digest branch, the byte-identical text every pre-#1106 case saw.
+  standingInstructionPinned: z.boolean().optional(),
   surroundings: SurroundingsSchema.optional(),
   cargo: CargoSchema.optional(),
   previousGoal: z.object({

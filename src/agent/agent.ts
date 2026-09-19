@@ -2541,6 +2541,11 @@ export class Agent {
         recentEvents: this.store.recentEvents(this.id, 5).map((e) => e.type),
         instruction,
         standingInstruction,
+        // #1106: same pinnedInstructions set the retirement guard below
+        // (instruction_done) consults -- the digest must tell the truth
+        // about the same fact the guard acts on, or it briefs a rule the
+        // guard is built to ignore.
+        standingInstructionPinned: standingInstruction !== undefined && this.pinnedInstructions.has(standingInstruction),
         surroundings,
         // SM-6 fix, extended by the capability audit (Workflow A, 2026-07-19):
         // cargoDetail (the dedicated get_cargo fetch above) is preferred as
