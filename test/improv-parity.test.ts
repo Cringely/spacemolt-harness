@@ -318,6 +318,15 @@ const SEAMS: Seam[] = [
     anchors: [/JUMPS OF RANGE/, /28\.5h/, /opposite reality/i],
   },
   {
+    guard: "undocked fuel-reserve floor OR'd independently of the jumps verdict, never folded into " +
+      "fuelUrgent's percent fallback (#1045: a ship with BOTH a measured fuelPerJump and " +
+      "keepFuelAboveJumps configured took the jumps branch every time, which never reads its percent " +
+      "argument at all, so the reserve raise was silently discarded rather than superseded -- a ship " +
+      "at 2.3% fuel with 3 jumps of measured range sat unrefueled nine times under its 25% reserve)",
+    code: { file: "src/agent/wake.ts", marker: "reserveUrgent" },
+    anchors: ["SEPARATE, unconditional", "reserve became a required OR", /OR'd/],
+  },
+  {
     guard: "ambient skill-XP excluded from the no-progress signal (#250: LEVEL counts, sub-level XP drip does not)",
     // The LEVEL-only return line: folding xp back into the signature changes
     // this exact line (it becomes `return levels * WEIGHT + xp;`), so the

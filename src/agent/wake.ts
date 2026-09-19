@@ -25,13 +25,23 @@ export interface WakeInput {
   // floor is purely additive and never lowers the existing bar. A heuristic
   // backstop; true "enough to reach known fuel" needs the fuel-location map
   // from the next spec (per-pilot memory).
+  //
+  // Issue #1045: this floor must fire on its own, independent of the jumps
+  // check below -- see evaluateWake's reserveUrgent. Before this fix it was
+  // folded into fuelUrgent's percent FALLBACK, so once a ship had both a
+  // measured fuelPerJump and keepFuelAboveJumps configured, fuelUrgent's
+  // jumps branch won the ternary and the percent argument (this floor) was
+  // never read at all -- the raise was silently discarded rather than
+  // superseded by a stricter signal, for exactly the ships #670's own reflex
+  // fix (reflex.ts) was written to cover.
   fuelReservePct?: number;
   // Issue #670: this ship's own measured fuel-per-jump (agent.ts's
   // lastMeasuredFuelPerJump, from the find_route response travel_to already
   // fetches) and the jumps-remaining floor to defend, paired with
   // fuelUrgent below. Both optional -- unset means this ship has never
-  // completed a measured jump this session, and the percent check
-  // (effectiveFuelPct) stays the sole signal, unchanged from before this fix.
+  // completed a measured jump this session, and the percent check (fuelPct)
+  // stays the sole additional signal alongside the independent reserve floor
+  // above, unchanged from before this fix.
   fuelPerJump?: number;
   keepFuelAboveJumps?: number;
   hullPct: number;
@@ -119,18 +129,23 @@ export function evaluateWake(i: WakeInput): WakeReason | null {
 
   if (i.status) {
     const { fuel, maxFuel, hull, maxHull, docked } = i.status;
-    // Fuel-reserve floor: undocked, the effective threshold rises to
-    // fuelReservePct (a strand backstop -- reach fuel before 0). Docked keeps
-    // fuelPct; the reflex refuels there regardless. Same planRemediesFuel
-    // suppression as before, so an in-flight refuel step still defers the wake.
-    const effectiveFuelPct = !docked && i.fuelReservePct != null
-      ? Math.max(i.fuelPct, i.fuelReservePct)
-      : i.fuelPct;
+    // Issue #1045: the undocked fuel-reserve floor is its own OR'd branch,
+    // never folded into fuelUrgent's percent fallback -- see fuelReservePct's
+    // doc comment above for why that folding silently dropped the raise once
+    // a ship also had keepFuelAboveJumps configured. reserveUrgent alone
+    // decides the reserve floor; it reads only fuel/maxFuel, never jumps, so
+    // a stricter jumps-based verdict can never suppress it.
+    const reservePct = !docked && i.fuelReservePct != null ? i.fuelReservePct : undefined;
+    const reserveUrgent = reservePct != null && maxFuel > 0 && (fuel / maxFuel) * 100 < reservePct;
     // Issue #670: jumps-remaining (fuel / fuelPerJump) replaces percent-of-tank
-    // once this ship has a measured per-jump cost -- see fuelUrgent (reflex.ts)
-    // for why percent alone can't tell 19 jumps of range from 1. effectiveFuelPct
-    // is fuelUrgent's fallback, so an unmeasured ship wakes exactly as before.
-    if (fuelUrgent(fuel, maxFuel, i.fuelPerJump, i.keepFuelAboveJumps, effectiveFuelPct) && !i.planRemediesFuel)
+    // as fuelUrgent's OWN verdict once this ship has a measured per-jump cost
+    // -- see fuelUrgent (reflex.ts) for why percent alone can't tell 19 jumps
+    // of range from 1. i.fuelPct (not the reserve floor) is fuelUrgent's
+    // percent fallback, so an unmeasured ship wakes exactly as before #670;
+    // reserveUrgent above is what keeps the reserve raise alive regardless of
+    // which branch fuelUrgent takes.
+    const jumpsOrPctUrgent = fuelUrgent(fuel, maxFuel, i.fuelPerJump, i.keepFuelAboveJumps, i.fuelPct);
+    if ((jumpsOrPctUrgent || reserveUrgent) && !i.planRemediesFuel)
       return { reason: "low_fuel", detail: `${fuel}/${maxFuel}` };
     if (maxHull > 0 && (hull / maxHull) * 100 < i.hullPct && !i.planRemediesHull)
       return { reason: "low_hull", detail: `${hull}/${maxHull}` };
