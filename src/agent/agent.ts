@@ -20,7 +20,7 @@ import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
 import {
-  NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
+  NO_PROGRESS_REPLANS, UNRECOVERABLE_ARMS_THRESHOLD, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
   DOCK_NO_STATION_STREAK_THRESHOLD, DOCK_NO_STATION_CLASS, isDockDeadEnd, dockNoStationStreak,
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
 } from "./stall-monitor";
@@ -523,6 +523,12 @@ export class Agent {
   private lastFingerprint: string | undefined;
   private noProgressReplans = 0;
   private stuck = false;
+  // #534: consecutive Layer-4 ARMS (not replans) against the SAME frozen
+  // fingerprint, spanning across backoff-then-rearm cycles. Set to 1 on a
+  // fresh arm (this.stuck was false going in) and incremented on a re-arm
+  // (this.stuck was already true, meaning no differing fingerprint was
+  // observed in between -- see the arm branch and the "differs" branch below).
+  private consecutiveArmsSameFingerprint = 0;
 
   // SM-6 fix: executeOne()'s "plan_done" branch nulls this.plan out (see
   // below) before replan() ever runs for the resulting "plan_done" wake, so
@@ -1379,8 +1385,25 @@ export class Agent {
           // reset keeps Layer 4 below 6; Layer 4 only arms when the damper
           // CAN'T (a varying key that never builds a streak) -- its intended
           // backstop role.
-          this.noProgressReplans = 0;
-          this.lastFingerprint = undefined;
+          //
+          // EXCEPT while Layer 4 is already holding an escalated stop (#534):
+          // once escalated, Layer 4 stops replanning entirely, which freezes
+          // `this.lastCompletedGoal` too (nothing replaces it) -- a NEW static
+          // identity this gate can now lock onto and reach its OWN threshold
+          // on, something that could never happen pre-escalation (a still-
+          // cycling Layer 4 keeps rewording the goal every burst). Clearing
+          // `lastFingerprint` here would hand this stale-goal thrash the SAME
+          // wipe an ACTUAL differing fingerprint gets, undoing the hold this
+          // fix exists to keep -- resetting on anything weaker than a
+          // genuinely differing game-state fingerprint reintroduces the exact
+          // eternal cycling #534 reports, just via this second reset site
+          // instead of Layer 4's own. The gate still arms and alerts on its
+          // own terms (harmless: no planner call, just backoff bookkeeping) --
+          // only the hand-off to Layer 4's tracking is withheld.
+          if (!(this.stuck && this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD)) {
+            this.noProgressReplans = 0;
+            this.lastFingerprint = undefined;
+          }
           // #95: the consecutive gate owns this thrash episode, so floor the
           // windowed same-error breaker past these blocks -- it must not
           // re-fire on repeats the gate already broke (mirrors the Layer 4
@@ -1532,6 +1555,26 @@ export class Agent {
       // couldn't.
       if (status) {
         const fp = progressFingerprint(status, this.cursor.step);
+        // Escalation short-circuit (#534). Once the SAME frozen fingerprint
+        // has already armed Layer 4 UNRECOVERABLE_ARMS_THRESHOLD times
+        // running (set in the arm branch below), one more same-fingerprint
+        // confirmation is a foregone conclusion: extend backoff directly
+        // instead of spending a fresh NO_PROGRESS_REPLANS-replan burst to
+        // re-derive an answer already known. This is what actually stops the
+        // periodic arm-burn-arm cycle rather than just re-labeling it: the
+        // ONLY ways out are a differing fingerprint (this `fp ===` check
+        // fails, so control falls to the branches below) or an operator
+        // instruction, which this guard excludes so it always reaches
+        // replan() at the bottom, the same escape the backoff check above
+        // already grants it (#815).
+        if (
+          wake.reason !== "instruction" && this.stuck &&
+          this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD &&
+          fp === this.lastFingerprint
+        ) {
+          this.plannerBackoffUntil = this.now() + this.config.heartbeatMinutes * 60_000;
+          return; // do not replan -- already confirmed unrecoverable on this state
+        }
         if (fp === this.lastFingerprint) {
           this.noProgressReplans++;
         } else {
@@ -1540,22 +1583,50 @@ export class Agent {
           // -- the differing state is observed at the boundary just before the
           // replan that consumes it -- consolidated to a single locus so the
           // fingerprint isn't recomputed inside replan() (simplicity: one
-          // producer for the flag, not two).
+          // producer for the flag, not two). Also clears the escalation counter
+          // (#534): a genuinely different state means any future arm is a
+          // fresh episode, not a continuation of this one -- the reset
+          // condition the counter exists to enforce.
           this.noProgressReplans = 1;
           this.lastFingerprint = fp;
           this.stuck = false;
+          this.consecutiveArmsSameFingerprint = 0;
         }
         if (this.noProgressReplans >= NO_PROGRESS_REPLANS) {
+          // #534: count consecutive arms against the SAME fingerprint.
+          // `this.stuck` read here is still its PRE-arm value -- true means a
+          // re-arm (the fingerprint never differed since the last arm, so
+          // increment); false means a fresh arm (start at 1). Nothing weaker
+          // than the genuinely-differing-fingerprint branch above may reset
+          // this counter -- that IS the bug this counter fixes (see
+          // test/no-progress.test.ts's "does not reset on backoff expiry
+          // alone" ablation).
+          this.consecutiveArmsSameFingerprint = this.stuck ? this.consecutiveArmsSameFingerprint + 1 : 1;
           this.stuck = true;
           this.plannerBackoffUntil = this.now() + this.config.heartbeatMinutes * 60_000;
-          this.emit("operator_alert", {
-            class: "no_progress", fingerprint: fp, replans: this.noProgressReplans,
-          });
-          // Reset the run like the thrash gate does: after backoff expires, the
-          // next still-frozen wake starts counting again and needs another full
-          // NO_PROGRESS_REPLANS run to re-arm -- a damped duty cycle, not a
-          // permanent latch. `stuck` deliberately stays true across this reset;
-          // only a differing fingerprint (above) clears it.
+          if (this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD) {
+            // Distinct alert class (#534) so the dashboard and any downstream
+            // tooling can tell a STOPPED episode from a merely THROTTLED one.
+            // plannerHealth.stuck (already true either way, read via
+            // snapshot()) still drives the dashboard's existing Stuck banner
+            // unchanged -- this alert only adds the finer distinction.
+            this.emit("operator_alert", {
+              class: "unrecoverable", fingerprint: fp, replans: this.noProgressReplans,
+              arms: this.consecutiveArmsSameFingerprint,
+            });
+          } else {
+            this.emit("operator_alert", {
+              class: "no_progress", fingerprint: fp, replans: this.noProgressReplans,
+            });
+          }
+          // Reset the run like the thrash gate does: after backoff expires, a
+          // still-frozen wake below the escalation threshold starts counting
+          // again and needs another full NO_PROGRESS_REPLANS run to re-arm --
+          // a damped duty cycle. Past the threshold the short-circuit above
+          // takes over instead, so this reset stops mattering for spend
+          // (noProgressReplans just idles at 0). `stuck` deliberately stays
+          // true across this reset; only a differing fingerprint (above)
+          // clears it.
           this.noProgressReplans = 0;
           return; // do not replan this tick -- arming exists to stop the spend
         }

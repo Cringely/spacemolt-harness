@@ -187,6 +187,152 @@ describe("Layer 4: no-progress detector", () => {
   });
 });
 
+// Issue #534: the arm branch above resets noProgressReplans but not `stuck`
+// or `lastFingerprint`, so an unchanging fingerprint re-arms the identical
+// NO_PROGRESS_REPLANS-replan burst every backoff window forever -- a damped
+// duty cycle, never a stop. These tests drive the SAME frozen-strand shape as
+// the first test above across MULTIPLE arm/backoff/rearm cycles (the first
+// test only ever drives one) to exercise the escalation this issue adds.
+describe("Layer 4 escalation: unrecoverable state (issue #534)", () => {
+  // Reuses the "phantom-progress" plan_done-loop shape from the test above
+  // (reworded goal each replan, single dock step, frozen healthy status) --
+  // NOT the low_fuel/mine shape from the first test in this file. That shape
+  // was tried first and rejected here: driven across multiple backoff cycles,
+  // executeOne keeps re-attempting the blocked "mine" step DURING backoff
+  // (it only stops once plan_done nulls the plan, which a low_fuel loop that
+  // never completes never reaches), which trips executor.ts's own
+  // fuel-reserve guard and flips the wake reason to "blocked" -- a SEPARATE,
+  // pre-existing mechanism (Layer 2's thrash damper, which owns
+  // blocked/plan_done identities) then engages independently and hands back
+  // Layer 4's fingerprint tracking, unrelated to this fix. The plan_done loop
+  // has no such side channel (dock has no pre-flight guard, and the original
+  // test already establishes Layer 2 can't arm on it -- the reworded goal
+  // varies its key every cycle), so it isolates the escalation mechanism
+  // under test from that interaction. Reported as a finding, not fixed here
+  // (see the PR body) -- it is a gap in Layer 2's handoff, not in the #534
+  // arm-reset condition this issue is about.
+  function frozenPlanDoneSetup(now: { v: number }) {
+    const status: StatusSnapshot = {
+      credits: 304, fuel: 90, maxFuel: 100, hull: 100, maxHull: 100,
+      cargoUsed: 12, cargoCapacity: 50, docked: true, inTransit: false, systemId: "s1",
+    };
+    const api: GameApi = {
+      async action(): Promise<V2Result> { return { result: "ok" }; }, // dock "succeeds" -> plan_done
+      async status() { return status; },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    let goalNum = 0;
+    const contexts: PlanContext[] = [];
+    const planner: Planner = {
+      async plan(ctx: PlanContext) {
+        contexts.push(ctx);
+        const goal = `sell all cargo (attempt ${goalNum++})`;
+        return { plan: { goal, steps: [{ action: "dock", params: {} }] }, promptChars: 0, responseChars: 0 };
+      },
+    };
+    // heartbeatMinutes cut to 0.1 (6s backoff) purely so a multi-cycle drive
+    // stays fast in a unit test -- the mechanism under test (consecutive
+    // arms on an IDENTICAL fingerprint) does not depend on backoff's
+    // absolute duration, only on it being > 0.
+    const agent = new Agent({
+      id: "a1", persona: "p", api, store, planner,
+      config: { ...baseConfig, heartbeatMinutes: 0.1 },
+      now: () => now.v,
+    });
+    return { status, store, contexts, agent };
+  }
+
+  async function tick(agent: Agent, now: { v: number }) {
+    now.v += 1_000;
+    await agent.runOnce();
+  }
+
+  async function driveToNthAlert(
+    agent: Agent, store: Store, now: { v: number }, n: number, capTicks = 200,
+  ) {
+    let alerts = store.recentEvents("a1", 10_000).filter((e) => e.type === "operator_alert");
+    for (let i = 0; i < capTicks && alerts.length < n; i++) {
+      await tick(agent, now);
+      alerts = store.recentEvents("a1", 10_000).filter((e) => e.type === "operator_alert");
+    }
+    return alerts;
+  }
+
+  test("3 consecutive arms on the identical fingerprint escalate to operator_alert{unrecoverable}, then STOP burning planner calls", async () => {
+    const now = { v: 0 };
+    const { store, contexts, agent } = frozenPlanDoneSetup(now);
+
+    const opAlerts = await driveToNthAlert(agent, store, now, 3);
+    expect(opAlerts.length).toBe(3);
+    expect((opAlerts[0]!.payload as { class: string }).class).toBe("no_progress");
+    expect((opAlerts[1]!.payload as { class: string }).class).toBe("no_progress");
+    expect((opAlerts[2]!.payload as { class: string }).class).toBe("unrecoverable");
+    expect((opAlerts[2]!.payload as { arms: number }).arms).toBe(3);
+    expect(agent.snapshot().plannerHealth.stuck).toBe(true);
+
+    const callsAtEscalation = contexts.length;
+
+    // Drive well past several MORE backoff cycles (6s each) on the SAME
+    // frozen state. Pre-fix (ablate consecutiveArmsSameFingerprint back to
+    // always resetting on arm), each cycle re-arms and burns another
+    // NO_PROGRESS_REPLANS-1 planner calls plus another alert -- exactly the
+    // burn #534 reports; this assertion goes red on that revert (see PR body
+    // for the exact command/output). Post-fix the short-circuit holds: zero
+    // new calls, zero new alerts, for as long as the fingerprint stays
+    // frozen. toBe (not toBeLessThanOrEqual) is deliberate: the blind spot a
+    // looser bound would hide is a fix that merely SLOWS the burn (a longer
+    // backoff) rather than stopping it, which the issue explicitly rejects
+    // ("not a fourth rate limiter").
+    for (let i = 0; i < 80; i++) await tick(agent, now);
+
+    expect(contexts.length).toBe(callsAtEscalation);
+    expect(store.recentEvents("a1", 10_000).filter((e) => e.type === "operator_alert").length).toBe(3);
+    expect(agent.snapshot().plannerHealth.stuck).toBe(true);
+  });
+
+  test("a genuinely differing fingerprint clears the escalated state and resumes replanning", async () => {
+    const now = { v: 0 };
+    const { status, store, contexts, agent } = frozenPlanDoneSetup(now);
+
+    const opAlerts = await driveToNthAlert(agent, store, now, 3);
+    expect(opAlerts.length).toBe(3); // escalated
+
+    const callsBeforeRecovery = contexts.length;
+    // Real progress: cargoUsed moves on the SAME status object the mock
+    // api.status() returns. The short-circuit only re-checks the fingerprint
+    // at the next backoff-expiry checkpoint (heartbeat cadence, by design --
+    // see the fix), so tick forward until that checkpoint observes it.
+    status.cargoUsed = 20;
+    let replanned = false;
+    for (let i = 0; i < 20 && !replanned; i++) {
+      await tick(agent, now);
+      replanned = contexts.length > callsBeforeRecovery;
+    }
+
+    expect(replanned).toBe(true);
+    expect(agent.snapshot().plannerHealth.stuck).toBe(false);
+  });
+
+  test("an operator instruction reaches the planner even while escalated and the fingerprint is still frozen", async () => {
+    const now = { v: 0 };
+    const { store, contexts, agent } = frozenPlanDoneSetup(now);
+
+    const opAlerts = await driveToNthAlert(agent, store, now, 3);
+    expect(opAlerts.length).toBe(3); // escalated, still frozen (status never changed)
+
+    const callsBefore = contexts.length;
+    agent.instruct("stop selling and hold the cargo");
+    // The instruction wake bypasses the backoff gate immediately (#815) --
+    // it must also bypass the escalation short-circuit added here, which
+    // excludes wake.reason === "instruction" for exactly this reason.
+    await tick(agent, now);
+
+    expect(contexts.length).toBe(callsBefore + 1);
+    expect(contexts[contexts.length - 1]!.instruction).toBe("stop selling and hold the cargo");
+  });
+});
+
 // status_snapshot (Layer 5): a lightweight game-state sample emitted on each
 // wake from the status already fetched at tick start (no extra get_status).
 describe("status_snapshot event", () => {
