@@ -8,17 +8,17 @@
 
 ## NOW, live status
 
-_Refreshed 2026-09-19 (second pass, deploy confirmation). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-09-19 (steward pass). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
 
-**#107 AND #108 MERGED, BOTH CONFLICTS RESOLVED.** #107 (`c81f8dc`) closes #553: `complete_mission` now refuses an id the fresh active-mission listing provably lacks. It needed a second review round — the council's first REVISE caught a regression where the id-less-row guard skipped the #291 shortfall invariant for a different, cleanly-parsed row; fixed before merge. #108 (`ece3650`) closes #1030: an order now gets refused when the pilot's KNOWN credit balance can't cover it, with the earlier receipt misattribution corrected. Both issues closed.
+**FIVE FOLLOW-UP PRs MERGED AFTER THE PRIOR STEWARD PASS.** #119 (`018807d`, #1047 follow-up) fixes exact-named goal items outranking earlier family matches; the council's review also flagged two comment defects that landed unfixed due to a prior squash-merge, and #122 (`086a90d`) corrected both. #120 (`83a0fd6`, closes #1045) restores the fuel-reserve floor as independent of a jumps-based measurement once both are configured; no ablation or improv-parity gap. #121 (`d89fecf`, closes #1106 partially — follow-up to #817) makes the standing-instruction pin mechanism reachable from the dashboard as a checkbox and truthful in the digest against the retirement guard; #123 (`d7ab050`) fixes the checkbox incorrectly outliving an agent switch. Four independent ablations per #121; 1991 tests pass, typecheck clean. The 5 PRs total 1999 passing tests (one pre-existing skip, zero fail, 2000 total across the two runs).
 
-**DEPLOY STATE NOW CONFIRMED, CORRECTING THE PRIOR NOTE.** PM live capture 2026-09-19 via `docker inspect` on the prod host: the container ran `ghcr.io/cringely/spacemolt-harness:4eb1c64` from 18:20:28Z (auto-deploy cron, healthy, `RestartCount 0`, zero uncaught/fatal/panic/ZodError/crash log lines since start, all three pilots emitting `status_snapshot`), then `:ece3650` from 19:49:27Z (healthy, `RestartCount 0`, zero crash-class log lines, all three pilots emitting `status_snapshot` by 19:50:48Z). The "prod on `a892877`" note in the 2026-09-19 history section below was never re-checked after 09-11; the auto-deploy cron shipped both images above within minutes of their merges. `ece3650` is #108's merge commit and main's HEAD, so every merged change through #108 is deployed. Offline tests remain the only proof of behavior; the live signals below are what to watch next.
+**DEPLOY STATE CONFIRMED THROUGH #108.** Last known: prod on `ece3650` (2026-09-19 19:49:27Z) from auto-deploy cron, healthy, `RestartCount 0`, all three pilots emitting `status_snapshot`. PRs #119–#123 merged after that timestamp and are not known deployed; offline tests cover them only.
 
 **OPEN PRs: NONE FROM THIS WAVE.**
 
 **BACKLOG:** see `docs/backlog.md`, regenerated this pass.
 
-**Next:** #1106 (standing-flag adoption, digest/improv drift) and #1053 (the `failures.ts` message-discarding producer) are queued; #1107 is the P3 findings umbrella. Watch the live signals: frozen-pilot planner calls (#534), guard-refused dry-station buys and `plan_budget_exceeded` (#669), overpriced-buy refusals (#458), low-fuel reflex fire-and-fail (#672), `mission_not_found` refusals (#553), 0cr listing-fee refusals (#1030) — each is a guard now live, none yet confirmed quiet in production.
+**Next:** #1053 (the `failures.ts` message-discarding producer) queued; #1107 is the P3 findings umbrella. Watch the live signals: frozen-pilot planner calls (#534), guard-refused dry-station buys and `plan_budget_exceeded` (#669), overpriced-buy refusals (#458), low-fuel reflex fire-and-fail (#672), `mission_not_found` refusals (#553), 0cr listing-fee refusals (#1030) — each is a guard now live, none yet confirmed quiet in production.
 
 ## Recent history, 2026-09-19
 
