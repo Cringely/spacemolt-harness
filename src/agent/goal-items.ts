@@ -51,13 +51,13 @@ import { catalog, type ItemMeta } from "../catalog/catalog";
 // Truncation priority (#1047): EXACT hits win over FAMILY hits outright, and
 // first-named-goal is only the tie-break WITHIN each category (first exact,
 // then first family; within a family, catalog tier order). An exact hit is
-// the operator naming a specific item verbatim -- L20-29 above calls that
-// form "the reliable form" -- so an earlier goal's family spray (a tier-less
-// name expanding to 3+ catalog tiers) must never push a later goal's exact
-// hit out of the cap. Before this fix the two categories were merged and
-// sorted by goal index alone, so "buy a Mining Laser" (5 tiers) ahead of
-// "buy fuel_cell" (1 exact hit) filled every slot with laser tiers and
-// dropped the exact fuel_cell match.
+// the operator naming a specific item verbatim -- L38-41 above documents that
+// naming convention -- so an earlier goal's family spray (a tier-less name
+// expanding to 3+ catalog tiers) must never push a later goal's exact hit out
+// of the cap. Before this fix the two categories were merged and sorted by
+// goal index alone, so "buy a Mining Laser" (5 tiers) ahead of "buy
+// fuel_cell" (1 exact hit) filled every slot with laser tiers and dropped the
+// exact fuel_cell match.
 
 /** Free queries, but this runs on the replan path -- keep the fan-out tiny. */
 export const MAX_CANDIDATES = 3;
@@ -85,7 +85,12 @@ function phraseIn(text: string, phrase: string): boolean {
 }
 
 export interface GoalPurchaseMatches {
-  /** Items the goals literally name, capped at MAX_CANDIDATES (first-named first). */
+  /**
+   * Items the goals literally name, capped at MAX_CANDIDATES. Exact hits win
+   * over family hits outright; goal index (first-named first) is the
+   * tie-break only WITHIN each category (see the truncation-priority comment
+   * above).
+   */
   candidates: ItemMeta[];
   /**
    * Ids that matched but were cut by the cap. Non-empty means the goals name
@@ -106,7 +111,10 @@ export function goalPurchaseCandidates(goals: string[], items: ItemMeta[] = cata
   if (!texts.length) return { candidates: [], dropped: [] };
 
   // Index of the earliest goal containing `phrase` as a whole token-bounded
-  // phrase, or -1. Earlier goal = higher priority on truncation.
+  // phrase, or -1. Earlier goal = higher priority on truncation only WITHIN a
+  // category (exact-vs-exact, family-vs-family); across categories exact
+  // always wins regardless of goal index (see the truncation-priority
+  // comment above).
   const firstGoal = (phrase: string): number => texts.findIndex((t) => phraseIn(t, phrase));
 
   type Hit = { item: ItemMeta; goal: number };
