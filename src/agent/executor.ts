@@ -1,5 +1,5 @@
 import { isTransientServerFailure, SpacemoltError, type V2Result } from "../client/http";
-import type { FittedModule, GameApi, ModuleSpec, ShipFit, StatusSnapshot } from "../client/client";
+import type { FittedModule, GameApi, ModuleSpec, PurchaseCostEstimate, ShipFit, StatusSnapshot } from "../client/client";
 import type { Plan, PlanStep } from "../registry/plan";
 import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { PlanCursor } from "../store/store";
@@ -809,6 +809,86 @@ async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepR
   return guardBlock(reason);
 }
 
+// Buy price-sanity guard (issue #458). Invariant: a market `buy`'s per-unit
+// cost should never clear BUY_PRICE_SANITY_MULTIPLIER times the item's
+// catalog base_value without the plan naming a reason -- catalog.data.json is
+// the base_value SSOT (same floor JETTISON_VALUE_FLOOR above compares
+// against on the sell side). Three live incidents, all in this issue: 10
+// titanium_ore for 100,500cr against a 25cr base (~400x, resold minutes later
+// for 500cr), 12 more titanium_ore for 120,600cr at the same ~400x ask, and
+// 49 fuel_cell for 220,108cr against a 43cr base (~104x) -- the last one 89%
+// of the pilot's gross earnings for that window.
+//
+// N=8: the issue's own receipt, computed over the 89 priced rows of a
+// 482-row market capture (test/fixtures/mcp-probe-2026-07-12.json) --
+// median ask/base 1.38x, p75 2.54x, p90 3.25x, only 4/89 rows over 10x. The
+// issue recommends N between 5 and 10 ("blocks the whole pathological tail
+// while passing 93% of real asks"); 8 sits inside that band, clears the
+// night's live positive control (Mining Laser III at ~1.7x base) with 4.7x of
+// headroom, and still blocks every observed incident (104x-400x) by more than
+// an order of magnitude. Reference-tier, not proven live across the game: one
+// station, one day, per the issue's own caveat.
+//
+// Deliberately NOT the SELL-side guard the #112 net-profit rule comment
+// rejects ("catalog value does not BOUND revenue in a player-driven market"):
+// that rejection is about a value FLOOR on what a sale can earn, which a
+// motivated buyer can legitimately clear by any margin. This is a cost
+// CEILING on what the PILOT'S OWN buy pays, and the harm it blocks -- paying
+// 400x base for goods nobody is forcing you to buy -- is bounded by
+// definition; a plan with a real reason to overpay has create_buy_order
+// (bounded, cancelable escrow) as the deliberate alternative, named in the
+// blocked reason below.
+//
+// Same precondition-guard shape as mineDepositBlock/withdrawStorageBlock: one
+// free estimate_purchase query, fired by the caller only on the step's FIRST
+// submission (cursor.iteration === 0) -- a repeat tick of the same buy step
+// would just re-ask a question this guard already answered once.
+//
+// FAIL OPEN on every rung, like every guard in this file (#94): an unparsed
+// step, no estimatePurchaseCost on the api, a thrown fetch, an unparsed
+// estimate, or no catalog value all skip the check -- never fabricate a
+// block from data we cannot read. The catalog value is the one thing this
+// guard treats as a KNOWN floor rather than an estimate: its absence, not
+// the live estimate's, is what makes this fail open instead of blocking on
+// nothing.
+//
+// Reason text MEASURED, not eyeballed, the same discipline
+// withdrawStorageBlock's comment explains: digest.ts clips a blocked wake's
+// detail at UNTRUSTED_TEXT_SNIPPET_LEN (200) on the NEXT replan, and a reason
+// that loses its remedy half to that clip teaches nothing. The item id
+// appears ONCE (inside the command, for the same reason withdraw's comment
+// gives), and the whole reason is asserted under 200 chars at the real
+// catalog's longest id (test/executor-buy-price-guard.test.ts).
+export const BUY_PRICE_SANITY_MULTIPLIER = 8;
+
+async function buyPriceGuard(api: GameApi, step: PlanStep): Promise<StepResult | null> {
+  const p = step.params as { id?: unknown; quantity?: unknown };
+  if (typeof p.id !== "string" || !p.id) return null;
+  if (typeof p.quantity !== "number" || p.quantity <= 0) return null;
+  if (!api.estimatePurchaseCost) return null; // no capability to consult -> fail open
+
+  const baseValue = catalog.itemValue(p.id);
+  if (baseValue === undefined) return null; // no catalog floor to compare against -> fail open
+
+  let estimate: PurchaseCostEstimate | undefined;
+  try {
+    estimate = await api.estimatePurchaseCost(p.id, p.quantity);
+  } catch {
+    return null; // query threw -> UNKNOWN cost -> fail open
+  }
+  if (estimate?.quantityRequested === undefined || estimate.totalCost === undefined) return null;
+  if (estimate.quantityRequested <= 0) return null;
+
+  const perUnit = estimate.totalCost / estimate.quantityRequested;
+  const ceiling = baseValue * BUY_PRICE_SANITY_MULTIPLIER;
+  if (perUnit <= ceiling) return null;
+
+  const reason =
+    `buy refused: ${Math.round(perUnit)}cr/unit over ${BUY_PRICE_SANITY_MULTIPLIER}x catalog value ${baseValue}cr. ` +
+    `Deliberate? create_buy_order{item_id=${p.id}, quantity=${p.quantity}, price_each=<price>} instead.`;
+  return guardBlock(reason);
+}
+
 // refuel target precondition guard (issue #595): target selects ship-to-ship
 // transfer mode, which the vendored reference requires the RECIPIENT be
 // present at the caller's own location for (fuel.md:235, a rescuer "must be
@@ -1429,6 +1509,14 @@ export async function executeTick(
 
   if (step.action === "travel_to") {
     return travelToTick(api, plan, cursor, step.params.system_id, preStatus);
+  }
+
+  // Buy price-sanity guard (issue #458) -- see buyPriceGuard above. Only on
+  // the step's first submission: one free estimate_purchase per buy STEP, not
+  // per repeat tick, same rationing mineDepositBlock's call site above uses.
+  if (step.action === "buy" && cursor.iteration === 0) {
+    const block = await buyPriceGuard(api, step);
+    if (block) return block;
   }
 
   // Repeated-buy guard (issue #669). Invariant: a `buy` is not resubmitted for

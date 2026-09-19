@@ -334,6 +334,21 @@ export interface PoiDepositsResult {
   deposits: PoiDeposit[];
 }
 
+// Buy price-sanity guard (issue #458): a typed subset of estimate_purchase's
+// structuredContent -- the three fields executor.ts's buyPriceGuard compares
+// against the catalog's base_value. Every field optional: the
+// EstimatePurchaseResponse schema (docs/game-reference/upstream/
+// openapi-v2.json) marks all eleven of its fields required, but
+// estimatePurchase's own comment below notes the response has never been
+// captured live -- so this is REFERENCE-BACKED, NOT LIVE-VERIFIED, and a
+// shape surprise degrades one field to undefined rather than failing the
+// whole parse (fail-open, same discipline as PoiDepositsResult above).
+export interface PurchaseCostEstimate {
+  itemId?: string;
+  quantityRequested?: number;
+  totalCost?: number;
+}
+
 // Capability-audit follow-up (2026-07-19): get_location's `location` object,
 // trimmed to fields NOT already carried by get_status's parsed location
 // (docked_at/in_transit/system_id -- see the LocationSchema `location` field
@@ -548,6 +563,24 @@ export interface GameApi {
   // (the agent maps it to no section; ABSENCE IS NEVER A "not purchasable"
   // verdict). Optional like getMissions.
   estimatePurchase?(itemId: string, quantity: number): Promise<string>;
+  // Buy price-sanity guard (issue #458): the SAME estimate_purchase action as
+  // estimatePurchase above, called from a DIFFERENT consumer wanting a
+  // different shape -- executor.ts's buyPriceGuard needs three numbers to
+  // compare against the catalog's base_value, not prose for the digest. A
+  // dedicated method rather than widening estimatePurchase's return type,
+  // same choice getCargo's comment above explains ("a SEPARATE call from
+  // status(), not a no-op registration"): estimatePurchase already has three
+  // callers (Agent.gatherPurchaseEstimates plus two test fakes) reading a
+  // plain string, and none of them want or should have to carry a parsed
+  // subset they never asked for. The extra round trip this costs when both
+  // fire in the same tick is free -- no tick, no credits, per
+  // estimatePurchase's comment above -- so duplicating the query is cheaper
+  // than coupling two unrelated readers to one return shape. See
+  // PurchaseCostEstimate for the fields and why every one is optional.
+  // Same fail-open discipline as getPoiDeposits/getStorage: undefined means
+  // the capability is absent, the query threw, or the response did not parse
+  // as a purchase estimate at all -- never "free" or "unavailable".
+  estimatePurchaseCost?(itemId: string, quantity: number): Promise<PurchaseCostEstimate | undefined>;
   // Market-intelligence injection (issue #269): "who buys what I hold, and
   // WHERE" -- the question the no-buyers remedy was asking with the wrong tool.
   // REFERENCE-CHECKED, and the check overturned our own registry comment:
@@ -889,6 +922,21 @@ const StorageViewSchema = z.object({
   // inverts. A bad row fails the whole parse, getStorage returns undefined, and
   // the guard fails open at the cost of one tick.
   items: z.array(z.object({ item_id: z.string(), quantity: z.number() })),
+});
+
+// Buy price-sanity guard (issue #458): the typed subset of
+// EstimatePurchaseResponse (see PurchaseCostEstimate above for the citation
+// and why every field is optional). All-optional/.partial() like the catalog
+// schemas above, deliberately NOT a strict required-fields shape like
+// StorageViewSchema: that shape exists to make an EMPTY `items` trustworthy,
+// and there is no equivalent "empty means something" reading here -- a
+// missing total_cost is just a number the guard cannot compare, so the field
+// degrades to undefined and the guard fails open on it rather than the whole
+// parse failing on one absent key.
+const EstimatePurchaseCostSchema = z.object({
+  item: z.string().optional(),
+  quantity_requested: z.number().optional(),
+  total_cost: z.number().optional(),
 });
 
 export class SpacemoltClient implements GameApi {
@@ -1269,6 +1317,24 @@ export class SpacemoltClient implements GameApi {
     const res = await this.action("estimate_purchase", { item_id: itemId, quantity });
     if (typeof res.result === "string" && res.result.trim()) return res.result;
     return res.structuredContent != null ? JSON.stringify(res.structuredContent) : "";
+  }
+
+  // Buy price-sanity guard (issue #458): the same action and the same params
+  // discipline as estimatePurchase above (item_id, quantity, VERIFIED against
+  // the vendored OpenAPI, free query, requires a dock -- see that method's
+  // comment), reading structuredContent instead of the human-readable result
+  // text. safeParse (not parse), same as getPoiDeposits: a divergent live
+  // shape degrades to undefined rather than throwing, since this response has
+  // never been captured live either.
+  async estimatePurchaseCost(itemId: string, quantity: number): Promise<PurchaseCostEstimate | undefined> {
+    const res = await this.action("estimate_purchase", { item_id: itemId, quantity });
+    const parsed = EstimatePurchaseCostSchema.safeParse(res.structuredContent ?? {});
+    if (!parsed.success) return undefined;
+    return {
+      itemId: parsed.data.item,
+      quantityRequested: parsed.data.quantity_requested,
+      totalCost: parsed.data.total_cost,
+    };
   }
 
   // Market-intelligence injection (issue #269): raw analyze_market insight text
