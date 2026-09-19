@@ -341,6 +341,18 @@ Vocabulary / data shapes:
   plan-then-execute the harness runs this check for you every replan when docked — estimate_purchase
   is kind:"query", so a plan cannot contain it — and briefs the answer; in improv you call it yourself,
   and only while docked. Absence of an answer is never a "not purchasable" verdict, in either mode.)
+- A `buy` priced far above the item's catalog value is usually a trap, not a bargain. Before paying an
+  unusually high ask, sanity-check it: `view_market` or `estimate_purchase` both surface the price you'd
+  pay, and the item's catalog base_value is a rough floor for what it should cost. Two live incidents
+  already cost real credits ignoring this -- 100,500cr for 10 titanium_ore against a 25cr base (about
+  400x), and 220,108cr for 49 fuel_cell against a 43cr base (about 104x, 89% of a window's gross earnings)
+  (issue #458). A real premium buy happens too and is not a trap -- Mining Laser III at about 1.7x its
+  base was a legitimate purchase the same night -- so the line is roughly an order of magnitude over base,
+  not any premium at all. If a price looks absurd (tens or hundreds of times base), do not spot-buy it:
+  post `create_buy_order` naming your OWN price_each instead, a deliberate, cancelable bid rather than an
+  unreviewed spend. (Also a §5 deterministic backstop: in plan-then-execute the executor refuses a spot
+  `buy` whose estimate_purchase quote prices it over 8x the catalog base_value, on every iteration of
+  a repeat/until buy, and steers the same create_buy_order remedy -- issue #458.)
 - Item ids for buy/sell/jettison are exact snake_case CATALOG ids — copy them from listings or
   the catalog, never derive them from prose. Game prose pluralizes and paraphrases: refuel's own
   error says "Buy fuel cells" but the item id is `fuel_cell`, SINGULAR — 86/86 lifetime buy
@@ -407,8 +419,13 @@ Vocabulary / data shapes:
   a belt for titanium the belt does not contain). (Also a §5-adjacent deterministic producer in
   plan-then-execute: the harness fetches get_poi when a mineable POI is the location and an
   active mission still needs an item, and the digest renders the membership verdict — the
-  mission objective check, #291. Under improv you run the get_poi check yourself.) This deposit
-  check applies to MINING objectives only. A deliver_item/haul objective carries an item_id too but
+  mission objective check, #291. Under improv you run the get_poi check yourself.) Buying the item
+  does NOT count toward a mine-type objective's progress, however many units you end up holding
+  (live, 2026-07-20, #458: 12 titanium_ore bought for 120,600cr, then
+  complete_mission still blocked "titanium_ore 8/20 (mine 12 more)" 41 seconds later -- the purchase
+  changed nothing about the objective). (Also a §5-adjacent deterministic producer: the digest's
+  mission objective check states this in its own shortfall hint for a mine-type objective, #458.)
+  This deposit check applies to MINING objectives only. A deliver_item/haul objective carries an item_id too but
   is fulfilled by buying and hauling the goods to a target base, never by mining — do NOT read a
   belt's resource list as abandon-pressure on a delivery contract (#330). (Deterministic backstop:
   the digest's deposit check now skips the reference-enumerated non-mining objective types —
