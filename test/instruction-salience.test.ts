@@ -342,12 +342,17 @@ describe("pinned instructions leave goals only by explicit revoke (#817)", () =>
     // mentioning A -- more than MAX_PINNED_INSTRUCTIONS (20). Churned across
     // just 3 OTHER texts (pin/revoke/re-pin), matching the live shape the
     // finding names: a handful of distinct steers, repeatedly pinned and
-    // unpinned. Kept to few DISTINCT texts on purpose -- MAX_PINNED_
-    // INSTRUCTIONS is also a real cap on distinct pinned texts (same as
-    // MAX_STATION_SIGHTINGS bounding distinct systems), so flooding 20+
-    // distinct OTHER texts would legitimately age A's text out under that
-    // cap -- a different thing from the bug this reproduces: a global window
-    // that evicts by ROW COUNT and can't tell one text's churn from another's.
+    // unpinned. Kept to few DISTINCT texts on purpose -- this reproduces the
+    // ROW-window bug (a global "last 20 EVENTS" read can't tell one text's
+    // churn from another's), which is the narrower of two restart-replay
+    // defects, so this test bounds distinct texts to isolate it. (Round 2
+    // correction: an earlier version of this comment claimed flooding 20+
+    // DISTINCT other texts would "legitimately" age A out under
+    // MAX_PINNED_INSTRUCTIONS -- wrong, because the live cap on
+    // pinnedInstructions counts only CURRENTLY PINNED texts, and a
+    // pin-then-revoke pair leaves nothing pinned. 20+ distinct texts that
+    // were each pinned then revoked, never touching A, is exactly the OTHER
+    // defect the filtered-replay test below covers, and A survives it too.)
     for (let i = 0; i < 25; i++) {
       store.appendEvent({
         agentId: "a1", ts: 1_000_001 + i, type: "instruction_pin_changed",
@@ -364,6 +369,101 @@ describe("pinned instructions leave goals only by explicit revoke (#817)", () =>
     await completePlan(agent2); // finishes the resumed step
     await agent2.runOnce(); // plan_done -> replan reports instruction_done
     expect(agent2.snapshot().goals).toContain(STANDING_INSTRUCTION);
+  });
+
+  // Breakage caught (PR #113 fix-round-2 verify, finding 1, same probe the
+  // verifier ran): the round-1 fix bounded the restart replay's LIMIT to
+  // DISTINCT TEXTS, but a text whose LATEST row is pinned:false still spent
+  // one of those slots -- so pin A, then pin-then-revoke 20+ OTHER texts
+  // (each individually pinned and immediately revoked, so nothing but A is
+  // pinned by restart time), and A's row still got pushed out by the LIMIT
+  // even though the live pinnedInstructions Set never held more than A and
+  // one other at once. The fix (Store.latestEventPerPayloadKey's `filter`
+  // param) drops a text's row from the grouped result before LIMIT applies
+  // unless its latest row is pinned:true, so an unpinned text costs nothing
+  // regardless of how many of them there are.
+  test("a pin survives pin-then-revoke churn across 20+ OTHER texts (replay filters on current pin state, not just distinct text count)", async () => {
+    const store = new Store(":memory:");
+    const agent1 = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store,
+      planner: new MockPlanner([plan(1)]), config, now: () => 1_000_000,
+    });
+    agent1.instruct(STANDING_INSTRUCTION, { standing: true });
+    await agent1.runOnce(); // lands in goals, A's pin event durably written first
+    expect(store.loadPlan("a1")!.goals).toContain(STANDING_INSTRUCTION);
+
+    // 21 OTHER texts -- one more than MAX_PINNED_INSTRUCTIONS (20) -- each
+    // pinned then immediately revoked, so its LATEST row is pinned:false and
+    // none is pinned at restart time. Under the round-1-only fix, the
+    // grouped query still bounds DISTINCT TEXTS to 20 before checking pin
+    // state at all, so A -- the oldest of these 22 distinct texts -- is the
+    // one the plain "top 20 by id" cut leaves out.
+    for (let i = 0; i < 21; i++) {
+      const text = `revoked steer ${i}`;
+      store.appendEvent({
+        agentId: "a1", ts: 1_000_001 + i * 2, type: "instruction_pin_changed",
+        payload: { text, pinned: true },
+      });
+      store.appendEvent({
+        agentId: "a1", ts: 1_000_002 + i * 2, type: "instruction_pin_changed",
+        payload: { text, pinned: false },
+      });
+    }
+
+    // Simulate a restart: a brand new Agent instance resuming the SAME
+    // store, same pattern as the restart tests above.
+    const planner2 = new MockPlanner([plan(2, { instruction_done: true })]);
+    const agent2 = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store, planner: planner2, config, now: () => 2_000_000,
+    });
+    await completePlan(agent2); // finishes the resumed step
+    await agent2.runOnce(); // plan_done -> replan reports instruction_done
+    expect(agent2.snapshot().goals).toContain(STANDING_INSTRUCTION);
+  });
+
+  // Breakage caught (PR #113 fix-round-2 verify, finding 2): the constructor
+  // called mergeStandingGoals() BEFORE replaying instruction_pin_changed
+  // events, so pinnedInstructions was still empty for that very call --
+  // evictOldestUnpinned (which mergeStandingGoals uses to make room for a
+  // config goal) saw every persisted goal as unpinned, including A. Probe
+  // matches the verifier's exactly: goals at the MAX_GOALS (5) cap with A
+  // pinned in the OLDEST slot, restart with a config goal present (an
+  // operator adding one to agents.yaml, or just any boot where `goals` is
+  // configured) so mergeStandingGoals has to evict something to make room.
+  // Under the bug, A -- not any of the ordinary steers -- was the one
+  // evicted, silently: no revoke, no instruction_pin_changed receipt.
+  test("a config goal at restart does not evict a pinned instruction via mergeStandingGoals (pin replay must run before the merge)", () => {
+    const store = new Store(":memory:");
+    // Pre-seed the state a live session reaches after A's pin landed and 4
+    // unretired steers followed it -- A in the oldest slot, already at the
+    // MAX_GOALS (5) cap. Seeded directly, same isolation rationale as the
+    // "MAX_GOALS unretired steers" test above: this targets the CONSTRUCTOR's
+    // merge, not the live replan path.
+    store.savePlan("a1", plan(1), [STANDING_INSTRUCTION, "steer 1", "steer 2", "steer 3", "steer 4"]);
+    store.appendEvent({
+      agentId: "a1", ts: 1, type: "instruction_pin_changed",
+      payload: { text: STANDING_INSTRUCTION, pinned: true },
+    });
+
+    // Restart with a config standing goal present -- mergeStandingGoals must
+    // make room for it, which is the only thing that forces an eviction here.
+    const agent = new Agent({
+      id: "a1", persona: "test miner", api: stubApi(), store,
+      planner: new MockPlanner([plan(2)]), config, now: () => 1_000_000,
+      goals: ["MILESTONE"],
+    });
+
+    // A survives, still pinned; the config goal took the front slot and the
+    // OLDEST UNPINNED steer ("steer 1") is the one that made room for it.
+    expect(agent.snapshot().goals).toEqual(
+      ["MILESTONE", STANDING_INSTRUCTION, "steer 2", "steer 3", "steer 4"],
+    );
+    // No silent eviction receipt for A: the only instruction_pin_changed row
+    // for its text is still the original pin.
+    const pinEvents = store.recentEventsByType("a1", "instruction_pin_changed", 10)
+      .filter((e) => (e.payload as { text?: unknown }).text === STANDING_INSTRUCTION);
+    expect(pinEvents).toHaveLength(1);
+    expect((pinEvents[0]!.payload as { pinned: boolean }).pinned).toBe(true);
   });
 
   // Persisted-state schema tolerance (AGENTS.md binding convention): a store

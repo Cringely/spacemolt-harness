@@ -721,6 +721,66 @@ export class Agent {
       this.goals = saved.goals.slice(-MAX_GOALS);
       this.planState = "running";
     }
+    // Pinned operator instructions (issue #817): rebuild which current goal
+    // texts are exempt from instruction_done retirement, from persisted
+    // pin-change events.
+    //
+    // Runs BEFORE mergeStandingGoals below (#817 round 2 fix; verifier-
+    // reproduced at 8a3eda9): mergeStandingGoals calls evictOldestUnpinned,
+    // which decides what's pinned by reading this.pinnedInstructions. Loading
+    // this block AFTER that call -- its original position -- left
+    // pinnedInstructions empty for the very merge that runs on every
+    // construct, so a restart with a config goal present (an operator adding
+    // one, or just any boot with `goals` configured) evicted a pinned text in
+    // the oldest slot with no revoke and no receipt: the #817 incident again,
+    // reached through the OTHER caller of evictOldestUnpinned. Moving this
+    // block up costs nothing else -- nothing below it in the constructor
+    // depends on load order relative to the pin replay, and this.store/
+    // this.id are set at the top of the constructor, well before this point.
+    //
+    // latestEventPerPayloadKey, NOT recentEventsByType (post-merge finding,
+    // same F1 shape as the station_observed comment below): this memory can
+    // write SEVERAL rows per text -- pin, revoke, re-pin -- and every revoke
+    // (including a no-op one, before the fix below made those silent) wrote
+    // its own row too. A most-recent-N-ROWS window mixes those in with every
+    // OTHER text's pin/unpin traffic, so 20 unrelated pin-change rows (or 20
+    // no-op revokes) push a still-pinned text's row out of the window; on
+    // restart it loads unpinned and the next instruction_done retires it --
+    // the #817 incident again, reached at restart instead of at replan.
+    // Grouping on `text` gives each text exactly one row (its newest), so
+    // `limit` bounds distinct PINNED TEXTS and no amount of chatter about
+    // other texts can evict one. Rows arrive oldest-first (same as
+    // recentEventsByType), but with one row per text the loop below doesn't
+    // even need the ordering -- each text's single row already IS its
+    // current state. Tolerant loader, same discipline as above: a payload
+    // missing either field is SKIPPED, never a crash -- this is also the
+    // "predates the change" case (a store written before #817 has no
+    // instruction_pin_changed events at all, so this loop runs zero times
+    // and every goal loads ordinary-retirable).
+    //
+    // The `{ field: "pinned", equals: true }` filter (#817 round 2, verifier-
+    // reproduced at 8a3eda9) is the OTHER half of the round-1 fix. Grouping on
+    // `text` bounds distinct texts, but round 1 still counted a text whose
+    // LATEST row is `pinned:false` toward that bound -- pin A, then run
+    // instruct(standing) + revoke across 20 other texts, and A's row (still
+    // the newest FOR ITS OWN key) got pushed out anyway because the un-pinned
+    // texts' rows occupied 20 of the 20 grouped-and-limited slots ahead of
+    // it. The live in-memory set never counted those; only PINNED texts do.
+    // Filtering to `pinned:true` before the query's LIMIT makes the two agree:
+    // an unpinned text's row costs nothing, so no amount of pin/revoke churn
+    // on OTHER texts can push a currently-pinned one out. See
+    // Store.latestEventPerPayloadKey's filter parameter doc for why the
+    // filter has to apply to the grouped (one-row-per-key) result, not to
+    // raw rows before grouping.
+    for (const e of this.store.latestEventPerPayloadKey(
+      this.id, "instruction_pin_changed", "text", MAX_PINNED_INSTRUCTIONS, { field: "pinned", equals: true },
+    )) {
+      const p = e.payload as { text?: unknown; pinned?: unknown } | null;
+      if (p && typeof p.text === "string" && typeof p.pinned === "boolean") {
+        if (p.pinned) this.pinnedInstructions.add(p.text);
+        else this.pinnedInstructions.delete(p.text);
+      }
+    }
     // Standing config goals (#216): merge into the structured goal channel at
     // load, alongside -- never instead of -- the persisted goals. Invariant: a
     // stated standing objective lives in this.goals DURABLY across the
@@ -757,36 +817,6 @@ export class Agent {
           detail: typeof p.detail === "string" ? p.detail : "",
           learnedAt: e.ts,
         });
-      }
-    }
-    // Pinned operator instructions (issue #817): rebuild which current goal
-    // texts are exempt from instruction_done retirement, from persisted
-    // pin-change events.
-    //
-    // latestEventPerPayloadKey, NOT recentEventsByType (post-merge finding,
-    // same F1 shape as the station_observed comment below): this memory can
-    // write SEVERAL rows per text -- pin, revoke, re-pin -- and every revoke
-    // (including a no-op one, before the fix below made those silent) wrote
-    // its own row too. A most-recent-N-ROWS window mixes those in with every
-    // OTHER text's pin/unpin traffic, so 20 unrelated pin-change rows (or 20
-    // no-op revokes) push a still-pinned text's row out of the window; on
-    // restart it loads unpinned and the next instruction_done retires it --
-    // the #817 incident again, reached at restart instead of at replan.
-    // Grouping on `text` gives each text exactly one row (its newest), so
-    // `limit` bounds distinct PINNED TEXTS and no amount of chatter about
-    // other texts can evict one. Rows arrive oldest-first (same as
-    // recentEventsByType), but with one row per text the loop below doesn't
-    // even need the ordering -- each text's single row already IS its
-    // current state. Tolerant loader, same discipline as above: a payload
-    // missing either field is SKIPPED, never a crash -- this is also the
-    // "predates the change" case (a store written before #817 has no
-    // instruction_pin_changed events at all, so this loop runs zero times
-    // and every goal loads ordinary-retirable).
-    for (const e of this.store.latestEventPerPayloadKey(this.id, "instruction_pin_changed", "text", MAX_PINNED_INSTRUCTIONS)) {
-      const p = e.payload as { text?: unknown; pinned?: unknown } | null;
-      if (p && typeof p.text === "string" && typeof p.pinned === "boolean") {
-        if (p.pinned) this.pinnedInstructions.add(p.text);
-        else this.pinnedInstructions.delete(p.text);
       }
     }
     // Station geography (issue #517): rebuild the confirmed-station map from
