@@ -423,6 +423,18 @@ const SEAMS: Seam[] = [
     // pass on a neighbour's vocabulary rather than on this bullet.
     anchors: ["220,108cr", "100,500cr", /8x the catalog base_value/],
   },
+  {
+    guard: "mine-objective buy-is-a-no-op teaching (#458: the digest's shortfall hint for a mine-type " +
+      "objective now states that buying the item does not advance it -- a live capture on the same " +
+      "issue bought 12 titanium_ore for 120,600cr and complete_mission was still blocked " +
+      "'titanium_ore 8/20 (mine 12 more)' 41 seconds later)",
+    // The literal shortfall-hint text the planner reads, the same choice the
+    // deposits-too-sparse and Ore-VALUE seams above make (pin the rendered
+    // STRING, not a comment near it) -- this lesson lives entirely in that
+    // one string, so the string vanishing IS the lesson vanishing.
+    code: { file: "src/planner/digest.ts", marker: "buying it does NOT advance this objective, only the mine action does" },
+    anchors: ["titanium_ore 8/20 (mine 12 more)", /does NOT count toward a mine-type objective/i],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {

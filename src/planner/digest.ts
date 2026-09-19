@@ -956,10 +956,20 @@ const NON_MINING_OBJECTIVE_TYPES = new Set([
 // Any type string the reference does not name gets an honest "not
 // recognized" hint instead of a fabricated verb: silently falling back to
 // "mine" for an unknown type would just relocate this bug, not close it.
+// Issue #458 addition to the "mine" case: a live capture on this same issue
+// (2026-07-20 00:56:51Z-00:57:32Z) bought 12 titanium_ore for 120,600cr, then
+// hit complete_mission blocked at 'titanium_ore 8/20 (mine 12 more)' 41s
+// later -- proof the mine-type counter only credits mined units, so a planner
+// reading "mine N more" as "get N more by any means" can spend real credits
+// on a buy that leaves the shortfall exactly where it was. missions.md names
+// no mine-type objective explicitly (its taxonomy is delivery/visit/kill/
+// community, docs/game-reference/upstream/docs/missions.md:47-50); the
+// vocabulary for this type is entirely this live capture and the #291
+// fixture NON_MINING_OBJECTIVE_TYPES already cites above.
 function shortfallHint(o: ActiveMissionObjective, need: number): string {
   switch (o.type) {
     case "mine":
-      return `mine ${need} more`;
+      return `mine ${need} more -- buying it does NOT advance this objective, only the mine action does`;
     case "deliver_item":
       return o.targetBase ? `deliver ${need} more to ${o.targetBase}` : `deliver ${need} more`;
     case "kill_pirate":

@@ -419,8 +419,13 @@ Vocabulary / data shapes:
   a belt for titanium the belt does not contain). (Also a §5-adjacent deterministic producer in
   plan-then-execute: the harness fetches get_poi when a mineable POI is the location and an
   active mission still needs an item, and the digest renders the membership verdict — the
-  mission objective check, #291. Under improv you run the get_poi check yourself.) This deposit
-  check applies to MINING objectives only. A deliver_item/haul objective carries an item_id too but
+  mission objective check, #291. Under improv you run the get_poi check yourself.) Buying the item
+  does NOT count toward a mine-type objective's progress, however many units you end up holding
+  (live, 2026-07-20, #458: 12 titanium_ore bought for 120,600cr, then
+  complete_mission still blocked "titanium_ore 8/20 (mine 12 more)" 41 seconds later -- the purchase
+  changed nothing about the objective). (Also a §5-adjacent deterministic producer: the digest's
+  mission objective check states this in its own shortfall hint for a mine-type objective, #458.)
+  This deposit check applies to MINING objectives only. A deliver_item/haul objective carries an item_id too but
   is fulfilled by buying and hauling the goods to a target base, never by mining — do NOT read a
   belt's resource list as abandon-pressure on a delivery contract (#330). (Deterministic backstop:
   the digest's deposit check now skips the reference-enumerated non-mining objective types —

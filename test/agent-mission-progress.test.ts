@@ -338,7 +338,9 @@ describe("mission objective check rendering (#291)", () => {
       }],
     });
     expect(digest).toContain("Completion check: NOT ready");
-    expect(digest).toContain("titanium_ore 14/20 (mine 6 more)");
+    expect(digest).toContain(
+      "titanium_ore 14/20 (mine 6 more -- buying it does NOT advance this objective, only the mine action does)",
+    );
     expect(digest).toContain("Do NOT plan complete_mission yet");
     expect(digest).not.toContain("READY");
   });
