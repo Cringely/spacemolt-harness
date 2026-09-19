@@ -1204,6 +1204,43 @@ describe("social capabilities", () => {
     });
     for (const canary of canaries) expect(text).not.toContain(canary);
   });
+
+  // Repeated-buy remainder (issue #669): the digest-visibility half of the
+  // fix -- Agent.unavailableItemIdsAtStation (agent.ts) populates this field;
+  // these tests pin buildDigest's OWN rendering contract for it in isolation,
+  // independent of the agent-level producer (covered end-to-end in
+  // test/agent-item-unavailable-guard.test.ts).
+  describe("unavailableItemsAtStation (issue #669 remainder)", () => {
+    test("renders the proven-unavailable line with the exact item ids and the create_buy_order remedy", () => {
+      const text = buildDigest({ ...baseCtx, unavailableItemsAtStation: ["fuel_cell"] });
+      expect(text).toContain("Proven unavailable at this station");
+      expect(text).toContain("fuel_cell");
+      expect(text).toContain("create_buy_order");
+    });
+
+    test("lists multiple proven-unavailable ids on the one line", () => {
+      const text = buildDigest({ ...baseCtx, unavailableItemsAtStation: ["fuel_cell", "iron_ore"] });
+      const line = text.split("\n").find((l) => l.includes("Proven unavailable at this station"))!;
+      expect(line).toContain("fuel_cell");
+      expect(line).toContain("iron_ore");
+    });
+
+    // ABSENCE IS NOT A VERDICT (#94): undefined must never render as "nothing
+    // proven unavailable" turning into an implied "everything is stocked" --
+    // it must simply omit the section. toContain (not toEqual) is the right
+    // matcher's blind spot to close here: a false claim rendered ANYWHERE in
+    // the 1000+ line digest would still pass a weaker whole-string check, so
+    // the assertion targets the exact section header.
+    test("omits the section when unavailableItemsAtStation is undefined", () => {
+      const text = buildDigest(baseCtx);
+      expect(text).not.toContain("Proven unavailable at this station");
+    });
+
+    test("omits the section when unavailableItemsAtStation is an empty array", () => {
+      const text = buildDigest({ ...baseCtx, unavailableItemsAtStation: [] });
+      expect(text).not.toContain("Proven unavailable at this station");
+    });
+  });
 });
 
 describe("summarizeStatus", () => {

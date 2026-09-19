@@ -176,9 +176,9 @@ const ORE_VALUE_SCALE = VALUED_ORES.length
  * previousGoal, chatMessages, missionsText, activeMissionsText, activeMissions,
  * currentPoiDepositIds (replay-only legacy, read as the deposit-id fallback),
  * currentPoiDeposits, nearbyText,
- * lowFuel, marketRows, shipFit, fittedModules, shipyardText, purchaseEstimates,
- * marketInsightsText, locationInfo
- * -- all twenty-six appear below, so nothing the agent knows
+ * lowFuel, marketRows, unavailableItemsAtStation, shipFit, fittedModules,
+ * shipyardText, purchaseEstimates, marketInsightsText, locationInfo
+ * -- all twenty-seven appear below, so nothing the agent knows
  * is silently dropped from what the planner sees. No caching of ctx itself:
  * agent.ts builds a fresh PlanContext object on every replan() call
  * (src/agent/agent.ts's replan method), so buildDigest has nothing stale to
@@ -338,6 +338,21 @@ export function buildDigest(ctx: PlanContext): string {
   // shape, never parsed), quoted+truncated at the listing bound like the mission
   // and shipyard listings above.
   if (ctx.marketInsightsText) lines.push(renderMarketInsights(ctx.marketInsightsText));
+  // Repeated-buy remainder (issue #669): the buy-side counterpart to
+  // renderMarketCheck above -- which items THIS station has already PROVEN
+  // it will not sell, so the planner is told before it proposes the same
+  // doomed buy again rather than only refused after (the executor's
+  // itemUnavailableAtStation guard still refuses the live call regardless;
+  // this closes the proposal itself). Parsed ids from our own event memory,
+  // not quoted game text, so no untrusted-text treatment. Rendered only when
+  // the list is non-empty -- ABSENCE IS NOT A VERDICT (#94): an undefined or
+  // empty list means "nothing proven unavailable here in-window," never "this
+  // station stocks everything."
+  if (ctx.unavailableItemsAtStation?.length) {
+    lines.push(
+      `Proven unavailable at this station (a recent buy here was blocked item_not_available): ${ctx.unavailableItemsAtStation.join(", ")}. Do not plan another buy for these here -- post a standing bid with create_buy_order instead, or find another station.`,
+    );
+  }
   // Ship tool (issue #219): what the pilot is FLYING, rendered next to the
   // credits it could spend on a better one. The live miss this closes: the
   // miner sat on 17,306cr with zero lifetime module or hull purchases, because
@@ -956,10 +971,28 @@ const NON_MINING_OBJECTIVE_TYPES = new Set([
 // Any type string the reference does not name gets an honest "not
 // recognized" hint instead of a fabricated verb: silently falling back to
 // "mine" for an unknown type would just relocate this bug, not close it.
+// Issue #458 addition to the "mine" case: a live capture on this same issue
+// (2026-07-20 00:56:51Z-00:57:32Z) bought 12 titanium_ore for 120,600cr, then
+// hit complete_mission blocked at 'titanium_ore 8/20 (mine 12 more)' 41s
+// later -- proof the mine-type counter only credits mined units, so a planner
+// reading "mine N more" as "get N more by any means" can spend real credits
+// on a buy that leaves the shortfall exactly where it was. missions.md names
+// no mine-type objective explicitly (its taxonomy is delivery/visit/kill/
+// community, docs/game-reference/upstream/docs/missions.md:47-50). That #458
+// capture is proof of the digest's OWN rendered text ("mine 12 more"), not of
+// the game's raw type field -- the "mine" spelling is the #291 fixture's
+// guess at the reference shape, built with no live capture backing it
+// (client.test.ts:690). The one in-repo live capture of an active mining
+// objective (test/fixtures/eval-cases.json:2618, case prod-39932-notification,
+// harvested from the production pilot, event 39932, 2026-07-16, same Titanium
+// Extraction Contract) reads type "mine_resource", not "mine" -- so both
+// spellings are handled below, and a mine_resource objective is what
+// production actually sends.
 function shortfallHint(o: ActiveMissionObjective, need: number): string {
   switch (o.type) {
     case "mine":
-      return `mine ${need} more`;
+    case "mine_resource":
+      return `mine ${need} more -- buying it does NOT advance this objective, only the mine action does`;
     case "deliver_item":
       return o.targetBase ? `deliver ${need} more to ${o.targetBase}` : `deliver ${need} more`;
     case "kill_pirate":
