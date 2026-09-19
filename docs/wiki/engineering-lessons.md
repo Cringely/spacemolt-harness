@@ -669,4 +669,4 @@ Source: PR #95 body (doc-steward pass, 2026-09-06); `AGENTS.md` (the two-repo si
 **Discipline.** Harness engineering (a gate's actual coverage versus its assumed coverage); AI engineering (what an agent is told counts as proof of a check).
 
 **Why it matters for building agents.** "Show your work, paste the command and its output" is good practice for reproducibility, and it fails exactly when the command's own text is the secret. A verification gate scoped to git objects (a pre-commit or pre-push hook) cannot see a comment posted through a platform's API; that gap is structural, not a missed edge case in the hook. Any project that scrubs identity or secrets from commits should separately check the channels a hook never touches.
-Source: PR #116, 2026-09-19 (fix-round comment scrubbed and reposted after a post-wave scan); `security.md`'s channel list (commit metadata, file contents, commit messages, branch/tag/PR text).
+Source: PR #116, 2026-09-19 (fix-round comment scrubbed and reposted after a post-wave scan).
