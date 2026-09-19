@@ -4,11 +4,25 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-19, doc-steward pass after the P1 wave (PRs #112-#116). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-19, doc-steward pass reconciling PRs #107/#108 and confirming prod deploy state live. Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-19. Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`. This block last moved 2026-09-11 (PR #100); the batch-two cluster and today's wave both landed since without a refresh. The earlier 09-19 pass had dropped rather than moved the pre-batch-two material; it and batch two's own facts are both restored below under "Recent history, 2026-09-11"._
+_Refreshed 2026-09-19 (second pass, deploy confirmation). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+
+**#107 AND #108 MERGED, BOTH CONFLICTS RESOLVED.** #107 (`c81f8dc`) closes #553: `complete_mission` now refuses an id the fresh active-mission listing provably lacks. It needed a second review round — the council's first REVISE caught a regression where the id-less-row guard skipped the #291 shortfall invariant for a different, cleanly-parsed row; fixed before merge. #108 (`ece3650`) closes #1030: an order now gets refused when the pilot's KNOWN credit balance can't cover it, with the earlier receipt misattribution corrected. Both issues closed.
+
+**DEPLOY STATE NOW CONFIRMED, CORRECTING THE PRIOR NOTE.** PM live capture 2026-09-19 via `docker inspect` on the prod host: the container ran `ghcr.io/cringely/spacemolt-harness:4eb1c64` from 18:20:28Z (auto-deploy cron, healthy, `RestartCount 0`, zero uncaught/fatal/panic/ZodError/crash log lines since start, all three pilots emitting `status_snapshot`), then `:ece3650` from 19:49:27Z (same health signature). The "prod on `a892877`" note above was never re-checked after 09-11; the per-minute auto-deploy cron had been shipping every merge the whole time. Every merged change through #108 is deployed. Offline tests remain the only proof of behavior; the live signals below are what to watch next.
+
+**OPEN PRs: NONE FROM THIS WAVE.**
+
+**BACKLOG:** see `docs/backlog.md`, regenerated this pass.
+
+**Next:** #1106 (standing-flag adoption, digest/improv drift) and #1053 (the `failures.ts` message-discarding producer) are queued; #1107 is the P3 findings umbrella. Watch the live signals: frozen-pilot planner calls (#534), guard-refused dry-station buys and `plan_budget_exceeded` (#669), overpriced-buy refusals (#458), low-fuel reflex fire-and-fail (#672), `mission_not_found` refusals (#553), 0cr listing-fee refusals (#1030) — each is a guard now live, none yet confirmed quiet in production.
+
+## Recent history, 2026-09-19
+
+Moved out of `## NOW` on 2026-09-19 (second pass) to fit the 500-word cap; superseded only where the block above says so. Extracted verbatim from the prior `## NOW` block.
 
 **TODAY, FIVE PRs MERGED, FLEET-FLIGHT GATE F3 CLOSED.** #114 (`746c4aa`) escalates a frozen Layer-4 no-progress arm to a held stop instead of a longer periodic retry, closing #534. #112 (`09972b7`) surfaces `item_not_available` memory to the planner before it repeats a doomed buy, closing #669. #115 (`45f8da1`) adds a value-aware buy price-sanity guard and teaches mine objectives not to buy, closing #458. #116 (`532acfc`) recognizes a proven-fuel destination as a fuel remedy, closing #672. #113 (`4eb1c64`) pins a standing operator instruction against `instruction_done`, closing #817; needed two fix rounds. #114, #115, and #116 each needed one; #112 advanced on the council's first pass with zero. Re-triage separately closed #681 and #569 as already fixed by earlier merged work (an independent skeptic pass could not refute either); see each issue's own 2026-09-19 close comment. That finishes epic #591's F3 gate ("loops terminate": #534/#569/#571/#592 per the epic's 2026-07-28 comment), with all four issues now closed. F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) is next. Filed: #1106 (P2, #817 follow-ups: no caller sends `standing` yet, the digest still contradicts the guard, improv-spec drift) and #1107 (P3 umbrella, council findings below the must-fix floor).
 
