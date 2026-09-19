@@ -116,6 +116,26 @@ describe("parser trap coverage", () => {
     expect(mismatches).toEqual([]);
   });
 
+  // Issue #1030. This parser is the SECOND producer of a StatusSnapshot, and it
+  // has the same `credits` fallback the structured one does: no `<n>cr` token in
+  // the header yields 0. Catches that fallback being reported as a KNOWN zero
+  // balance, which is what would let one unparsed header refuse every order the
+  // pilot plans (executor.ts's zero-balance order guard reads creditsKnown
+  // first, and it can only do that if this producer sets it honestly).
+  // The POSITIVE CONTROL is the second half: a header that DOES carry a balance
+  // must come back known, or a parser hardwired to `false` would pass the first
+  // half alone.
+  test("a header with no credits token is UNKNOWN, not a known zero; one with a balance is known", () => {
+    const noCredits = parseStatusText("Miner [nebula] | Somewhere\nFuel: 40/100");
+    expect(noCredits.creditsKnown).toBe(false);
+    expect(noCredits.credits).toBe(0); // the display fallback still stands
+    expect(parseStatusText("").creditsKnown).toBe(false);
+
+    const withCredits = parseStatusText("Miner [nebula] | 500cr | Somewhere");
+    expect(withCredits.creditsKnown).toBe(true);
+    expect(withCredits.credits).toBe(500);
+  });
+
   test("graceful degradation: a status text missing sections never throws, yields safe defaults", () => {
     const s = parseStatusText("Miner [nebula] | 500cr | Somewhere");
     expect(s.credits).toBe(500);

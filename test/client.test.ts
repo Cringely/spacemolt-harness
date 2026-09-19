@@ -81,10 +81,42 @@ describe("SpacemoltClient", () => {
     await client.login("TestPilot", "pw");
     const s = await client.status();
     expect(s).toEqual({
-      credits: 1234, fuel: 40, maxFuel: 100, hull: 80, maxHull: 100,
+      credits: 1234, creditsKnown: true, fuel: 40, maxFuel: 100, hull: 80, maxHull: 100,
       cargoUsed: 5, cargoCapacity: 50, docked: true, inTransit: false, systemId: "sys-alpha",
       poiId: "poi-1", dockedAt: "base-1", cargo: [],
     });
+  });
+
+  // Issue #1030. `credits` falls back to 0 when get_status carries no numeric
+  // balance, and every display consumer wants that number -- but a blocking
+  // consumer (executor.ts's zero-balance order guard) must not read the
+  // fallback as a real empty wallet. Catches the fallback being reported as a
+  // KNOWN zero, which is what would turn one malformed get_status into a pilot
+  // that cannot place an order at all.
+  //
+  // Two shapes, and they are the only two that reach here. A credits field of
+  // the WRONG TYPE is a third possibility that does NOT: `player` is
+  // `.partial()` but its credits stays `z.number()`, so a string balance fails
+  // StatusSchema.parse outright and status() throws -- which the executor
+  // already treats as a null snapshot and the same fail-open path. Verified by
+  // running that case here: it threw rather than returning creditsKnown false.
+  test("status() reports an absent credits field as UNKNOWN, not as zero", async () => {
+    for (const player of [undefined, {}] as const) {
+      server?.stop();
+      server = startFakeServer();
+      server.setHandler("spacemolt", "get_status", () => ({
+        structuredContent: {
+          ship: { fuel: 40, max_fuel: 100, hull: 80, max_hull: 100, cargo_used: 5, cargo_capacity: 50 },
+          ...(player === undefined ? {} : { player }),
+          location: { docked_at: "base-1", in_transit: false },
+        },
+      }));
+      const client = makeClient();
+      await client.login("TestPilot", "pw");
+      const s = await client.status();
+      expect(s.creditsKnown).toBe(false);
+      expect(s.credits).toBe(0); // the display fallback still stands
+    }
   });
 
   // SM-6 fix: get_status's structuredContent carries a `cargo` array --
