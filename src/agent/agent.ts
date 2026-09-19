@@ -20,7 +20,7 @@ import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
 import {
-  NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
+  NO_PROGRESS_REPLANS, UNRECOVERABLE_ARMS_THRESHOLD, STRAND_FUEL_BLOCK_THRESHOLD, STRAND_SELF_DESTRUCT_WINDOW_MULT,
   DOCK_NO_STATION_STREAK_THRESHOLD, DOCK_NO_STATION_CLASS, isDockDeadEnd, dockNoStationStreak,
   progressFingerprint, progressGrandTotal, fuelBelowReserve, isStranded, noProgressJudge,
 } from "./stall-monitor";
@@ -268,6 +268,17 @@ const REFLEX_FAILURE_LOOKBACK = 50;
 // it stops being true, so unlike round 1 there is no permanent-block failure
 // mode for this constant to paper over with a TTL.
 const BUY_ORDER_OPEN_LOOKBACK = 50;
+
+// Issue #672: bound on the fuel_observed reload, grouped by systemId via
+// latestEventPerPayloadKey so this bounds DISTINCT SYSTEMS remembered, not
+// raw events -- same shape as MAX_STATION_SIGHTINGS (stations.ts), and set
+// to the SAME value rather than a new tunable: this is the identical "working
+// neighbourhood" a pilot revisits, just a different fact about each system
+// (whether its station's tank had fuel last time, not its name/POI/services).
+// A destination outside this shortlist is a system the pilot has not
+// recently confirmed fuel at either way, so the predicate below fails closed
+// on it regardless of the exact number.
+const FUEL_SIGHTING_LOOKBACK = MAX_STATION_SIGHTINGS;
 
 // Issue #669: bound on the item_unavailable read, same distinct-key-cap
 // sizing receipt as BUY_ORDER_OPEN_LOOKBACK directly above -- grouped by the
@@ -532,6 +543,12 @@ export class Agent {
   private lastFingerprint: string | undefined;
   private noProgressReplans = 0;
   private stuck = false;
+  // #534: consecutive Layer-4 ARMS (not replans) against the SAME frozen
+  // fingerprint, spanning across backoff-then-rearm cycles. Set to 1 on a
+  // fresh arm (this.stuck was false going in) and incremented on a re-arm
+  // (this.stuck was already true, meaning no differing fingerprint was
+  // observed in between -- see the arm branch and the "differs" branch below).
+  private consecutiveArmsSameFingerprint = 0;
 
   // SM-6 fix: executeOne()'s "plan_done" branch nulls this.plan out (see
   // below) before replan() ever runs for the resulting "plan_done" wake, so
@@ -628,6 +645,27 @@ export class Agent {
   // upstream/docs/stations.md, but every sighting here is one we docked at, and
   // a stale entry costs one blocked dock that immediately re-teaches the truth).
   private stationSightings = new Map<string, StationSighting>();
+
+  // Issue #672: per-system fuel-station knowledge, DELIBERATELY separate from
+  // stationSightings above rather than a field on StationSighting. That
+  // structure's reset-on-different-stationPoiId semantics (rememberStation,
+  // stations.ts) exist to keep `station`/`services` attributed to the exact
+  // POI that proved them, and are triggered from a LATER, execution-time
+  // observation (learnStation, on a dock/service success) than this one
+  // (gatherSurroundings, at replan time, before any dock has happened this
+  // leg) -- folding fuel into the same map means every FIRST sighting of a
+  // system splits into two station_observed events instead of one, and a
+  // dock that confirms a station's POI for the first time would wipe a fuel
+  // reading gatherSurroundings already recorded for it moments earlier (tried
+  // and reverted; the collateral touched four already-reviewed #517 tests for
+  // no benefit -- planRemediesFuel below never reads stationPoiId/station/
+  // services, only systemId -> fuelAvailable). A standalone map matching the
+  // reflexGaveUpAt/fuelGaveUpHere latch shape (reflex.ts/agent.ts) is the
+  // smaller, already-proven pattern for "a small durable per-key fact" this
+  // codebase uses repeatedly (item_unavailable, buy_order) -- see
+  // rememberFuelSighting below. undefined key = never observed; true = last
+  // reading > 0; false = last reading == 0 (known fuel-empty).
+  private fuelSightings = new Map<string, boolean>();
   // Rung-1 latch: the timestamp of the last steward re-steer. THE bound on the
   // instruction-class re-steer burn (see runSteward). Gated now - last >= window.
   // Seeded to -Infinity ("never steered") so the FIRST re-steer is always
@@ -891,6 +929,18 @@ export class Agent {
     // map is already at or under it. The trim this replaced was dead code --
     // deleting it changed no test, which is how it was caught (PR #18 review
     // ablation). Runtime growth past the cap stays rememberStation's job.
+
+    // Issue #672: reload fuelSightings from the persisted fuel_observed
+    // stream, same shape as the station_observed reload above (grouped by
+    // systemId, newest FUEL_SIGHTING_LOOKBACK systems). Schema tolerance: a
+    // row with no string systemId or non-boolean fuelAvailable is dropped by
+    // the checks below, never a crash on an older or hand-edited payload.
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "fuel_observed", "systemId", FUEL_SIGHTING_LOOKBACK)) {
+      const p = e.payload as { systemId?: unknown; fuelAvailable?: unknown } | null;
+      if (!p || typeof p.systemId !== "string" || !p.systemId || typeof p.fuelAvailable !== "boolean") continue;
+      this.fuelSightings.set(p.systemId, p.fuelAvailable);
+    }
+
     // Experiment latch (#240): re-latch from a persisted experiment_reverted
     // event, but only when its payload matches the CURRENT experiment config --
     // an operator who changes the counter or window has started a NEW
@@ -1320,14 +1370,53 @@ export class Agent {
     // AND evaluateWake's low_fuel branch (planRemediesFuel gates both) for
     // most travel. That is issue #526 (a pilot mined itself to 2/130 and
     // stranded because the fuel floor was advisory) recreated with travel
-    // plans standing in for mining plans. A destination-aware version --
-    // evidence the destination actually HAS fuel, not merely that the plan
-    // moves -- is real follow-up work, tracked as the open remainder of
-    // #672; this PR ships only the give-up below, which does not have this
-    // failure mode (it acts on a PROVEN station fact, not a plan shape).
+    // plans standing in for mining plans.
+    //
+    // The destination-aware version, shipped here: the plan's NEXT
+    // cross-system movement counts as a fuel remedy only when its OWN target
+    // system has a PROVEN fuel reading -- this.fuelSightings.get(systemId)
+    // === true, folded in by gatherSurroundings from get_system's
+    // `fuel_reserve` field (ground truth on the station's tank,
+    // docs/game-reference/upstream/guides/fuel.md:139: "If base.Fuel == 0,
+    // station refuel returns station_fuel_empty" -- not an inference from
+    // which action succeeded). This is evidence about THIS system, not about
+    // plan shape: a travel-to-mine plan's destination is a mining system,
+    // and virtually never carries a confirmed-fuel reading for the reason it
+    // does not need one, so the predicate stays false there exactly as it
+    // did before this change (fail CLOSED -- unobserved or empty both read
+    // as "not proven").
+    //
+    // Gated on nextHop, not "any remaining travel_to" (review REVISE, PR
+    // #116 round 1): checking every remaining step let a LATER leg with a
+    // proven destination (e.g. a round trip's final `travel_to(home)`) paper
+    // over an EARLIER leg that heads away from fuel entirely -- reproduced
+    // offline with undocked/10-fuel and plan [travel_to(far_market), dock,
+    // travel_to(home)]: fuel_observed only for home, and the outbound leg to
+    // far_market ran with the low_fuel wake silenced the whole way there.
+    // That is the #526 shape again, just with the proof sitting on the wrong
+    // leg instead of missing outright. Reading only the next hop -- the one
+    // step this tick's travel_to executor call would actually act on -- is
+    // what makes the "bounded to the travel leg" property below true: once
+    // THIS hop is consumed, `remaining`'s next hop is whatever comes after
+    // it, re-evaluated fresh, never a promise inherited from a later leg.
+    //
+    // A plan whose next hop genuinely IS a known-fuel station gets the same
+    // deferral an explicit unexecuted `refuel` step already earns below, and
+    // that deferral is bounded to the travel leg: once the travel_to step is
+    // consumed, the next hop is a different step (or none), this predicate
+    // is re-evaluated against THAT step, and ordinary reflex/wake protection
+    // resumes the moment the next hop isn't a proven destination (including
+    // the terminal give-up below, if the reading turns out stale). See
+    // docs/decisions.md, 2026-09-19, for the rejected alternatives
+    // (plan-shape matching alone; a live query on an unvisited destination).
+    const knownFuelDestination = (params: unknown): boolean => {
+      const systemId = (params as { system_id?: string }).system_id;
+      return systemId !== undefined && this.fuelSightings.get(systemId) === true;
+    };
+    const nextHop = remaining.find((s) => MOVEMENT_ACTIONS.has(s.action));
     const planRemediesFuel = remaining.some(
       (s) => s.action === "refuel" && (s.params as { target?: string }).target === undefined
-    );
+    ) || (nextHop !== undefined && nextHop.action === "travel_to" && knownFuelDestination(nextHop.params));
     const planRemediesHull = remaining.some((s) => s.action === "repair");
 
     // Issue #672: a per-station give-up backstop for a TERMINAL reflex
@@ -1561,20 +1650,24 @@ export class Agent {
           // BLOCKED_THRASH_THRESHOLD identical-identity wakes to re-arm.
           this.consecutiveThrashWakes = 0;
           this.lastThrashKey = undefined;
-          // Hand off to the damper: the string-keyed thrash gate has armed, so
-          // it OWNS this thrash episode. Clear Layer 4's freeze counter so the
-          // two guards don't double-arm on the same identical-key thrash. With
-          // NO_PROGRESS_REPLANS (6) > BLOCKED_THRASH_THRESHOLD (3), the damper
-          // always reaches its threshold first on identical-key thrash and this
-          // reset keeps Layer 4 below 6; Layer 4 only arms when the damper
-          // CAN'T (a varying key that never builds a streak) -- its intended
-          // backstop role.
-          this.noProgressReplans = 0;
-          this.lastFingerprint = undefined;
+          // The consecutive thrash gate (Layer 2) arms and alerts here on its
+          // own terms -- backoff bookkeeping only, no planner call. It used to
+          // also clear Layer 4's freeze counter (noProgressReplans /
+          // lastFingerprint) on arm, on the theory that the two guards would
+          // otherwise double-arm on the same identical-key thrash. That
+          // handoff was itself a defect (review finding on #534): resetting
+          // on anything weaker than a genuinely differing game-state
+          // fingerprint (Layer 4's own fp-differs branch, below) silently
+          // zeroed noProgressReplans on every Layer 2 arm. Since
+          // BLOCKED_THRASH_THRESHOLD (3) is below NO_PROGRESS_REPLANS (6), a
+          // frozen episode that re-arms Layer 2 every 3 wakes never let
+          // noProgressReplans reach 6, so Layer 4's escalation
+          // (UNRECOVERABLE_ARMS_THRESHOLD) was unreachable for as long as
+          // Layer 2 kept arming. Layer 4 owns its own reset on real progress;
+          // Layer 2 no longer touches its counters.
           // #95: the consecutive gate owns this thrash episode, so floor the
           // windowed same-error breaker past these blocks -- it must not
-          // re-fire on repeats the gate already broke (mirrors the Layer 4
-          // reset just above).
+          // re-fire on repeats the gate already broke.
           this.repeatBreakFloorTs = this.now();
           return;
         }
@@ -1722,6 +1815,26 @@ export class Agent {
       // couldn't.
       if (status) {
         const fp = progressFingerprint(status, this.cursor.step);
+        // Escalation short-circuit (#534). Once the SAME frozen fingerprint
+        // has already armed Layer 4 UNRECOVERABLE_ARMS_THRESHOLD times
+        // running (set in the arm branch below), one more same-fingerprint
+        // confirmation is a foregone conclusion: extend backoff directly
+        // instead of spending a fresh NO_PROGRESS_REPLANS-replan burst to
+        // re-derive an answer already known. This is what actually stops the
+        // periodic arm-burn-arm cycle rather than just re-labeling it: the
+        // ONLY ways out are a differing fingerprint (this `fp ===` check
+        // fails, so control falls to the branches below) or an operator
+        // instruction, which this guard excludes so it always reaches
+        // replan() at the bottom, the same escape the backoff check above
+        // already grants it (#815).
+        if (
+          wake.reason !== "instruction" && this.stuck &&
+          this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD &&
+          fp === this.lastFingerprint
+        ) {
+          this.plannerBackoffUntil = this.now() + this.config.heartbeatMinutes * 60_000;
+          return; // do not replan -- already confirmed unrecoverable on this state
+        }
         if (fp === this.lastFingerprint) {
           this.noProgressReplans++;
         } else {
@@ -1730,22 +1843,50 @@ export class Agent {
           // -- the differing state is observed at the boundary just before the
           // replan that consumes it -- consolidated to a single locus so the
           // fingerprint isn't recomputed inside replan() (simplicity: one
-          // producer for the flag, not two).
+          // producer for the flag, not two). Also clears the escalation counter
+          // (#534): a genuinely different state means any future arm is a
+          // fresh episode, not a continuation of this one -- the reset
+          // condition the counter exists to enforce.
           this.noProgressReplans = 1;
           this.lastFingerprint = fp;
           this.stuck = false;
+          this.consecutiveArmsSameFingerprint = 0;
         }
         if (this.noProgressReplans >= NO_PROGRESS_REPLANS) {
+          // #534: count consecutive arms against the SAME fingerprint.
+          // `this.stuck` read here is still its PRE-arm value -- true means a
+          // re-arm (the fingerprint never differed since the last arm, so
+          // increment); false means a fresh arm (start at 1). Nothing weaker
+          // than the genuinely-differing-fingerprint branch above may reset
+          // this counter -- that IS the bug this counter fixes (see
+          // test/no-progress.test.ts's "does not reset on backoff expiry
+          // alone" ablation).
+          this.consecutiveArmsSameFingerprint = this.stuck ? this.consecutiveArmsSameFingerprint + 1 : 1;
           this.stuck = true;
           this.plannerBackoffUntil = this.now() + this.config.heartbeatMinutes * 60_000;
-          this.emit("operator_alert", {
-            class: "no_progress", fingerprint: fp, replans: this.noProgressReplans,
-          });
-          // Reset the run like the thrash gate does: after backoff expires, the
-          // next still-frozen wake starts counting again and needs another full
-          // NO_PROGRESS_REPLANS run to re-arm -- a damped duty cycle, not a
-          // permanent latch. `stuck` deliberately stays true across this reset;
-          // only a differing fingerprint (above) clears it.
+          if (this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD) {
+            // Distinct alert class (#534) so the dashboard and any downstream
+            // tooling can tell a STOPPED episode from a merely THROTTLED one.
+            // plannerHealth.stuck (already true either way, read via
+            // snapshot()) still drives the dashboard's existing Stuck banner
+            // unchanged -- this alert only adds the finer distinction.
+            this.emit("operator_alert", {
+              class: "unrecoverable", fingerprint: fp, replans: this.noProgressReplans,
+              arms: this.consecutiveArmsSameFingerprint,
+            });
+          } else {
+            this.emit("operator_alert", {
+              class: "no_progress", fingerprint: fp, replans: this.noProgressReplans,
+            });
+          }
+          // Reset the run like the thrash gate does: after backoff expires, a
+          // still-frozen wake below the escalation threshold starts counting
+          // again and needs another full NO_PROGRESS_REPLANS run to re-arm --
+          // a damped duty cycle. Past the threshold the short-circuit above
+          // takes over instead, so this reset stops mattering for spend
+          // (noProgressReplans just idles at 0). `stuck` deliberately stays
+          // true across this reset; only a differing fingerprint (above)
+          // clears it.
           this.noProgressReplans = 0;
           return; // do not replan this tick -- arming exists to stop the spend
         }
@@ -2432,6 +2573,11 @@ export class Agent {
         // fuel-acquisition briefing (exact catalog fuel ids + dock/buy/refuel).
         lowFuel: statusSnap ? this.fuelBelowReserve(statusSnap) : undefined,
         marketRows,
+        // Repeated-buy remainder (issue #669): the buy-side counterpart to
+        // marketRows above, read fresh every replan off the docked station
+        // (same status snapshot statusSummary is built from -- no extra
+        // fetch, no game call; see unavailableItemIdsAtStation).
+        unavailableItemsAtStation: this.unavailableItemIdsAtStation(statusSnap?.dockedAt),
         // Ship tool (issue #219): from the SAME snapshot as statusSummary --
         // get_status already carries the ship's CPU/power grid and fitted
         // modules, so the fit costs no extra query (see StatusSnapshot.fit).
@@ -2687,6 +2833,13 @@ export class Agent {
       // behavioral fuel-block signal decides).
       const cp = system.currentPoi;
       this.currentPoiHasBase = !!(cp && (cp.hasBase || (cp.fuelReserve ?? 0) > 0));
+      // Issue #672: fold the current POI's fuel_reserve into fuelSightings, so
+      // a LATER travel_to plan toward THIS system can cite ground truth
+      // instead of matching plan shape alone (the predicate PR #50's review
+      // blocked -- see planRemediesFuel below). Gated on hasBase: a
+      // belt/anomaly's fuel_reserve is meaningless noise for "can I refuel
+      // here", so only a real station's reading is recorded.
+      if (cp?.hasBase) this.rememberFuelSighting(system.id, (cp.fuelReserve ?? 0) > 0);
       return {
         systemId: system.id,
         systemName: system.name,
@@ -2909,6 +3062,36 @@ export class Agent {
     this.emit("item_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
   }
 
+  // Repeated-buy remainder (issue #669, skeptic finding upheld on the
+  // triage): the executor guard (executeTick's itemUnavailableAtStation,
+  // below) answers "is THIS ONE proposed buy step blocked" for the executor
+  // alone -- digest construction never received this memory at all, so the
+  // planner kept PROPOSING the same doomed buy even though every attempt was
+  // refused pre-call. This is the digest-side read: every item id proven
+  // item_not_available at `stationKey`, within the same
+  // repeatBlockWindowMinutes window the guard uses, for
+  // PlanContext.unavailableItemsAtStation (types.ts). Deliberately a
+  // SEPARATE query from the guard's rather than a shared helper: the guard's
+  // read matches one exact (station,item) pair and is pinned by three PR
+  // rounds of tests (#58, #73) this fix must not touch; this one enumerates a
+  // whole station's blocked set. Sharing one helper would need its own
+  // branching for "match one" vs "collect all", which is not simpler than
+  // two short reads of the same event stream.
+  private unavailableItemIdsAtStation(stationKey: string | null | undefined): string[] {
+    if (!stationKey) return [];
+    const windowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    const now = this.now();
+    const ids = new Set<string>();
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "item_unavailable", "key", ITEM_UNAVAILABLE_LOOKBACK)) {
+      const r = e.payload as { stationKey?: unknown; itemId?: unknown };
+      if (r.stationKey === stationKey && typeof r.itemId === "string" && (now - e.ts) < windowMs) {
+        ids.add(r.itemId);
+      }
+    }
+    return [...ids].sort();
+  }
+
   // Clearing half of the memory above. `predicate` decides which open
   // records this call closes -- see the two call sites (cancel_order success,
   // buy_filled notification) for why each is scoped the way it is.
@@ -2945,6 +3128,36 @@ export class Agent {
     this.emit("station_observed", {
       systemId, stationPoiId: entry.stationPoiId, station: entry.station, services: entry.services,
     });
+  }
+
+  // Issue #672: fold a fresh get_system fuel_reserve reading into
+  // fuelSightings (see that field's doc comment for why this is a standalone
+  // map rather than a StationSighting field). Map insertion order doubles as
+  // recency for the LRU-style eviction: `delete` then `set` moves the
+  // touched system to the end, so the entry `keys().next()` returns is
+  // always the LEAST recently OBSERVED one -- and that reordering now runs
+  // on EVERY call, changed or not (review REVISE, PR #116 round 1: the prior
+  // version returned before the delete+set whenever the reading matched what
+  // was already stored, so a station revisited many times without its
+  // reading ever changing -- home, the common case -- never refreshed its
+  // recency and was the FIRST evicted once enough OTHER systems were seen,
+  // exactly backwards from what an LRU is for. Reproduced offline: record
+  // home, record 7 others, re-observe home unchanged, record 1 new system --
+  // home was gone). fuel_observed is still emitted only when the reading is
+  // a genuinely NEW fact for this system -- a first observation, or a
+  // transition across the empty/available boundary -- so the persisted
+  // stream stays one event per fact, not one per dock; the emit decision and
+  // the recency refresh are now two independent checks instead of one early
+  // return doing both.
+  private rememberFuelSighting(systemId: string, fuelAvailable: boolean): void {
+    const changed = this.fuelSightings.get(systemId) !== fuelAvailable;
+    this.fuelSightings.delete(systemId);
+    this.fuelSightings.set(systemId, fuelAvailable);
+    if (this.fuelSightings.size > FUEL_SIGHTING_LOOKBACK) {
+      const oldest = this.fuelSightings.keys().next().value;
+      if (oldest !== undefined) this.fuelSightings.delete(oldest);
+    }
+    if (changed) this.emit("fuel_observed", { systemId, fuelAvailable });
   }
 
   private sparseRuleValid(rule: { learnedAt: number }): boolean {

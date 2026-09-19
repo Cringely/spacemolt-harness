@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Agent, type AgentConfig } from "../src/agent/agent";
 import { MockPlanner } from "../src/planner/mock";
+import { MAX_STATION_SIGHTINGS } from "../src/agent/stations";
 import { Store } from "../src/store/store";
 import { SpacemoltError } from "../src/client/http";
-import type { GameApi, StatusSnapshot } from "../src/client/client";
+import type { GameApi, StatusSnapshot, SystemInfo } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
 
 const baseConfig: AgentConfig = {
@@ -329,6 +330,273 @@ describe("Agent reflex integration", () => {
     calls.length = 0;
     await agent.runOnce(); // tick 2: market_prime_station, still below threshold
     expect(calls).toEqual([]); // give-up still armed despite the flood elsewhere
+  });
+
+  // Issue #672's destination-aware remedy: a plan whose remaining steps
+  // TRAVEL toward fuel (no refuel step yet -- the destination hasn't been
+  // reached) was invisible to planRemediesFuel before this fix. The live
+  // incident (production, 2026-08-01): a plan `[travel_to(haven), dock]` sat
+  // frozen because planRemediesFuel only recognized an already-present
+  // refuel step, so the low_fuel wake kept preempting the travel before it
+  // could run. PR #50's review BLOCKED a version of this fix that matched
+  // relocation-only PLAN SHAPE (any `[travel_to, dock]`), because that shape
+  // is indistinguishable from an ordinary travel-to-MINE leg and would have
+  // recreated #526 (a pilot mined itself to 2/130 and stranded because the
+  // fuel floor was advisory). This suite proves the shipped predicate is
+  // destination-aware instead: it only defers when the SPECIFIC target
+  // system has a PROVEN fuel_reserve reading (fuelSightings, folded in by
+  // gatherSurroundings from get_system), never from plan shape alone.
+  describe("destination-aware fuel remedy: travel toward a system with a proven fuel reading (#672)", () => {
+    const undockedLowFuel: StatusSnapshot = {
+      credits: 0, fuel: 10, maxFuel: 100, hull: 100, maxHull: 100,
+      cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false,
+    };
+
+    // find_route is the ONLY call travel_to needs to make progress (per the
+    // #670 travelStubApi precedent above); jump is a later tick's concern and
+    // out of scope for what this predicate governs (whether the WAKE gets a
+    // turn to preempt the travel at all).
+    function travelApi() {
+      const calls: string[] = [];
+      const api: GameApi = {
+        async action(name): Promise<V2Result> {
+          calls.push(name);
+          if (name === "find_route") {
+            return {
+              structuredContent: {
+                found: true, total_jumps: 1, estimated_fuel: 5, fuel_available: 100,
+                route: [{ jumps: 0, system_id: "market_prime" }, { jumps: 1, system_id: "haven" }],
+                target_system: "haven",
+              },
+            };
+          }
+          return { result: "ok" };
+        },
+        async status() { return undockedLowFuel; },
+        async notifications() { return []; },
+      };
+      return { api, calls };
+    }
+
+    test("a plan traveling toward a PROVEN fuel system suppresses low_fuel and the travel step runs", async () => {
+      const store = new Store(":memory:");
+      // Ground truth planted directly in the persisted stream, the same way
+      // the #517 restart tests seed station_observed -- this is what a prior
+      // gatherSurroundings observation at Haven would have written.
+      store.appendEvent({
+        agentId: "a1", ts: 500, type: "fuel_observed", payload: { systemId: "haven", fuelAvailable: true },
+      });
+      store.savePlan("a1", {
+        goal: "reach Haven for fuel", steps: [{ action: "travel_to", params: { system_id: "haven" } }],
+      }, []);
+      const { api, calls } = travelApi();
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+      await agent.runOnce();
+      // toEqual, not toContain (this file's own convention, e.g. line ~115):
+      // toContain would still pass if the wake fired AND some other call also
+      // happened, masking the exact regression this test exists to catch.
+      // find_route then jump: the plan's own travel step ran to completion
+      // (10 fuel available comfortably covers the fixture's 5-fuel hop).
+      expect(calls).toEqual(["find_route", "jump"]);
+      expect(planner.contexts.length).toBe(0); // no wake fired -> no replan
+    });
+
+    // #526-style regression, restated for the destination-aware predicate: an
+    // UNPROVEN destination (never observed) must NOT suppress the wake --
+    // shape alone (`travel_to` with nothing else remaining) is exactly the
+    // predicate PR #50's review blocked, and this is the ordinary shape of a
+    // travel-to-MINE leg too (see the big comment on planRemediesFuel,
+    // agent.ts). No fuel_observed event is seeded for "haven" at all.
+    test("a plan traveling toward an UNPROVEN system does not suppress the wake (#526 regression)", async () => {
+      const store = new Store(":memory:");
+      store.savePlan("a1", {
+        goal: "reach Haven, purpose unknown to this predicate", steps: [{ action: "travel_to", params: { system_id: "haven" } }],
+      }, []);
+      const { api, calls } = travelApi();
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+      await agent.runOnce();
+      expect(calls).toEqual([]); // travel_to must NOT run -- the wake preempts it first
+      expect(planner.contexts.length).toBe(1);
+      expect(planner.contexts[0]!.wake.reason).toBe("low_fuel");
+    });
+
+    // Sharper regression: the destination IS known, but the last reading was
+    // fuel-EMPTY. "not known fuel-empty" is part of the issue's own bar
+    // (#672) -- a stale-but-once-good reading must not read as permission.
+    test("a plan traveling toward a system LAST OBSERVED fuel-empty does not suppress the wake", async () => {
+      const store = new Store(":memory:");
+      store.appendEvent({
+        agentId: "a1", ts: 500, type: "fuel_observed", payload: { systemId: "haven", fuelAvailable: false },
+      });
+      store.savePlan("a1", {
+        goal: "reach Haven", steps: [{ action: "travel_to", params: { system_id: "haven" } }],
+      }, []);
+      const { api, calls } = travelApi();
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+      await agent.runOnce();
+      expect(calls).toEqual([]);
+      expect(planner.contexts.length).toBe(1);
+      expect(planner.contexts[0]!.wake.reason).toBe("low_fuel");
+    });
+
+    // Review REVISE (PR #116 round 1): the shipped predicate checked
+    // `remaining.some(travel_to && knownFuelDestination)` over the WHOLE
+    // remaining plan, so a LATER leg with a proven destination (a round
+    // trip's final `travel_to(home)`) suppressed the wake for an EARLIER leg
+    // that heads away from fuel entirely -- exactly the #526 shape this
+    // predicate exists to keep closed, just with the proof sitting on the
+    // wrong leg instead of missing outright. Reproduced offline at 9a1d68d
+    // with this fixture: pre-fix, calls came back ["find_route", "jump"]
+    // (the far_market leg ran with no wake); the fix gates on ONLY the next
+    // cross-system hop, so it must come back [] with a low_fuel wake here.
+    test("a plan whose FIRST leg is unproven is not shielded by a proven LATER leg (#672 round 2, PR #116)", async () => {
+      const store = new Store(":memory:");
+      store.appendEvent({
+        agentId: "a1", ts: 500, type: "fuel_observed", payload: { systemId: "home", fuelAvailable: true },
+      });
+      store.savePlan("a1", {
+        goal: "haul to far_market then return home", steps: [
+          { action: "travel_to", params: { system_id: "far_market" } },
+          { action: "dock", params: {} },
+          { action: "travel_to", params: { system_id: "home" } },
+        ],
+      }, []);
+      const { api, calls } = travelApi();
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+
+      await agent.runOnce();
+      expect(calls).toEqual([]); // the far_market leg is unproven -- the wake must preempt it
+      expect(planner.contexts.length).toBe(1);
+      expect(planner.contexts[0]!.wake.reason).toBe("low_fuel");
+    });
+
+    // The LEARNING half: gatherSurroundings must actually write the evidence
+    // the tests above plant directly. Gated on hasBase -- a belt/anomaly's
+    // fuel_reserve is meaningless noise for "can I refuel here" (see the
+    // rememberFuelSighting call site, agent.ts), proven by the negative case.
+    describe("gatherSurroundings folds get_system's fuel_reserve into fuelSightings", () => {
+      function stationSystem(fuelReserve: number, hasBase = true): SystemInfo {
+        return {
+          id: "haven", name: "Haven", connections: [],
+          pois: [{ id: "haven_hub", name: "Grand Exchange Station", type: "station", hasBase }],
+          currentPoi: { id: "haven_hub", name: "Grand Exchange Station", type: "station", hasBase, fuelReserve },
+        };
+      }
+      function apiAt(system: SystemInfo): GameApi {
+        return {
+          async action(): Promise<V2Result> { return { result: "ok" }; },
+          async status() {
+            return {
+              credits: 0, fuel: 80, maxFuel: 100, hull: 100, maxHull: 100,
+              cargoUsed: 0, cargoCapacity: 50, docked: true, inTransit: false, systemId: "haven",
+            };
+          },
+          async notifications() { return []; },
+          async getSystem() { return system; },
+        };
+      }
+
+      test("a station with fuel_reserve > 0 is recorded as fuelAvailable: true", async () => {
+        const store = new Store(":memory:");
+        const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+        const agent = new Agent({
+          id: "a1", persona: "p", api: apiAt(stationSystem(5000)), store, planner, config: baseConfig, now: () => 1,
+        });
+        await agent.runOnce(); // no_plan wake -> replan -> gatherSurroundings observes the station
+        expect(store.recentEventsByType("a1", "fuel_observed", 10).map((e) => e.payload))
+          .toEqual([{ systemId: "haven", fuelAvailable: true }]);
+      });
+
+      test("a station with fuel_reserve == 0 is recorded as fuelAvailable: false (known-empty)", async () => {
+        const store = new Store(":memory:");
+        const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+        const agent = new Agent({
+          id: "a1", persona: "p", api: apiAt(stationSystem(0)), store, planner, config: baseConfig, now: () => 1,
+        });
+        await agent.runOnce();
+        expect(store.recentEventsByType("a1", "fuel_observed", 10).map((e) => e.payload))
+          .toEqual([{ systemId: "haven", fuelAvailable: false }]);
+      });
+
+      test("a non-base POI's fuel_reserve is never recorded -- not a station", async () => {
+        const store = new Store(":memory:");
+        const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+        const agent = new Agent({
+          id: "a1", persona: "p", api: apiAt(stationSystem(5000, false)), store, planner, config: baseConfig, now: () => 1,
+        });
+        await agent.runOnce();
+        expect(store.recentEventsByType("a1", "fuel_observed", 10)).toEqual([]);
+      });
+    });
+  });
+
+  // Review REVISE (PR #116 round 1): rememberFuelSighting's old early return
+  // -- `if (this.fuelSightings.get(systemId) === fuelAvailable) return;` --
+  // ran BEFORE the delete+set that moves an entry to the back of the map, so
+  // an UNCHANGED re-observation never refreshed recency. Map insertion order
+  // is the LRU signal (`keys().next()` is evicted first), so the station a
+  // pilot re-docks at most often -- home, the ordinary case -- was the one
+  // entry that never moved and therefore the FIRST evicted once enough other
+  // systems were seen, exactly backwards from what an LRU cache is for.
+  // Reproduced directly against the private method (the same shape as the
+  // #672 finding's own repro): record home, record MAX_STATION_SIGHTINGS - 1
+  // others (map now at the cap), re-observe home UNCHANGED, record one more
+  // new system. Pre-fix, home is gone; the fix must keep it and evict the
+  // entry that was never re-touched instead.
+  describe("rememberFuelSighting recency survives an unchanged re-observation (#672 round 2, PR #116)", () => {
+    test("home is refreshed by a no-op re-observation, not evicted by it", () => {
+      const store = new Store(":memory:");
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const { api } = makeApi(lowFuelDocked);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+      const priv = agent as unknown as {
+        rememberFuelSighting(systemId: string, fuelAvailable: boolean): void;
+        fuelSightings: Map<string, boolean>;
+      };
+
+      priv.rememberFuelSighting("home", true);
+      for (let i = 1; i < MAX_STATION_SIGHTINGS; i++) priv.rememberFuelSighting(`sys${i}`, true);
+      expect(priv.fuelSightings.size).toBe(MAX_STATION_SIGHTINGS);
+      expect(priv.fuelSightings.has("home")).toBe(true);
+
+      priv.rememberFuelSighting("home", true); // unchanged -- must still refresh recency
+      priv.rememberFuelSighting("sys_new", true); // one more distinct system forces one eviction
+
+      expect(priv.fuelSightings.size).toBe(MAX_STATION_SIGHTINGS);
+      expect(priv.fuelSightings.has("home")).toBe(true); // survived: recency was refreshed
+      expect(priv.fuelSightings.has("sys1")).toBe(false); // sys1, never re-touched, is the one evicted
+    });
+
+    // The emit side of the split: an unchanged re-observation still writes
+    // nothing to the persisted stream (the existing "many replans in a row"
+    // behavior this fix must not regress), while a genuinely new fact still
+    // does.
+    test("an unchanged re-observation emits no fuel_observed event; a changed one still does", () => {
+      const store = new Store(":memory:");
+      const planner = new MockPlanner([{ goal: "x", steps: [{ action: "undock", params: {} }] }]);
+      const { api } = makeApi(lowFuelDocked);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 1 });
+      const priv = agent as unknown as { rememberFuelSighting(systemId: string, fuelAvailable: boolean): void };
+
+      priv.rememberFuelSighting("home", true);
+      priv.rememberFuelSighting("home", true); // unchanged
+      expect(store.recentEventsByType("a1", "fuel_observed", 10).map((e) => e.payload))
+        .toEqual([{ systemId: "home", fuelAvailable: true }]); // one event, not two
+
+      priv.rememberFuelSighting("home", false); // changed -- emits
+      expect(store.recentEventsByType("a1", "fuel_observed", 10).map((e) => e.payload))
+        .toEqual([
+          { systemId: "home", fuelAvailable: true },
+          { systemId: "home", fuelAvailable: false },
+        ]);
+    });
   });
 
   // Issue #670, end-to-end through the real Agent/Store wiring (not just the

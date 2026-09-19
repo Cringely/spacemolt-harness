@@ -233,6 +233,20 @@ export interface PlanContext {
   // mirrors missionsText; an empty parse also emits market_error so a live
   // shape divergence is visible).
   marketRows?: MarketRow[];
+  // Repeated-buy remainder (issue #669): item ids PROVEN item_not_available at
+  // the currently DOCKED station, within the same repeatBlockWindowMinutes
+  // window the executor's pre-call guard already enforces (Agent.
+  // learnItemUnavailable / the itemUnavailableAtStation read in agent.ts's
+  // executeTick call, computed fresh per replan by
+  // Agent.unavailableItemIdsAtStation). marketRows above is the SELL-side
+  // datum (which held items this station buys); this is BUY-side -- which
+  // items this station has already proven it does NOT sell, so the planner
+  // is told BEFORE proposing the buy instead of only refused after (the guard
+  // stops the live call either way; this closes the proposal itself). Absence
+  // is not a verdict (#94): undefined/empty means "nothing proven unavailable
+  // here in-window", never "everything is stocked" -- the digest renders no
+  // section from missing data, only from a populated list.
+  unavailableItemsAtStation?: string[];
   // Ship tool (issue #219): the pilot's own fitting grid -- CPU/power headroom,
   // slot counts, and what is fitted right now. Taken from the SAME StatusSnapshot
   // statusSummary is built from (get_status already carries the ship's fit block;

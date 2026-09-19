@@ -804,6 +804,42 @@ describe("SpacemoltClient", () => {
     });
   });
 
+  // Buy price-sanity guard (issue #458), snake_case-to-camelCase mapping:
+  // executor-buy-price-guard.test.ts stubs PurchaseCostEstimate directly and
+  // never exercises this client-side parse, so a field-name drift here (e.g.
+  // `unfilled` typo'd on either side of the schema) would pass every executor
+  // test while shipping broken. Fixture shaped to the full, all-required
+  // EstimatePurchaseResponse (docs/game-reference/upstream/openapi-v2.json:
+  // action, available, fills[], item, message, quantity_requested, sales_tax,
+  // sales_tax_rate_bps, subtotal, total_cost, unfilled) -- reference-tier, no
+  // live capture of this response exists yet (see estimatePurchaseCost's own
+  // comment). A partial fill: 70 requested, only 5 filled, 65 unfilled.
+  test("estimatePurchaseCost() maps the openapi-shaped EstimatePurchaseResponse, including partial-fill unfilled", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+    server.setHandler("spacemolt_market", "estimate_purchase", () => ({
+      structuredContent: {
+        action: "estimate_purchase",
+        item: "fuel_cell",
+        quantity_requested: 70,
+        available: 5,
+        subtotal: 22_460,
+        sales_tax: 0,
+        sales_tax_rate_bps: 0,
+        total_cost: 22_460,
+        fills: [{ price_each: 4_492, quantity: 5, subtotal: 22_460 }],
+        unfilled: 65,
+        message: "partial fill",
+      },
+    }));
+    expect(await client.estimatePurchaseCost("fuel_cell", 70)).toEqual({
+      quantityRequested: 70,
+      totalCost: 22_460,
+      unfilled: 65,
+    });
+  });
+
   // Capability-audit follow-up (2026-07-19): get_location's parsed subset --
   // nearby-entity counts and transit_* fields. Shape is ASSUMED from the
   // openapi-v2.json example (no live get_location capture exists), so this

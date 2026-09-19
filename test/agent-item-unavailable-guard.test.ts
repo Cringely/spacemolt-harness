@@ -204,3 +204,93 @@ describe("Agent repeated-buy guard (#669)", () => {
     expect(calls).toEqual(["buy", "buy"]);
   });
 });
+
+// Digest-visibility remainder (skeptic finding on #669's triage, upheld): the
+// guard above stops the LIVE resubmission, but the planner was never TOLD
+// before proposing it -- digest construction never received this memory (see
+// PlanContext.unavailableItemsAtStation, types.ts, and
+// Agent.unavailableItemIdsAtStation, agent.ts). These tests exercise the SEAM
+// the skeptic named directly testable: MockPlanner.contexts[n] is the exact
+// PlanContext each replan built, so this asserts on the harness's real
+// producer (Agent.replan), not a hand-built ctx (digest.test.ts pins
+// buildDigest's own rendering contract for the field in isolation).
+describe("PlanContext digest visibility (#669 remainder)", () => {
+  test("the docked-station replan after a blocked item_not_available buy carries the item in unavailableItemsAtStation", async () => {
+    const status = dockedStatus();
+    const { api } = makeApi(status, async (name) => {
+      if (name === "buy") throw new SpacemoltError("command_error", ITEM_NOT_AVAILABLE_MSG);
+      return { result: "ok" };
+    });
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([buyFuelCell, buyFuelCell]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce(); // no_plan -> replan (buy #1); ctx0: nothing learned yet
+    await agent.runOnce(); // buy #1 reaches the API, blocks, learns unavailable
+    await agent.runOnce(); // blocked -> replan (buy #2); ctx1: built AFTER the block
+
+    expect(planner.contexts).toHaveLength(2);
+    expect(planner.contexts[0]!.unavailableItemsAtStation ?? []).not.toContain("fuel_cell");
+    expect(planner.contexts[1]!.unavailableItemsAtStation).toEqual(["fuel_cell"]);
+  });
+
+  test("the item drops out of unavailableItemsAtStation once the memory window expires", async () => {
+    const status = dockedStatus();
+    // First `buy` call blocks item_not_available (learns the memory); every
+    // later `buy` call succeeds (the station "restocked") -- deliberately
+    // asymmetric so the post-expiry attempt does NOT re-learn a fresh
+    // item_unavailable event, which would make the post-expiry ctx show the
+    // item again for the RIGHT reason (a genuine new game block) and mask
+    // whether the STALE ts=1 record correctly stopped counting on its own.
+    let buyCalls = 0;
+    const { api } = makeApi(status, async (name) => {
+      if (name === "buy") {
+        buyCalls++;
+        if (buyCalls === 1) throw new SpacemoltError("command_error", ITEM_NOT_AVAILABLE_MSG);
+      }
+      return { result: "ok" };
+    });
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([buyFuelCell, buyFuelCell, buyFuelCell]);
+    let now = 1;
+    // Same heartbeat-widening reason as the expiry test above: the jump past
+    // the 30-min window must not itself trip a heartbeat wake first.
+    const longHeartbeatConfig: AgentConfig = { ...config, heartbeatMinutes: 60 };
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: longHeartbeatConfig, now: () => now });
+
+    await agent.runOnce(); // no_plan -> replan (buy #1)
+    await agent.runOnce(); // buy #1 blocked, learns unavailable at ts=1
+    await agent.runOnce(); // blocked -> replan (buy #2); ctx1: inside the window
+
+    now += 30 * 60_000 + 1; // 31 minutes past the original block
+    await agent.runOnce(); // buy #2 reaches the API again (window expired) and SUCCEEDS
+    await agent.runOnce(); // plan done -> replan (buy #3); ctx2: no new block was learned
+
+    expect(planner.contexts).toHaveLength(3);
+    expect(planner.contexts[1]!.unavailableItemsAtStation).toEqual(["fuel_cell"]);
+    // Matcher's blind spot closed: toEqual on the exact array (not
+    // toContain's count-blind presence check) proves the entry is gone, not
+    // merely that some other truthy value survives.
+    expect(planner.contexts[2]!.unavailableItemsAtStation).toEqual([]);
+  });
+
+  test("an item proven unavailable at one station does not appear in a replan docked at a DIFFERENT station", async () => {
+    const OTHER_STATION = "frontier_outpost";
+    const status = dockedStatus();
+    const { api } = makeApi(status, async (name) => {
+      if (name === "buy") throw new SpacemoltError("command_error", ITEM_NOT_AVAILABLE_MSG);
+      return { result: "ok" };
+    });
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([buyFuelCell, buyFuelCell]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce(); // no_plan -> replan (buy #1) at market_prime
+    await agent.runOnce(); // buy #1 blocked, learns unavailable at market_prime
+    status.dockedAt = OTHER_STATION; // pilot redocks elsewhere before the next replan
+    await agent.runOnce(); // blocked -> replan (buy #2); ctx1: docked at the OTHER station
+
+    expect(planner.contexts).toHaveLength(2);
+    expect(planner.contexts[1]!.unavailableItemsAtStation).toEqual([]);
+  });
+});
