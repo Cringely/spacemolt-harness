@@ -489,6 +489,25 @@ describe("executeTick: complete_mission membership guard (#553)", () => {
     expect(calls).toContainEqual({ name: "complete_mission", params: { id: "m-gone" } });
   });
 
+  test("fails OPEN when every parsed active entry carries no missionId (#553 review B1)", async () => {
+    // V2GameState.missions.active.items has no `required` array and
+    // client.ts:295 mirrors missionId as optional, so a fifth unreadable
+    // state slips past `!Array.isArray(missions)`: an array that DID parse
+    // but has nothing the membership check can match against. Before B1,
+    // `.find((m) => m.missionId === id)` finds nothing for ANY id here, so
+    // this state read as "not in the active list" and blocked every
+    // complete_mission for the deployment's life -- with guard:true routing
+    // it into `prevented`, hiding the outage from brokenCapabilities.
+    const { api, calls } = apiWithActiveList([
+      { missionId: undefined, objectives: [{ completed: true }] },
+      { missionId: undefined, objectives: [{ completed: true }] },
+    ]);
+    const plan: Plan = { goal: "g", steps: [{ action: "complete_mission", params: { id: "M-77" } }] };
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(r).toEqual({ kind: "plan_done", resultText: "ok" });
+    expect(calls).toContainEqual({ name: "complete_mission", params: { id: "M-77" } });
+  });
+
   test("fails OPEN when the get_active_missions fetch throws", async () => {
     const { api, calls } = stubApi({ status: undocked });
     const withMissions: GameApi = {
