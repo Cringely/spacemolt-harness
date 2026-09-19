@@ -106,6 +106,10 @@ const PlanContextSchema = z.object({
     bestBuy: z.number().optional(),
     buyQty: z.number(),
   })).optional(),
+  // Repeated-buy remainder (issue #669): mirrors PlanContext's
+  // unavailableItemsAtStation -- item ids, so a plain optional string array
+  // is the whole mirror, same shape as knownStations' `services` leaf below.
+  unavailableItemsAtStation: z.array(z.string()).optional(),
   shipFit: z.object({
     cpuUsed: z.number(),
     cpuCapacity: z.number(),

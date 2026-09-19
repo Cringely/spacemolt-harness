@@ -176,9 +176,9 @@ const ORE_VALUE_SCALE = VALUED_ORES.length
  * previousGoal, chatMessages, missionsText, activeMissionsText, activeMissions,
  * currentPoiDepositIds (replay-only legacy, read as the deposit-id fallback),
  * currentPoiDeposits, nearbyText,
- * lowFuel, marketRows, shipFit, fittedModules, shipyardText, purchaseEstimates,
- * marketInsightsText, locationInfo
- * -- all twenty-six appear below, so nothing the agent knows
+ * lowFuel, marketRows, unavailableItemsAtStation, shipFit, fittedModules,
+ * shipyardText, purchaseEstimates, marketInsightsText, locationInfo
+ * -- all twenty-seven appear below, so nothing the agent knows
  * is silently dropped from what the planner sees. No caching of ctx itself:
  * agent.ts builds a fresh PlanContext object on every replan() call
  * (src/agent/agent.ts's replan method), so buildDigest has nothing stale to
@@ -338,6 +338,21 @@ export function buildDigest(ctx: PlanContext): string {
   // shape, never parsed), quoted+truncated at the listing bound like the mission
   // and shipyard listings above.
   if (ctx.marketInsightsText) lines.push(renderMarketInsights(ctx.marketInsightsText));
+  // Repeated-buy remainder (issue #669): the buy-side counterpart to
+  // renderMarketCheck above -- which items THIS station has already PROVEN
+  // it will not sell, so the planner is told before it proposes the same
+  // doomed buy again rather than only refused after (the executor's
+  // itemUnavailableAtStation guard still refuses the live call regardless;
+  // this closes the proposal itself). Parsed ids from our own event memory,
+  // not quoted game text, so no untrusted-text treatment. Rendered only when
+  // the list is non-empty -- ABSENCE IS NOT A VERDICT (#94): an undefined or
+  // empty list means "nothing proven unavailable here in-window," never "this
+  // station stocks everything."
+  if (ctx.unavailableItemsAtStation?.length) {
+    lines.push(
+      `Proven unavailable at this station (a recent buy here was blocked item_not_available): ${ctx.unavailableItemsAtStation.join(", ")}. Do not plan another buy for these here -- post a standing bid with create_buy_order instead, or find another station.`,
+    );
+  }
   // Ship tool (issue #219): what the pilot is FLYING, rendered next to the
   // credits it could spend on a better one. The live miss this closes: the
   // miner sat on 17,306cr with zero lifetime module or hull purchases, because
