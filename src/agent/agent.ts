@@ -1377,37 +1377,24 @@ export class Agent {
           // BLOCKED_THRASH_THRESHOLD identical-identity wakes to re-arm.
           this.consecutiveThrashWakes = 0;
           this.lastThrashKey = undefined;
-          // Hand off to the damper: the string-keyed thrash gate has armed, so
-          // it OWNS this thrash episode. Clear Layer 4's freeze counter so the
-          // two guards don't double-arm on the same identical-key thrash. With
-          // NO_PROGRESS_REPLANS (6) > BLOCKED_THRASH_THRESHOLD (3), the damper
-          // always reaches its threshold first on identical-key thrash and this
-          // reset keeps Layer 4 below 6; Layer 4 only arms when the damper
-          // CAN'T (a varying key that never builds a streak) -- its intended
-          // backstop role.
-          //
-          // EXCEPT while Layer 4 is already holding an escalated stop (#534):
-          // once escalated, Layer 4 stops replanning entirely, which freezes
-          // `this.lastCompletedGoal` too (nothing replaces it) -- a NEW static
-          // identity this gate can now lock onto and reach its OWN threshold
-          // on, something that could never happen pre-escalation (a still-
-          // cycling Layer 4 keeps rewording the goal every burst). Clearing
-          // `lastFingerprint` here would hand this stale-goal thrash the SAME
-          // wipe an ACTUAL differing fingerprint gets, undoing the hold this
-          // fix exists to keep -- resetting on anything weaker than a
-          // genuinely differing game-state fingerprint reintroduces the exact
-          // eternal cycling #534 reports, just via this second reset site
-          // instead of Layer 4's own. The gate still arms and alerts on its
-          // own terms (harmless: no planner call, just backoff bookkeeping) --
-          // only the hand-off to Layer 4's tracking is withheld.
-          if (!(this.stuck && this.consecutiveArmsSameFingerprint >= UNRECOVERABLE_ARMS_THRESHOLD)) {
-            this.noProgressReplans = 0;
-            this.lastFingerprint = undefined;
-          }
+          // The consecutive thrash gate (Layer 2) arms and alerts here on its
+          // own terms -- backoff bookkeeping only, no planner call. It used to
+          // also clear Layer 4's freeze counter (noProgressReplans /
+          // lastFingerprint) on arm, on the theory that the two guards would
+          // otherwise double-arm on the same identical-key thrash. That
+          // handoff was itself a defect (review finding on #534): resetting
+          // on anything weaker than a genuinely differing game-state
+          // fingerprint (Layer 4's own fp-differs branch, below) silently
+          // zeroed noProgressReplans on every Layer 2 arm. Since
+          // BLOCKED_THRASH_THRESHOLD (3) is below NO_PROGRESS_REPLANS (6), a
+          // frozen episode that re-arms Layer 2 every 3 wakes never let
+          // noProgressReplans reach 6, so Layer 4's escalation
+          // (UNRECOVERABLE_ARMS_THRESHOLD) was unreachable for as long as
+          // Layer 2 kept arming. Layer 4 owns its own reset on real progress;
+          // Layer 2 no longer touches its counters.
           // #95: the consecutive gate owns this thrash episode, so floor the
           // windowed same-error breaker past these blocks -- it must not
-          // re-fire on repeats the gate already broke (mirrors the Layer 4
-          // reset just above).
+          // re-fire on repeats the gate already broke.
           this.repeatBreakFloorTs = this.now();
           return;
         }

@@ -203,14 +203,14 @@ describe("Layer 4 escalation: unrecoverable state (issue #534)", () => {
   // never completes never reaches), which trips executor.ts's own
   // fuel-reserve guard and flips the wake reason to "blocked" -- a SEPARATE,
   // pre-existing mechanism (Layer 2's thrash damper, which owns
-  // blocked/plan_done identities) then engages independently and hands back
-  // Layer 4's fingerprint tracking, unrelated to this fix. The plan_done loop
-  // has no such side channel (dock has no pre-flight guard, and the original
-  // test already establishes Layer 2 can't arm on it -- the reworded goal
-  // varies its key every cycle), so it isolates the escalation mechanism
-  // under test from that interaction. Reported as a finding, not fixed here
-  // (see the PR body) -- it is a gap in Layer 2's handoff, not in the #534
-  // arm-reset condition this issue is about.
+  // blocked/plan_done identities) then engages independently. The plan_done
+  // loop has no such side channel (dock has no pre-flight guard, and the
+  // reworded goal keeps Layer 2's key varying every cycle so it can't arm),
+  // so it isolates the escalation mechanism under test from that
+  // interaction. Layer 2 engaging DID used to zero Layer 4's counters on
+  // every arm (a review finding on #534) -- fixed in agent.ts's thrash-arm
+  // branch and covered separately below by the identical-goal variant of
+  // this same fixture ("engages Layer 2 on an identical key").
   function frozenPlanDoneSetup(now: { v: number }) {
     const status: StatusSnapshot = {
       credits: 304, fuel: 90, maxFuel: 100, hull: 100, maxHull: 100,
@@ -330,6 +330,66 @@ describe("Layer 4 escalation: unrecoverable state (issue #534)", () => {
 
     expect(contexts.length).toBe(callsBefore + 1);
     expect(contexts[contexts.length - 1]!.instruction).toBe("stop selling and hold the cargo");
+  });
+
+  // The gap flagged in review on this same issue: unlike frozenPlanDoneSetup
+  // above (reworded goal, so Layer 2's thrash key never repeats and Layer 2
+  // never arms), this fixture keeps the completed goal STATIC, so every
+  // plan_done wake carries the identical Layer 2 key and Layer 2's damper
+  // (BLOCKED_THRASH_THRESHOLD=3) arms and re-arms throughout the drive while
+  // Layer 4's fingerprint also stays frozen (game state never changes). Layer
+  // 2 arming used to zero noProgressReplans/lastFingerprint on every arm, and
+  // since BLOCKED_THRASH_THRESHOLD (3) < NO_PROGRESS_REPLANS (6), Layer 4
+  // never reached its own threshold -- an episode this frozen replanned at
+  // Layer 2's duty cycle forever and never escalated. This test asserts the
+  // opposite: escalation still happens, and planner calls still flatten once
+  // it does.
+  test("engages Layer 2's thrash gate on an identical key and still escalates to operator_alert{unrecoverable}", async () => {
+    const now = { v: 0 };
+    const status: StatusSnapshot = {
+      credits: 304, fuel: 90, maxFuel: 100, hull: 100, maxHull: 100,
+      cargoUsed: 12, cargoCapacity: 50, docked: true, inTransit: false, systemId: "s1",
+    };
+    const api: GameApi = {
+      async action(): Promise<V2Result> { return { result: "ok" }; }, // dock "succeeds" -> plan_done
+      async status() { return status; },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    const contexts: PlanContext[] = [];
+    const planner: Planner = {
+      async plan(ctx: PlanContext) {
+        contexts.push(ctx);
+        // Static goal, deliberately NOT reworded (contrast with
+        // frozenPlanDoneSetup) -- this is what lets Layer 2's key repeat.
+        return {
+          plan: { goal: "sell all cargo", steps: [{ action: "dock", params: {} }] },
+          promptChars: 0, responseChars: 0,
+        };
+      },
+    };
+    const agent = new Agent({
+      id: "a1", persona: "p", api, store, planner,
+      config: { ...baseConfig, heartbeatMinutes: 0.1 },
+      now: () => now.v,
+    });
+
+    const opAlerts = await driveToNthAlert(agent, store, now, 3, 400);
+    expect(opAlerts.length).toBe(3);
+    expect((opAlerts[2]!.payload as { class: string }).class).toBe("unrecoverable");
+    expect(agent.snapshot().plannerHealth.stuck).toBe(true);
+    // Confirm Layer 2 actually engaged on this drive -- otherwise this test
+    // would just be a slow copy of the reworded-goal fixture above and prove
+    // nothing about the handoff gap.
+    expect(
+      store.recentEvents("a1", 10_000).filter((e) => e.type === "plan_thrash_backoff").length,
+    ).toBeGreaterThan(0);
+
+    // Same burn-stops-at-escalation check as the reworded-goal test above:
+    // planner calls must flatten, not merely slow, once escalated.
+    const callsAtEscalation = contexts.length;
+    for (let i = 0; i < 80; i++) await tick(agent, now);
+    expect(contexts.length).toBe(callsAtEscalation);
   });
 });
 
