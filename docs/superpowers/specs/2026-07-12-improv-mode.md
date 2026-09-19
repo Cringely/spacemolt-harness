@@ -530,7 +530,13 @@ The model gets the wheel, not the safety switches:
   accrues per facility owned, every skill drips as you act), so an XP trickle is not evidence the
   pilot is getting anywhere. Deterministic backstop that stays on in both modes; the safety net
   under the paired §4 "Progress" briefing rule (a self-driving agent that mistakes an XP drip for
-  progress is still caught and re-steered by the harness).
+  progress is still caught and re-steered by the harness). The watcher's own alert-and-revert is
+  itself rate-limited, not a stop (#534): 3 consecutive re-arms on the IDENTICAL fingerprint (no
+  differing state observed in between) escalate to a held stop (`operator_alert{class:
+  "unrecoverable"}`) instead of repeating the alert-then-revert cycle forever. Only a differing
+  fingerprint or an operator instruction clears it, nothing weaker does, by design. Applies to
+  plan-then-execute's own no-progress detector (agent.ts's Layer 4) the same way regardless of
+  mode, so no separate improv briefing rule is needed for the escalation itself.
 - **Heartbeat liveness floor**: no resolved action in one window → force re-evaluate / revert.
 - **Progress heartbeat** (operator-facing, REPORT-ONLY): every `progress_heartbeat_minutes` the
   harness emits a `progress_heartbeat` event whose progressing/stalled verdict is the SAME
