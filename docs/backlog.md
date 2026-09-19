@@ -28,7 +28,6 @@ _Regenerated from 504 open issues._
 - #539 `M` — Miner: mission chase burned fuel for near-zero payout before Duskmere stranding
 - #542 `M` — A one-shot destructive instruction never retires, so the pilot repeats it on every respawn
 - #552 `S` — Strategy review: scan_poi is a broken capability, 9/9 lifetime failures, always not_in_faction
-- #553 `M` — Strategy review: mission_not_found is the 2nd-largest failure class, still firing at window end
 - #583 `S` — Dock-reroute streak is unscoped in space and time, and its floor does not survive a restart
 - #595 `S` — refuel target param is unconstrained: planner emitted target="full", blocking the pilot with no_refueling_pump (live capture 2026-07-27)
 - #678 `S` — Vendored reference calls Haven's station grand_exchange_station; the live id is grand_exchange
@@ -456,7 +455,6 @@ _Regenerated from 504 open issues._
 - #1026 — dock fails with opaque 'Access denied' for scout and corsair, no guidance for planner
 - #1027 — Miner's credits bleeding down again post-windfall despite continuous mission activity (-9,259cr/65h)
 - #1028 — 13 unmerged steward branches from 2026-07-26..08-11 need human review
-- #1030 — Scout: create_sell_order fails on listing fee at 0cr (11x/72h) -- direct sell has no fee
 - #1031 — scheduler: new-issue filing is suppressed — no one is consuming the backlog
 - #1034 — Scheduler/ceremony machinery has grown disproportionate to the 3-pilot core, no decisions.md entry weighs the aggregate
 - #1035 — milestones.md cites a G4 trend figure already reversed by live data (issue 1027)
@@ -526,11 +524,14 @@ _Regenerated from 504 open issues._
 - #1103 — PRs #107 and #108 merge-conflicted, blocking G4 since 2026-09-11
 - #1104 — Five steward docs PRs green on CI, awaiting review (PRs #106–111)
 - #1105 — Strategy review confirms zero planner runs, all 3 pilots (scout/corsair frozen ~71.6h)
+- #1108 — All three pilots recovered from a 61-65h freeze around 2026-09-19 08:00-12:00 UTC
+- #1109 — corsair: credits stuck at 5cr the entire 72h window despite 9 missions completed
 
 ## Recently done (closed)
 
 - ~~#1044 — repo-hygiene: 14 unmerged branches blocking pipeline (13 steward branches from 07-26+)~~
 - ~~#1042 — PR #96: merge-ready docs, unreviewed 4 days~~
+- ~~#1030 — Scout: create_sell_order fails on listing fee at 0cr (11x/72h) -- direct sell has no fee~~
 - ~~#818 — Dispatch OFF: 4 green PRs blocked on review (#81, #86, #85, #84)~~
 - ~~#817 — A standing operator instruction is retired the moment the planner claims instruction_done~~
 - ~~#815 — Operator steer channel is inert during planner backoff: /instruct returns 204 and the instruction is never acted on~~
@@ -548,4 +549,3 @@ _Regenerated from 504 open issues._
 - ~~#797 — STATE.md NOW block stale 8 days (last update 2026-08-02)~~
 - ~~#796 — PR #83 red CI stalled 8 days, blocks main branch (0 commits)~~
 - ~~#794 — complete_mission still 100% broken this window (mission_not_found)~~
-- ~~#791 — complete_mission broken: 100% mission_not_found in 72h window (95% lifetime)~~
