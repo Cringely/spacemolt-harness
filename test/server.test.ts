@@ -311,6 +311,97 @@ describe("POST /api/agents/:id/instruct", () => {
     expect(planner.contexts[1]!.wake.reason).toBe("instruction");
     expect(planner.contexts[1]!.instruction).toBe(text);
   });
+
+  // #817 wiring: `standing`/`revoke` are agent.ts concepts (instruct-salience
+  // tests cover the retirement-guard logic itself in full); these four prove
+  // only that server.ts's body fields actually REACH agent.instruct()/
+  // revokeInstruction() rather than being parsed and dropped.
+  test("standing:true is wired to the agent: instruction_done never retires it", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([
+      { goal: "mine", steps: [{ action: "mine", params: {}, repeat: 5 }] },
+      { goal: "arrival", steps: [{ action: "dock", params: {} }] },
+      { goal: "comply", steps: [{ action: "undock", params: {} }], instruction_done: true },
+    ]);
+    const agent = new Agent({ id: "miner", persona: "p", api: stubApi(), store, planner, config, now: () => 0 });
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    await agent.runOnce(); // establishes the mine plan
+
+    const text = "Fuel rule, standing until revoked: refuel at stations, never buy fuel_cell on the market";
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, standing: true }),
+    });
+    expect(res.status).toBe(204);
+
+    await agent.runOnce(); // instruction wake -> replan "arrival" (suppressed block, unearned)
+    await agent.runOnce(); // executes the dock step -> plan done
+    await agent.runOnce(); // plan_done -> replan "comply", instruction_done:true, block shown
+    expect(planner.contexts[2]!.standingInstruction).toBe(text);
+    expect(agent.snapshot().goals).toContain(text);
+    expect(store.recentEventsByType("miner", "instruction_done", 5)).toHaveLength(0);
+  });
+
+  test("revoke:true removes an existing instruction and reports whether one was found", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([
+      { goal: "mine", steps: [{ action: "mine", params: {}, repeat: 5 }] },
+      { goal: "obey", steps: [{ action: "undock", params: {} }] },
+    ]);
+    const agent = new Agent({ id: "miner", persona: "p", api: stubApi(), store, planner, config, now: () => 0 });
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    await agent.runOnce(); // establishes the mine plan
+
+    const text = "Fuel rule, standing until revoked: refuel at stations, never buy fuel_cell on the market";
+    await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, standing: true }),
+    });
+    await agent.runOnce(); // instruction wake -> lands in goals
+
+    const res1 = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, revoke: true }),
+    });
+    expect(res1.status).toBe(200);
+    expect(await res1.json()).toEqual({ revoked: true });
+    expect(agent.snapshot().goals).not.toContain(text);
+
+    // Idempotent: the same revoke sent again finds nothing left to remove.
+    const res2 = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, revoke: true }),
+    });
+    expect(res2.status).toBe(200);
+    expect(await res2.json()).toEqual({ revoked: false });
+  });
+
+  test("standing and revoke together is rejected as an ambiguous request", async () => {
+    const { agent, store } = makeAgent();
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "x", standing: true, revoke: true }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  // Branch-order receipt: revoke returns BEFORE the #527 query-action gate,
+  // on purpose (a revoke withdraws, it orders nothing). Pins that ordering --
+  // moving the revoke check after the gate would silently make it impossible
+  // to revoke a steer whose text happens to match the gate's pattern.
+  test("revoke skips the query-action gate", async () => {
+    const { agent, store } = makeAgent();
+    server = startDashboardServer({ host: "127.0.0.1", port: 0, store, agents: [agent] });
+    const text =
+      "Use find_route with id gold_run (a base is confirmed there) and jump to the first hop it returns, then dock and refuel.";
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/agents/miner/instruct`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, revoke: true }),
+    });
+    expect(res.status).toBe(200); // not the gate's 400 query_action_instruction
+    expect(await res.json()).toEqual({ revoked: false }); // text was never queued; nothing to remove
+  });
 });
 
 describe("GET /api/agents/:id/usage", () => {

@@ -58,9 +58,21 @@ const MAX_EVENTS_LIMIT = 500;
 // SAME number rather than a copy of it: one bound, two enforcement points
 // (client fails fast, server is the trust boundary).
 export const INSTRUCTION_MAX_LENGTH = 500;
+// #817: `standing` and `revoke` are both optional and both default-false/
+// absent, so an existing caller that sends only `text` (dashboard, current
+// scripts/strategy-store.ts, the scheduler's /steer transport) parses and
+// behaves exactly as before -- no silent behavior change for anyone who
+// doesn't opt in. The two are mutually exclusive by construction: `standing`
+// classifies a NEW instruction being queued, `revoke` removes an EXISTING one
+// by exact text and queues nothing, so a request claiming both is ambiguous
+// and rejected at the boundary rather than guessing which one the caller
+// meant.
 const InstructBodySchema = z.object({
   text: z.string().min(1).max(INSTRUCTION_MAX_LENGTH),
-}).strict();
+  standing: z.boolean().optional(),
+  revoke: z.boolean().optional(),
+}).strict()
+  .refine((b) => !(b.standing && b.revoke), { message: "standing and revoke are mutually exclusive" });
 
 // #173 defense-in-depth: today the only barrier in front of this server is
 // the reverse proxy's network isolation + SSO forwardAuth, both living
@@ -154,6 +166,13 @@ function findAgent(agents: Agent[], id: string): Agent | undefined {
  * the inbox, which the agent peeks at its next wake and consumes at replan.
  * AgentView deliberately never exposes inbox contents, so there is nothing
  * to read back and no landed-yet signal to return.
+ *
+ * #817: a `revoke: true` body is a different shape of request -- it removes
+ * an EXISTING pinned instruction by exact text rather than queuing a new one
+ * -- so it returns early with its own 200 body instead of falling through to
+ * the queue-and-204 path below. It skips the query-action gate on purpose:
+ * that gate exists to stop the planner from being ORDERED to run a query
+ * action, and a revoke orders nothing, it withdraws.
  */
 async function acceptInstruction(req: Request, agent: Agent): Promise<Response> {
   let raw: unknown;
@@ -165,6 +184,10 @@ async function acceptInstruction(req: Request, agent: Agent): Promise<Response> 
   const parsed = InstructBodySchema.safeParse(raw);
   if (!parsed.success) {
     return Response.json({ error: "invalid_body", detail: parsed.error.message }, { status: 400 });
+  }
+  if (parsed.data.revoke) {
+    const revoked = agent.revokeInstruction(parsed.data.text);
+    return Response.json({ revoked }, { status: 200 });
   }
   // #527: a steer that ORDERS a query action is structurally unplannable
   // (the planner's vocabulary is mutations-only), so nothing marks it done
@@ -183,7 +206,7 @@ async function acceptInstruction(req: Request, agent: Agent): Promise<Response> 
       { status: 400 },
     );
   }
-  agent.instruct(parsed.data.text);
+  agent.instruct(parsed.data.text, { standing: parsed.data.standing === true });
   return new Response(null, { status: 204 });
 }
 

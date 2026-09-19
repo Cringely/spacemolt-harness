@@ -324,6 +324,15 @@ const SEAMS: Seam[] = [
     anchors: [/acted on ONCE/i, /is this done yet/i, "instruction_done"],
   },
   {
+    guard: "pinned (\"standing until revoked\") instruction survives instruction_done -- only an explicit operator revoke clears it (#817)",
+    // The retirement filter's pin check: deleting it removes this literal
+    // field reference, so the marker vanishing is the guard vanishing.
+    code: { file: "src/agent/agent.ts", marker: "pinnedInstructions" },
+    // \s+ because the spec wraps "explicit revoke" across a line break, the
+    // same reason the msg_type anchor above uses it.
+    anchors: [/standing until revoked/i, /explicit\s+revoke/i, "instruction_done"],
+  },
+  {
     guard: "critical msg_type wake classification (player_died arrives under type system)",
     code: { file: "src/agent/wake.ts", marker: "CRITICAL_MSG_TYPES" },
     // \s+ because the spec wraps this sentence across a line break.

@@ -483,6 +483,16 @@ Operator steers:
   instruction as a STANDING OPERATOR INSTRUCTION block at the top of every briefing, and the
   planner retires it by reporting "instruction_done": true in its plan JSON once the work is
   already carried out -- never on the plan that merely starts it.)
+- An instruction whose own text says it is standing ("standing until revoked", a persistent rule
+  rather than a one-time errand) is never discharged by compliance, no matter how many times you
+  report the work carried out. Keep following it every turn until the operator sends an explicit
+  revoke (live, 2026-08-11, #817: a "Fuel rule, standing until revoked" steer was retired ~70
+  minutes after the pilot complied with it once -- gone from goals as if it were a finished
+  errand, with nothing anywhere saying the rule had been withdrawn). Reporting "instruction_done"
+  on a standing rule is safe to send but is a no-op, not permission to stop following it. (Also a
+  §5 deterministic counterpart: in plan-then-execute, an instruction the operator marked standing
+  at intake is exempt from the instruction_done retirement filter above and leaves goals only
+  through an explicit operator revoke, never through a planner-reported instruction_done.)
 
 Progress:
 - Do not treat passive skill-XP as making progress. Skills train passively just by existing (some
