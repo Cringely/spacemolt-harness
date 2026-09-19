@@ -1176,34 +1176,51 @@ export class Agent {
     // stranded because the fuel floor was advisory) recreated with travel
     // plans standing in for mining plans.
     //
-    // The destination-aware version, shipped here: a remaining `travel_to`
-    // step counts as a fuel remedy only when its OWN target system has a
-    // PROVEN fuel reading -- this.fuelSightings.get(systemId) === true,
-    // folded in by gatherSurroundings from get_system's `fuel_reserve` field
-    // (ground truth on the station's tank, docs/game-reference/upstream/
-    // guides/fuel.md:139: "If base.Fuel == 0, station refuel returns
-    // station_fuel_empty" -- not an inference from which action succeeded).
-    // This is evidence about THIS system, not about plan shape: a
-    // travel-to-mine plan's destination is a mining system, and virtually
-    // never carries a confirmed-fuel reading for the reason it does not need
-    // one, so the predicate stays false there exactly as it did before this
-    // change (fail CLOSED -- unobserved or empty both read as "not proven").
-    // A plan whose destination genuinely IS a known-fuel station gets the
-    // same deferral an explicit unexecuted `refuel` step already earns below,
-    // and that deferral is inherently bounded to the travel leg: once the
-    // travel_to step is consumed, `remaining` no longer contains it, this
-    // predicate reverts to false on the very next tick, and ordinary
-    // reflex/wake protection resumes at the destination (including the
-    // terminal give-up below, if the reading turns out stale). See
+    // The destination-aware version, shipped here: the plan's NEXT
+    // cross-system movement counts as a fuel remedy only when its OWN target
+    // system has a PROVEN fuel reading -- this.fuelSightings.get(systemId)
+    // === true, folded in by gatherSurroundings from get_system's
+    // `fuel_reserve` field (ground truth on the station's tank,
+    // docs/game-reference/upstream/guides/fuel.md:139: "If base.Fuel == 0,
+    // station refuel returns station_fuel_empty" -- not an inference from
+    // which action succeeded). This is evidence about THIS system, not about
+    // plan shape: a travel-to-mine plan's destination is a mining system,
+    // and virtually never carries a confirmed-fuel reading for the reason it
+    // does not need one, so the predicate stays false there exactly as it
+    // did before this change (fail CLOSED -- unobserved or empty both read
+    // as "not proven").
+    //
+    // Gated on nextHop, not "any remaining travel_to" (review REVISE, PR
+    // #116 round 1): checking every remaining step let a LATER leg with a
+    // proven destination (e.g. a round trip's final `travel_to(home)`) paper
+    // over an EARLIER leg that heads away from fuel entirely -- reproduced
+    // offline with undocked/10-fuel and plan [travel_to(far_market), dock,
+    // travel_to(home)]: fuel_observed only for home, and the outbound leg to
+    // far_market ran with the low_fuel wake silenced the whole way there.
+    // That is the #526 shape again, just with the proof sitting on the wrong
+    // leg instead of missing outright. Reading only the next hop -- the one
+    // step this tick's travel_to executor call would actually act on -- is
+    // what makes the "bounded to the travel leg" property below true: once
+    // THIS hop is consumed, `remaining`'s next hop is whatever comes after
+    // it, re-evaluated fresh, never a promise inherited from a later leg.
+    //
+    // A plan whose next hop genuinely IS a known-fuel station gets the same
+    // deferral an explicit unexecuted `refuel` step already earns below, and
+    // that deferral is bounded to the travel leg: once the travel_to step is
+    // consumed, the next hop is a different step (or none), this predicate
+    // is re-evaluated against THAT step, and ordinary reflex/wake protection
+    // resumes the moment the next hop isn't a proven destination (including
+    // the terminal give-up below, if the reading turns out stale). See
     // docs/decisions.md, 2026-09-19, for the rejected alternatives
     // (plan-shape matching alone; a live query on an unvisited destination).
     const knownFuelDestination = (params: unknown): boolean => {
       const systemId = (params as { system_id?: string }).system_id;
       return systemId !== undefined && this.fuelSightings.get(systemId) === true;
     };
+    const nextHop = remaining.find((s) => MOVEMENT_ACTIONS.has(s.action));
     const planRemediesFuel = remaining.some(
       (s) => s.action === "refuel" && (s.params as { target?: string }).target === undefined
-    ) || remaining.some((s) => s.action === "travel_to" && knownFuelDestination(s.params));
+    ) || (nextHop !== undefined && nextHop.action === "travel_to" && knownFuelDestination(nextHop.params));
     const planRemediesHull = remaining.some((s) => s.action === "repair");
 
     // Issue #672: a per-station give-up backstop for a TERMINAL reflex
@@ -2818,23 +2835,32 @@ export class Agent {
 
   // Issue #672: fold a fresh get_system fuel_reserve reading into
   // fuelSightings (see that field's doc comment for why this is a standalone
-  // map rather than a StationSighting field). Emits fuel_observed, and only
-  // when the reading is a genuinely NEW fact for this system -- a first
-  // observation, or a transition across the empty/available boundary -- so a
-  // pilot sitting at the same station for many replans in a row (the common
-  // case) writes nothing after the first tick. Map insertion order doubles as
-  // recency for the LRU-style eviction: `delete` then `set` moves a
-  // re-observed system to the end, so the entry `keys().next()` returns is
-  // always the LEAST recently touched one.
+  // map rather than a StationSighting field). Map insertion order doubles as
+  // recency for the LRU-style eviction: `delete` then `set` moves the
+  // touched system to the end, so the entry `keys().next()` returns is
+  // always the LEAST recently OBSERVED one -- and that reordering now runs
+  // on EVERY call, changed or not (review REVISE, PR #116 round 1: the prior
+  // version returned before the delete+set whenever the reading matched what
+  // was already stored, so a station revisited many times without its
+  // reading ever changing -- home, the common case -- never refreshed its
+  // recency and was the FIRST evicted once enough OTHER systems were seen,
+  // exactly backwards from what an LRU is for. Reproduced offline: record
+  // home, record 7 others, re-observe home unchanged, record 1 new system --
+  // home was gone). fuel_observed is still emitted only when the reading is
+  // a genuinely NEW fact for this system -- a first observation, or a
+  // transition across the empty/available boundary -- so the persisted
+  // stream stays one event per fact, not one per dock; the emit decision and
+  // the recency refresh are now two independent checks instead of one early
+  // return doing both.
   private rememberFuelSighting(systemId: string, fuelAvailable: boolean): void {
-    if (this.fuelSightings.get(systemId) === fuelAvailable) return;
+    const changed = this.fuelSightings.get(systemId) !== fuelAvailable;
     this.fuelSightings.delete(systemId);
     this.fuelSightings.set(systemId, fuelAvailable);
     if (this.fuelSightings.size > FUEL_SIGHTING_LOOKBACK) {
       const oldest = this.fuelSightings.keys().next().value;
       if (oldest !== undefined) this.fuelSightings.delete(oldest);
     }
-    this.emit("fuel_observed", { systemId, fuelAvailable });
+    if (changed) this.emit("fuel_observed", { systemId, fuelAvailable });
   }
 
   private sparseRuleValid(rule: { learnedAt: number }): boolean {
