@@ -274,12 +274,32 @@ export function buildDigest(ctx: PlanContext): string {
   // seeing this block until a newer instruction supersedes it -- an over-
   // shown nag, never a dropped order and never a crash.
   if (ctx.standingInstruction) {
-    lines.push(
-      `STANDING OPERATOR INSTRUCTION (not yet done): "${ctx.standingInstruction}". ` +
-      `Your operator gave this order and it stays in force on EVERY plan until carried out -- it OUTRANKS missions and routine work. ` +
-      `If it is not done yet, this plan should advance it. ` +
-      `Once it has ALREADY been fully carried out, set "instruction_done": true in your plan JSON (top level, beside "goal") so it stops being shown -- never set it on a plan that merely starts the work.`
-    );
+    // Pin-aware truth (issue #1106): a PINNED instruction (operator called
+    // instruct() with standing:true, #817) is exempt from the retirement
+    // guard (agent.ts) no matter how many instruction_done reports the
+    // planner sends against it -- only an explicit operator revoke clears
+    // it. Before this branch, both cases rendered the IDENTICAL "set
+    // instruction_done so it stops being shown" line, which was simply
+    // false for a pinned rule: the guard was built to ignore that flag on
+    // exactly this text. The two branches share every word except the
+    // parenthetical and the closing sentence, so a planner reading either
+    // gets the same order, priority, and satisfaction-check instructions --
+    // only what instruction_done ACTUALLY does differs.
+    if (ctx.standingInstructionPinned) {
+      lines.push(
+        `STANDING OPERATOR INSTRUCTION (pinned -- standing until revoked): "${ctx.standingInstruction}". ` +
+        `Your operator gave this order and it stays in force on EVERY plan until carried out -- it OUTRANKS missions and routine work. ` +
+        `If it is not done yet, this plan should advance it. ` +
+        `Reporting "instruction_done": true once the work is carried out is safe to send, but it will NOT remove this instruction or stop it being shown again -- your operator marked it standing, so it keeps being re-raised every replan until they send an explicit revoke. Do not stop following it just because you reported it done once.`
+      );
+    } else {
+      lines.push(
+        `STANDING OPERATOR INSTRUCTION (not yet done): "${ctx.standingInstruction}". ` +
+        `Your operator gave this order and it stays in force on EVERY plan until carried out -- it OUTRANKS missions and routine work. ` +
+        `If it is not done yet, this plan should advance it. ` +
+        `Once it has ALREADY been fully carried out, set "instruction_done": true in your plan JSON (top level, beside "goal") so it stops being shown -- never set it on a plan that merely starts the work.`
+      );
+    }
   }
   lines.push(`Status: ${ctx.statusSummary}`);
   // Broken-fuel-chain fix (issue #152): when fuel is below reserve, brief the

@@ -348,9 +348,19 @@ const SEAMS: Seam[] = [
   },
   {
     guard: "pinned (\"standing until revoked\") instruction survives instruction_done -- only an explicit operator revoke clears it (#817)",
-    // The retirement filter's pin check: deleting it removes this literal
-    // field reference, so the marker vanishing is the guard vanishing.
-    code: { file: "src/agent/agent.ts", marker: "pinnedInstructions" },
+    // #1106: the bare "pinnedInstructions" identifier occurs 14 times in
+    // agent.ts (field decl, replay, instruct()'s pin, revokeInstruction,
+    // eviction skip x3) -- deleting ONLY the retirement guard's pin check at
+    // agent.ts:2731 left 13 occurrences and this SEAM stayed green over a
+    // deleted guard (verified live: ablating the guard's pin check left this
+    // SEAM's old bare-identifier marker passing, 0 failures). The negated
+    // call expression below is the guard's own condition verbatim, and it is
+    // NOT reused anywhere else in the file -- including the #1106 digest-truth
+    // line this same PR adds (agent.ts ~2548), which calls
+    // `pinnedInstructions.has(standingInstruction)` WITHOUT the leading `!`,
+    // so that near-duplicate does not collide with this marker. Verified: 1
+    // occurrence via `grep -c '!this.pinnedInstructions.has(standingInstruction)'`.
+    code: { file: "src/agent/agent.ts", marker: "!this.pinnedInstructions.has(standingInstruction)" },
     // \s+ because the spec wraps "explicit revoke" across a line break, the
     // same reason the msg_type anchor above uses it.
     anchors: [/standing until revoked/i, /explicit\s+revoke/i, "instruction_done"],

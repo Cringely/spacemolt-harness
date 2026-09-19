@@ -41,12 +41,23 @@ import { catalog, type ItemMeta } from "../catalog/catalog";
 // parens, which matches regardless of prose plurals. The old substring
 // tolerance for loose prose was an accident of the #216 bug, not a feature.
 //
-// Overflow past MAX_CANDIDATES truncates (first-named goals win; within a
-// family, catalog tier order) and REPORTS the cut via `dropped` -- the caller
-// makes it visible. The pre-#216 mode dropped the whole list with no signal
-// ("too vague to act on"), and that silence hid the matcher bug for a day and
-// zeroed out legitimate goals over 4+-tier families ("buy a Mining Laser" has
-// five tiers). Partial facts beat no facts, and a reported cut beats silence.
+// Overflow past MAX_CANDIDATES truncates and REPORTS the cut via `dropped` --
+// the caller makes it visible. The pre-#216 mode dropped the whole list with
+// no signal ("too vague to act on"), and that silence hid the matcher bug for
+// a day and zeroed out legitimate goals over 4+-tier families ("buy a Mining
+// Laser" has five tiers). Partial facts beat no facts, and a reported cut
+// beats silence.
+//
+// Truncation priority (#1047): EXACT hits win over FAMILY hits outright, and
+// first-named-goal is only the tie-break WITHIN each category (first exact,
+// then first family; within a family, catalog tier order). An exact hit is
+// the operator naming a specific item verbatim -- L38-41 above documents that
+// naming convention -- so an earlier goal's family spray (a tier-less name
+// expanding to 3+ catalog tiers) must never push a later goal's exact hit out
+// of the cap. Before this fix the two categories were merged and sorted by
+// goal index alone, so "buy a Mining Laser" (5 tiers) ahead of "buy
+// fuel_cell" (1 exact hit) filled every slot with laser tiers and dropped the
+// exact fuel_cell match.
 
 /** Free queries, but this runs on the replan path -- keep the fan-out tiny. */
 export const MAX_CANDIDATES = 3;
@@ -74,7 +85,12 @@ function phraseIn(text: string, phrase: string): boolean {
 }
 
 export interface GoalPurchaseMatches {
-  /** Items the goals literally name, capped at MAX_CANDIDATES (first-named first). */
+  /**
+   * Items the goals literally name, capped at MAX_CANDIDATES. Exact hits win
+   * over family hits outright; goal index (first-named first) is the
+   * tie-break only WITHIN each category (see the truncation-priority comment
+   * above).
+   */
   candidates: ItemMeta[];
   /**
    * Ids that matched but were cut by the cap. Non-empty means the goals name
@@ -95,7 +111,10 @@ export function goalPurchaseCandidates(goals: string[], items: ItemMeta[] = cata
   if (!texts.length) return { candidates: [], dropped: [] };
 
   // Index of the earliest goal containing `phrase` as a whole token-bounded
-  // phrase, or -1. Earlier goal = higher priority on truncation.
+  // phrase, or -1. Earlier goal = higher priority on truncation only WITHIN a
+  // category (exact-vs-exact, family-vs-family); across categories exact
+  // always wins regardless of goal index (see the truncation-priority
+  // comment above).
   const firstGoal = (phrase: string): number => texts.findIndex((t) => phraseIn(t, phrase));
 
   type Hit = { item: ItemMeta; goal: number };
@@ -139,11 +158,16 @@ export function goalPurchaseCandidates(goals: string[], items: ItemMeta[] = cata
     return !exactBases.has(n.replace(TIER_SUFFIX, ""));
   });
 
-  // Stable sort by goal index ALONE: items sharing a goal keep catalog (push)
-  // order, which is exactly the documented tie-break -- family members of one
-  // base all resolve the same phrase to the same goal, so catalog tier order
-  // holds within a family. Array.prototype.sort is stable per the spec.
-  const hits = exact.concat(filteredFamily).sort((a, b) => a.goal - b.goal);
+  // Exact hits win over family hits before the cap applies (#1047): sort each
+  // category by goal index ON ITS OWN, then concatenate exact-before-family --
+  // never merge-then-sort-by-goal-alone, which let an earlier goal's 3+-tier
+  // family push a later goal's exact hit past MAX_CANDIDATES. Within each
+  // category, goal index is still the tie-break (first-named goal wins; items
+  // sharing a goal keep catalog (push) order, since family members of one
+  // base all resolve the same phrase to the same goal). Array.prototype.sort
+  // is stable per the spec, so ties within a category keep catalog order.
+  const byGoal = (a: Hit, b: Hit) => a.goal - b.goal;
+  const hits = [...exact].sort(byGoal).concat([...filteredFamily].sort(byGoal));
   return {
     candidates: hits.slice(0, MAX_CANDIDATES).map((h) => h.item),
     dropped: hits.slice(MAX_CANDIDATES).map((h) => h.item.id),
