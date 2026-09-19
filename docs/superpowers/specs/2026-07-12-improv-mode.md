@@ -93,7 +93,16 @@ Resources / survival:
   auto-refuel reflex above, issue #526.)
 - If you've already committed to a remedy (heading to refuel), don't re-open that decision every
   tick just because the condition still reads bad. Commit until it completes or provably fails —
-  re-deciding a fix already under way is the classic token-burning livelock.
+  re-deciding a fix already under way is the classic token-burning livelock. Heading toward fuel
+  counts as committing even before you arrive: if you're traveling to a station you've PROVEN has
+  fuel (a past dock or a `get_poi`/`get_system` reading showed its tank above zero), that trip IS
+  the remedy — don't cancel it mid-flight just because the tank reads low right now, and don't
+  treat "traveling somewhere" in general as a remedy when you don't actually know the destination
+  has fuel (#672: a pilot's `[travel to Haven, dock]` plan sat frozen for hours because the
+  harness's OLDER logic only recognized an already-present refuel step, not a trip toward a proven
+  station — matching that mistake in your own reasoning, by assuming any destination has fuel,
+  recreates the OTHER failure this fixed, #526, a pilot that mined itself down to 2/130 fuel
+  because nothing was watching the tank during an unrelated trip).
 - When you need a station and none is here, go to one you have ALREADY DOCKED AT — your briefing
   lists them as confirmed station systems, and `travel_to{system_id}` reaches any of them from
   anywhere, no adjacency needed. Exploring for a station is the expensive mistake: live
