@@ -4,6 +4,7 @@
 import { test, expect, describe } from "bun:test";
 import { Database } from "bun:sqlite";
 import { readDump, REVIEW_WINDOW_HOURS } from "../scripts/strategy-review-dump";
+import { clipUntrusted, UNTRUSTED_TEXT_SNIPPET_LEN } from "../src/planner/digest";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -95,5 +96,58 @@ describe("readDump — fixed review dataset", () => {
     expect(dump.heartbeats).toHaveLength(1);
     expect(dump.heartbeats[0]!.progressing).toBe(false);
     expect(dump.heartbeats[0]!.deltas).toEqual({});
+  });
+
+  // #1053: a class row's `sample` is the full raw game result text
+  // (src/server/failures.ts's tally() keeps it whole), and this dump is read
+  // directly as an LLM's input -- so the copy that reaches the reviewer must
+  // be bound the same way digest.ts bounds every other untrusted game-text
+  // seam, without the aggregation itself (failures.ts) losing any fidelity
+  // for its OTHER consumer (the dashboard tooltip, which wants the full text).
+  describe("class-row `sample` is bound before it reaches the LLM-facing dump (#1053)", () => {
+    test("a sample past the bound is clipped in the dump, matching clipUntrusted exactly", () => {
+      const db = freshDb();
+      const now = 1_000_000_000; // big enough that `now - HOUR` stays positive (#1053 test self-bug: 2_000_000 underflowed lastSeenTs=0)
+      // Well past UNTRUSTED_TEXT_SNIPPET_LEN (200) so the clip is exercised for
+      // real, not just past some arbitrary shorter number.
+      const longResult = `insufficient_storage: Storage only has 0 x ${"nickel_ore".repeat(30)}.`;
+      expect(longResult.length).toBeGreaterThan(UNTRUSTED_TEXT_SNIPPET_LEN);
+      insert(db, "miner", now - HOUR, "action", { action: "withdraw", outcome: "blocked", result: longResult });
+
+      const dump = readDump(db, "miner", now, REVIEW_WINDOW_HOURS);
+      const row = dump.failures.classes.find((c) => c.class === "insufficient_storage");
+      expect(row).toBeDefined();
+      // Exact match against the real producer of the bound, not just "shorter
+      // than the input" -- a matcher that only checked length would pass on a
+      // clip to any length, including one that cuts mid-word differently from
+      // what digest.ts's own quoting actually shows the planner elsewhere.
+      expect(row!.sample).toBe(clipUntrusted(longResult));
+      expect(row!.sample.length).toBe(UNTRUSTED_TEXT_SNIPPET_LEN + 1); // +1 for the ellipsis
+    });
+
+    test("prevented rows (guard blocks) get the same bound as game-refusal rows", () => {
+      const db = freshDb();
+      const now = 1_000_000_000; // big enough that `now - HOUR` stays positive (#1053 test self-bug: 2_000_000 underflowed lastSeenTs=0)
+      const longGuardText = `deposit gift refused: ${"x".repeat(220)}`;
+      insert(db, "miner", now - HOUR, "action", {
+        action: "deposit", outcome: "blocked", guard: true, result: longGuardText,
+      });
+
+      const dump = readDump(db, "miner", now, REVIEW_WINDOW_HOURS);
+      expect(dump.failures.prevented).toHaveLength(1);
+      expect(dump.failures.prevented[0]!.sample).toBe(clipUntrusted(longGuardText));
+      expect(dump.failures.prevented[0]!.sample.length).toBeLessThan(longGuardText.length);
+    });
+
+    test("a sample already under the bound reaches the dump byte-for-byte (no over-truncation)", () => {
+      const db = freshDb();
+      const now = 1_000_000_000; // big enough that `now - HOUR` stays positive (#1053 test self-bug: 2_000_000 underflowed lastSeenTs=0)
+      const shortResult = "not_docked: You must be docked at a station to perform this action.";
+      insert(db, "miner", now - HOUR, "action", { action: "sell", outcome: "blocked", result: shortResult });
+
+      const dump = readDump(db, "miner", now, REVIEW_WINDOW_HOURS);
+      const row = dump.failures.classes.find((c) => c.class === "not_docked");
+      expect(row!.sample).toBe(shortResult); // byte-for-byte, no ellipsis appended
+    });
   });
 });
