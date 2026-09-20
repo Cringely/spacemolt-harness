@@ -4,25 +4,29 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-19, doc-steward pass reconciling PRs #107/#108 and confirming prod deploy state live. Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-19, doc-steward pass reconciling wave-3 cluster PRs #119-#124 (tracker #1045/#1047/#1106/#1053 closed). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-19 (second pass, deploy confirmation). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-09-19 (third pass, wave-3 cluster #119-#124). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
 
-**#107 AND #108 MERGED, BOTH CONFLICTS RESOLVED.** #107 (`c81f8dc`) closes #553: `complete_mission` now refuses an id the fresh active-mission listing provably lacks. It needed a second review round — the council's first REVISE caught a regression where the id-less-row guard skipped the #291 shortfall invariant for a different, cleanly-parsed row; fixed before merge. #108 (`ece3650`) closes #1030: an order now gets refused when the pilot's KNOWN credit balance can't cover it, with the earlier receipt misattribution corrected. Both issues closed.
+**SIX PRs MERGED, FOUR TRACKER ISSUES CLOSED.** #119 (`018807d`) and #122 (`086a90d`, a same-day comment fast-follow) close #1047: an operator goal naming an exact item no longer loses its purchase slot to an earlier goal's multi-tier family match. #120 (`83a0fd6`) closes #1045: the undocked fuel-reserve floor now survives a measured jumps verdict instead of being silently dropped as a fallback argument; a retired cargo-mass fuel claim also came out of the improv briefing. #121 (`d89fecf`) and #123 (`d7ab050`, a same-day must-fix the first PR's squash-merge missed) close #1106: the #817 standing-instruction pin is now reachable from the dashboard, the digest stopped contradicting the retirement guard, and the Standing checkbox no longer survives an agent switch. #124 (`8a5140f`) closes #1053.
 
-**DEPLOY STATE NOW CONFIRMED, CORRECTING THE PRIOR NOTE.** PM live capture 2026-09-19 via `docker inspect` on the prod host: the container ran `ghcr.io/cringely/spacemolt-harness:4eb1c64` from 18:20:28Z (auto-deploy cron, healthy, `RestartCount 0`, zero uncaught/fatal/panic/ZodError/crash log lines since start, all three pilots emitting `status_snapshot`), then `:ece3650` from 19:49:27Z (healthy, `RestartCount 0`, zero crash-class log lines, all three pilots emitting `status_snapshot` by 19:50:48Z). The "prod on `a892877`" note in the 2026-09-19 history section below was never re-checked after 09-11; the auto-deploy cron shipped both images above within minutes of their merges. `ece3650` is #108's merge commit and main's HEAD, so every merged change through #108 is deployed. Offline tests remain the only proof of behavior; the live signals below are what to watch next.
+**#1053'S PREMISE WAS PARTLY REFUTED, DO NOT READ THIS AS "MESSAGE NOW REACHES THE FILER."** `failures.ts` never discarded the message half of a coded error; `FailureClassRow.sample` has carried the full raw result text since the repo's first public commit, and it already reached the strategy reviewer's dump. The live gap was narrower: `docs/charters/strategy-reviewer.md`'s Issue-bump evidence line named only window, counts, and class, so the filing agent quoted a bare class and inferred the rest (#706 is the receipt). PR #124 names `sample` in the charter, requires it quoted as data, and bounds it through the digest's existing 200-char untrusted-text clip.
 
-**OPEN PRs: NONE FROM THIS WAVE.**
+**PROCESS NOTE, dispatcher observation.** Five of the six PRs above were merged by the fix-round agents, not the PM: the briefs said "open a PR" and never named who merges, so the PM's merge-time checks ran after the fact. `gh` names one account as merger on all six, so the repo cannot separate agent from seat. What it does show: every merge commit is covered by a council or independent-verify ADVANCE (#122's sits on #119, #123's on #121), CI green on each, five merges inside 32 minutes. Nothing unsafe shipped. See L-57.
+
+**DEPLOY STATE, PM live capture 2026-09-19 (not verifiable from the repo).** Prod ran `ece3650` from 19:49:27Z (confirmed prior pass), then `d7ab050` from 23:28:26Z (auto-deploy cron); at 23:35Z healthy, `RestartCount 0`, zero crash-class log lines, all three pilots emitting `status_snapshot`. `8a5140f` (#124) had not yet been observed on the host at capture time.
+
+**LIVE SIGNAL for #1047, PM capture, a baseline not a proof.** On `ece3650`, 19:49:27Z-22:43Z: miner logged 18 `purchase_candidate_overflow`, scout and corsair zero, against 34 plans / 89 miner actions; fleet-wide zero `item_not_available`, zero `mission_not_found`, zero `insufficient_credits`.
 
 **BACKLOG:** see `docs/backlog.md`, regenerated this pass.
 
-**Next:** #1106 (standing-flag adoption, digest/improv drift) and #1053 (the `failures.ts` message-discarding producer) are queued; #1107 is the P3 findings umbrella. Watch the live signals: frozen-pilot planner calls (#534), guard-refused dry-station buys and `plan_budget_exceeded` (#669), overpriced-buy refusals (#458), low-fuel reflex fire-and-fail (#672), `mission_not_found` refusals (#553), 0cr listing-fee refusals (#1030) — each is a guard now live, none yet confirmed quiet in production.
+**Next:** confirm `8a5140f` deploys and stays clean; watch whether the #1053 charter fix changes filed-issue quality (a quoted error sentence, not a bare class). Fleet-flight F4 (3 pilots/24h/zero strands, steer confirmed) still open.
 
 ## Recent history, 2026-09-19
 
-Moved out of `## NOW` on 2026-09-19 (second pass) to fit the 500-word cap; superseded only where the block above says so. Extracted verbatim from the prior `## NOW` block.
+Moved out of `## NOW` on 2026-09-19 (second pass) to fit the 500-word cap; superseded only where the block above says so. Extracted from the prior `## NOW` block, verbatim except in the deploy-state paragraph, where the pointer to the `a892877` note flips from "below" to "above" now that the note sits higher up the file.
 
 **TODAY, FIVE PRs MERGED, FLEET-FLIGHT GATE F3 CLOSED.** #114 (`746c4aa`) escalates a frozen Layer-4 no-progress arm to a held stop instead of a longer periodic retry, closing #534. #112 (`09972b7`) surfaces `item_not_available` memory to the planner before it repeats a doomed buy, closing #669. #115 (`45f8da1`) adds a value-aware buy price-sanity guard and teaches mine objectives not to buy, closing #458. #116 (`532acfc`) recognizes a proven-fuel destination as a fuel remedy, closing #672. #113 (`4eb1c64`) pins a standing operator instruction against `instruction_done`, closing #817; needed two fix rounds. #114, #115, and #116 each needed one; #112 advanced on the council's first pass with zero. Re-triage separately closed #681 and #569 as already fixed by earlier merged work (an independent skeptic pass could not refute either); see each issue's own 2026-09-19 close comment. That finishes epic #591's F3 gate ("loops terminate": #534/#569/#571/#592 per the epic's 2026-07-28 comment), with all four issues now closed. F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) is next. Filed: #1106 (P2, #817 follow-ups: no caller sends `standing` yet, the digest still contradicts the guard, improv-spec drift) and #1107 (P3 umbrella, council findings below the must-fix floor).
 
@@ -35,6 +39,18 @@ Moved out of `## NOW` on 2026-09-19 (second pass) to fit the 500-word cap; super
 **BACKLOG:** see `docs/backlog.md`, regenerated this pass.
 
 **Next:** operator sign-off, then redeploy prod past `a892877`; rebase and land #107 and #108; then #1106 and #1053 (the `failures.ts` message-discarding producer, `CODE_PREFIX_RE` at :62 and the class taken at :76, still the top structural item; #1053's own body cites :65, a doc comment, and needs a correction).
+
+Second pass, same date, moved out of `## NOW` on 2026-09-19 (third pass) to fit the 500-word cap; extracted verbatim from the prior `## NOW` block.
+
+**#107 AND #108 MERGED, BOTH CONFLICTS RESOLVED.** #107 (`c81f8dc`) closes #553: `complete_mission` now refuses an id the fresh active-mission listing provably lacks. It needed a second review round — the council's first REVISE caught a regression where the id-less-row guard skipped the #291 shortfall invariant for a different, cleanly-parsed row; fixed before merge. #108 (`ece3650`) closes #1030: an order now gets refused when the pilot's KNOWN credit balance can't cover it, with the earlier receipt misattribution corrected. Both issues closed.
+
+**DEPLOY STATE NOW CONFIRMED, CORRECTING THE PRIOR NOTE.** PM live capture 2026-09-19 via `docker inspect` on the prod host: the container ran `ghcr.io/cringely/spacemolt-harness:4eb1c64` from 18:20:28Z (auto-deploy cron, healthy, `RestartCount 0`, zero uncaught/fatal/panic/ZodError/crash log lines since start, all three pilots emitting `status_snapshot`), then `:ece3650` from 19:49:27Z (healthy, `RestartCount 0`, zero crash-class log lines, all three pilots emitting `status_snapshot` by 19:50:48Z). The "prod on `a892877`" note above was never re-checked after 09-11; the auto-deploy cron shipped both images above within minutes of their merges. `ece3650` is #108's merge commit and main's HEAD, so every merged change through #108 is deployed. Offline tests remain the only proof of behavior; the live signals below are what to watch next.
+
+**OPEN PRs: NONE FROM THIS WAVE.**
+
+**BACKLOG:** see `docs/backlog.md`, regenerated this pass.
+
+**Next:** #1106 (standing-flag adoption, digest/improv drift) and #1053 (the `failures.ts` message-discarding producer) are queued; #1107 is the P3 findings umbrella. Watch the live signals: frozen-pilot planner calls (#534), guard-refused dry-station buys and `plan_budget_exceeded` (#669), overpriced-buy refusals (#458), low-fuel reflex fire-and-fail (#672), `mission_not_found` refusals (#553), 0cr listing-fee refusals (#1030) — each is a guard now live, none yet confirmed quiet in production.
 
 ## Recent history, 2026-09-11
 
