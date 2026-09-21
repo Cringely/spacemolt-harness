@@ -524,6 +524,23 @@ const SEAMS: Seam[] = [
     code: { file: "src/planner/digest.ts", marker: "buying it does NOT advance this objective, only the mine action does" },
     anchors: ["titanium_ore 8/20 (mine 12 more)", /does NOT count toward a mine-type objective/i],
   },
+  {
+    guard: "craft deposit-precondition guard (#1076, dupes #932/#997: a craft whose personal " +
+      "station storage provably holds NOTHING is refused before the tick -- 98+24+35 identical " +
+      "cannot_craft failures across three 72h windows, and neither briefing ever taught the " +
+      "planner that crafting reads storage, not cargo, before this fix)",
+    // Pins the CALL SITE, the same shape every other seam in this file uses
+    // (withdrawStorageBlock's comment explains why: the interior function
+    // existing proves nothing if nothing calls it).
+    code: { file: "src/agent/executor.ts", marker: /await craftDepositBlock\(api, step\)/ },
+    // Each anchor was absent from §4 before this bullet was added (checked
+    // against origin/main, not assumed).
+    anchors: [
+      "escrows its recipe's inputs from your STATION STORAGE",
+      "Not enough materials in your station storage",
+      /deliberately undocumented/,
+    ],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {

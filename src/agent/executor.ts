@@ -787,6 +787,97 @@ async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepR
   return guardBlock(reason);
 }
 
+// Craft deposit-precondition guard (issue #1076, duplicates #932/#997 --
+// same failure fused by three separate 72h scheduler windows, 98+24+35
+// occurrences of the identical text, all resolving to the one root cause
+// below). Invariant: a `craft` job escrows its recipe's inputs from STATION
+// STORAGE, never cargo -- REFERENCE-CHECKED, not assumed:
+// docs/game-reference/upstream/docs/crafting.md:3,13,94,104 all state it
+// ("Inputs are escrowed from station storage at enqueue"; "Crafting draws
+// from storage, never cargo"), and the openapi-v2.json craft endpoint
+// description (:33612) repeats it verbatim. The game's own refusal text names
+// the fix: "Not enough materials in your station storage to craft this.
+// Deposit the inputs into station storage first (crafting no longer pulls
+// from cargo)." No brokenCapabilities entry accompanies any of the three
+// issues (craft succeeds elsewhere) -- this is a planner-comprehension gap,
+// not a broken game capability: nothing in digest.ts or the improv-mode
+// spec ever told the planner crafting reads storage, not cargo, before this
+// fix (grepped both files -- zero prior mentions of "craft" instructing a
+// deposit-first sequence). See the paired digest.ts runbook line and
+// improv-mode spec §4 bullet, and issue #1076's own recommendation ("a
+// deterministic pre-call guard ... or a briefing line").
+//
+// WHY THIS GUARD IS NARROWER than mineDepositBlock/withdrawStorageBlock,
+// and stays that way: those two compare a KNOWN quantity of a KNOWN item id
+// against a KNOWN limit. Craft's step only names a recipe id -- the recipe's
+// actual input items and quantities are deliberately undocumented
+// (crafting.md:71, "recipe formulas ... are yours to discover in-game, not
+// read in a doc") and this harness has no getRecipe/catalog-lookup producer
+// for them, so "storage holds enough for THIS recipe" cannot be proven. What
+// CAN be proven for free: a `craft` whose personal station storage is
+// PROVABLY EMPTY ([], not unknown) cannot supply ANY recipe's materials from
+// storage, since every recipe needs at least one input drawn from there
+// (crafting.md's "Materials" cost component). That is the one shortfall this
+// guard blocks -- storage holding SOME items but not enough of the specific
+// ones a recipe needs fails OPEN, same as any other guard here on data it
+// cannot read.
+//
+// THE FACTION ESCAPE HATCH, and why it does not weaken this guard's proof.
+// crafting.md:16: a craft job can auto-route to FACTION storage/treasury
+// when personal storage/credits fall short and the pilot is "permitted to
+// spend them" -- a path this guard cannot observe (no faction-membership
+// field in any response this codebase parses). Two guards against a false
+// block from it: (1) skip outright when the step's own deliver_to/source
+// names a faction destination (openapi-v2.json:33680 -- source defaults to
+// deliver_to, values "storage"/"faction"/"faction:<bucket>", never "cargo");
+// (2) for the unnamed-default case, the fallback requires FACTION MEMBERSHIP,
+// which is PROVEN unreachable for every pilot this harness has ever run --
+// see actions.ts's scan_poi deletion comment (issue #552): 9/9 lifetime
+// attempts at a faction-gated action failed `not_in_faction`, and
+// spacemolt_faction has no registered join/create action anywhere in this
+// registry, so the planner has no path to ever join one. Not a load-bearing
+// assumption; it is the same live-evidence-plus-registry-audit citation
+// already relied on elsewhere in this codebase.
+//
+// Fired on the step's FIRST submission only (cursor.iteration === 0), same
+// receipt as mineDepositBlock: storage does not change between repeat ticks
+// of the SAME step (nothing else runs in between), and a successful first
+// iteration's own escrow is the mid-run-depletion case the game's own error
+// reports the moment it happens.
+//
+// Fail-open everywhere, like every guard in this file (#94): no getStorage
+// on the api, a thrown fetch, an unparsed response (undefined), a dry_run
+// quote (spends nothing, never worth blocking), or a faction-routed job all
+// skip the check -- never fabricate a block from missing data.
+async function craftDepositBlock(api: GameApi, step: PlanStep): Promise<StepResult | null> {
+  if (!api.getStorage) return null; // no capability to consult -> fail open
+
+  const p = step.params as { id?: unknown; dry_run?: unknown; deliver_to?: unknown; source?: unknown };
+  if (p.dry_run === true) return null; // a quote spends nothing -> never worth blocking
+
+  // Faction-routed jobs draw from a store this guard does not read (see
+  // header comment). "faction" and "faction:<bucket>" are the only two
+  // non-"storage" values the API documents for either param.
+  const namesFaction = (v: unknown) => typeof v === "string" && v.startsWith("faction");
+  if (namesFaction(p.deliver_to) || namesFaction(p.source)) return null;
+
+  let items: readonly { itemId: string; quantity: number }[] | undefined;
+  try {
+    items = await api.getStorage();
+  } catch {
+    return null; // query threw -> UNKNOWN locker -> fail open
+  }
+  if (items === undefined) return null; // unreadable -> fail open
+  if (items.length > 0) return null; // storage holds SOMETHING -> cannot prove this recipe is short
+
+  const id = typeof p.id === "string" && p.id ? p.id : "this recipe";
+  const reason =
+    `craft blocked: deposit the recipe's inputs into station storage first -- ` +
+    `deposit{item_id=<material>, quantity=<n>}, then retry craft{id=${id}}. ` +
+    `Station storage reads empty; crafting escrows materials from storage, never cargo.`;
+  return guardBlock(reason);
+}
+
 // Buy price-sanity guard (issue #458). Invariant: a market `buy`'s per-unit
 // cost should never clear BUY_PRICE_SANITY_MULTIPLIER times the item's
 // catalog base_value without the plan naming a reason -- catalog.data.json is
@@ -1640,6 +1731,14 @@ export async function executeTick(
   // storage query to be told the same thing.
   if (step.action === "withdraw") {
     const block = await withdrawStorageBlock(api, step);
+    if (block) return block;
+  }
+
+  // Craft deposit-precondition guard (issue #1076, dupes #932/#997) -- see
+  // craftDepositBlock above. First submission only, same as mineDepositBlock:
+  // repeat ticks of the same step spend no second query.
+  if (step.action === "craft" && cursor.iteration === 0) {
+    const block = await craftDepositBlock(api, step);
     if (block) return block;
   }
 
