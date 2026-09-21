@@ -429,6 +429,17 @@ Vocabulary / data shapes:
   like the available listing — and embeds the raw text in the digest above the available listing,
   with a completion-priority briefing line gated on it; the planner still never plans the query.
   Under improv you call get_active_missions yourself.)
+- `complete_mission(id)` and `abandon_mission(id)` need the mission's `mission_id` field — never its
+  `template_id`. Each active-mission entry carries BOTH (openapi-v2.json's V2GameState.missions.
+  active items), and the game distinguishes them at the wire: submitting a template_id returns
+  `mission_not_found: Mission not found. Use the mission_id from get_active_missions (not
+  template_id)` (live, 2026-08-26, #931: 43 fleet-wide refusals across three pilots in one 72h
+  window). If a listing shows an id-looking token next to a mission's title, do not assume it is
+  the mission_id — read the field name, not the position. (Also a §5-adjacent deterministic
+  producer in plan-then-execute: the digest's parsed "Mission objective check" block renders the
+  real mission_id explicitly for each mission, and the completion-priority line above now points
+  there instead of at the raw listing text. Under improv you read the mission_id field yourself,
+  #931.)
 - WHICH active mission to work is a value question, never a deadline one. Two things make the
   active list misleading if you read it as a to-do list. First, not every entry is a mission you
   took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts

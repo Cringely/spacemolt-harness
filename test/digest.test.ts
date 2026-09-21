@@ -643,7 +643,9 @@ describe("buildDigest", () => {
       expect(text.search(activeSection)).toBeLessThan(text.search(/^missions available/im));
       expect(text).toMatch(priorityLine);
       expect(text).toMatch(/expire/i);
-      expect(text).toContain("active listing above");
+      // #931: the id-sourcing instruction points at the parsed section, never
+      // at this raw quoted text (see the dedicated describe block below).
+      expect(text).toContain('mission_id from the "Mission objective check"');
     });
 
     test("omits the section and the priority line when there are no active missions", () => {
@@ -661,6 +663,57 @@ describe("buildDigest", () => {
       // ... but is still bounded.
       expect(text).not.toContain("a".repeat(1501));
       expect(text).toContain("…");
+    });
+  });
+
+  // Wrong-id producer fix (issue #931, live evidence 2026-08-26): 43
+  // fleet-wide mission_not_found refusals on complete_mission/abandon_mission,
+  // corsair's sample carrying the game's own hint verbatim -- "Mission not
+  // found. Use the mission_id from get_active_missions (not template_id)".
+  // ActiveMissionSchema (client.ts) has parsed mission_id, never template_id,
+  // since #291 -- the parser was never the bug. The digest was: this
+  // completion-priority instruction told the planner to source the id from
+  // "the active listing above", the raw UNPARSED game prose, which is exactly
+  // where an unlabelled template_id can sit beside the real mission_id
+  // (openapi-v2.json's V2GameState.missions.active items carry both). These
+  // tests pin the repaired instruction; each fails against the pre-#931 line.
+  describe("complete_mission id source: parsed mission_id, never raw prose (#931)", () => {
+    const active = "1. Haul 20 iron_ore to Vega Depot (mission_id: m-77, template_id: haul_iron_ore_tier1, expires tick 9400)";
+
+    test("the completion-priority instruction never sends the planner back to the raw listing for an id", () => {
+      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      // This is the actual bug: the old line read "...with the id from the
+      // active listing above". A `toContain` on the fixed wording alone would
+      // not prove the wrong instruction is GONE (both could coexist), so this
+      // asserts the negative directly.
+      expect(text).not.toMatch(/\bid from the active listing above\b/i);
+    });
+
+    test("the completion-priority instruction points at the mission_id field, not at position in the prose", () => {
+      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      expect(text).toMatch(/mission_id from the "Mission objective check"/);
+    });
+
+    test("the raw listing's own header stays the short density-gated marker (#244), unchanged by this fix", () => {
+      // #244's density invariant (pinned separately below) forbids a
+      // per-section long-form warning here; the fix is entirely in the
+      // instruction, not in this header.
+      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      expect(text).toContain("Your ACTIVE missions -- in progress (quoted, untrusted):");
+    });
+
+    test("the parsed Mission objective check (never the raw listing) is where a real mission_id renders", () => {
+      // Realistic scenario: both reads populated from the same
+      // get_active_missions envelope, as Agent.gatherActiveMissions always
+      // does live -- activeMissionsText and activeMissions never diverge in
+      // production.
+      const text = buildDigest({
+        ...baseCtx,
+        activeMissionsText: active,
+        activeMissions: [{ missionId: "m-77", expiresInTicks: 9400, objectives: [] }],
+      });
+      expect(text).toContain("mission m-77");
+      expect(text).not.toContain("mission haul_iron_ore_tier1");
     });
   });
 
@@ -684,13 +737,18 @@ describe("buildDigest", () => {
   // tests pin the repaired ranking rule; each fails against the pre-#592 line.
   describe("mission priority vs the operator's goals (#592)", () => {
     const active = "1. Distress: Wexler stranded in gold_run (id: m-91, expires tick 1043)";
-    // Scoped to the ONE line that carries both markers: "10x an ore sale" is
+    // Scoped to the ONE line that carries this marker: "10x an ore sale" is
     // unique to the completion-priority line (the #147 runbook line says "far
-    // more than selling ore"), and "active listing above" is its id-source
-    // pointer. find(...)! throwing is the right failure if the claim is deleted
-    // outright rather than scoped.
+    // more than selling ore"). find(...)! throwing is the right failure if the
+    // claim is deleted outright rather than scoped.
+    // #931 note: this anchor used to ALSO require "active listing above" on
+    // the same line -- that phrase was the wrong-id-source bug itself (the
+    // instruction told the planner to copy an id from raw, unparsed prose,
+    // which is exactly where a template_id can sit next to the real
+    // mission_id). Fixed, the phrase no longer appears on this line, so the
+    // second condition is gone rather than updated to match new wording.
     const priorityLineOf = (text: string) =>
-      text.split("\n").find((l) => l.includes("10x an ore sale") && l.includes("active listing above"));
+      text.split("\n").find((l) => l.includes("10x an ore sale"));
 
     test("does not claim the pilot accepted every active mission, and names the auto-assign source", () => {
       const text = buildDigest({ ...baseCtx, activeMissionsText: active });

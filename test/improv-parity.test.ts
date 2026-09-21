@@ -211,6 +211,23 @@ const SEAMS: Seam[] = [
     anchors: ["get_active_missions", "complete_mission", /before accepting/i],
   },
   {
+    guard: "mission_id-vs-template_id id-source fix (#931: complete_mission/abandon_mission took " +
+      "43 fleet-wide mission_not_found refusals because the digest's own completion-priority line " +
+      "sent the planner back to the raw, unparsed active-listing prose for an id -- the one place a " +
+      "template_id can sit beside the real mission_id, unlabelled; the parser was never the bug, " +
+      "the instruction was)",
+    // The exact phrase the fix repoints the id-sourcing instruction at; it
+    // appears nowhere in the pre-fix file, so a revert of the instruction (or
+    // of the matching raw-listing header) removes this marker.
+    code: { file: "src/planner/digest.ts", marker: 'mission_id from the "Mission objective check"' },
+    // The game's error text straddles the spec's ~100-char line wrap (the
+    // #148/#161 pattern this file's own comments warn about), so it needs a
+    // regex whose \s bridges the wrap rather than a literal-space string.
+    anchors: ["mission_id", "template_id",
+      /Use the mission_id from get_active_missions\s*\(not\s+template_id\)/,
+      /field name, not the position/i],
+  },
+  {
     guard: "mission-priority ranking rule (#592: the digest's completion-priority line ranks active " +
       "missions by what each reward does for the operator's Goals, with the clock only as a tiebreak -- " +
       "it no longer calls an auto-assigned distress mission 'accepted' (missions.md:11,70) and no " +

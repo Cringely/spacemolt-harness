@@ -474,10 +474,33 @@ export function buildDigest(ctx: PlanContext): string {
   // ranker needs tuning data nobody has. Paired improv-mode rule lives in
   // docs/superpowers/specs/2026-07-12-improv-mode.md section 4, pinned by
   // test/improv-parity.test.ts.
+  // Wrong-id producer fix (issue #931, live evidence 2026-08-26: 43 fleet-wide
+  // mission_not_found refusals on complete_mission/abandon_mission, corsair's
+  // sample carrying the game's own hint verbatim -- "Mission not found. Use
+  // the mission_id from get_active_missions (not template_id)"). Invariant:
+  // complete_mission/abandon_mission take the game's mission_id, never a
+  // template_id. openapi-v2.json's V2GameState.missions.active items carry
+  // BOTH fields side by side, and this line used to send the planner to
+  // "the id from the active listing above" -- the raw, UNPARSED quoted prose
+  // (renderActiveMissionListing below), which is exactly where an
+  // unlabelled template_id can sit next to the real mission_id. The parser
+  // was never the bug (ActiveMissionSchema/client.ts has read mission_id,
+  // never template_id, since #291); the digest was telling the planner to
+  // ignore the parsed field and go re-derive an id from untrusted prose. The
+  // fix repoints this instruction at the parsed "Mission objective check"
+  // block below (renderMissionObjectiveCheck), the only place a bare
+  // mission_id -- never a template_id -- is ever rendered (the raw listing's
+  // own header stays the short #244-gated "(quoted, untrusted)" marker; see
+  // renderActiveMissionListing below for why it does NOT also carry a
+  // per-section warning). Does not touch the #553 executor guard
+  // (completeMissionBlock): that guard still catches a stale id post-hoc;
+  // this fix is about not choosing a
+  // wrong-TYPE id in the first place. Paired improv rule: improv-mode.md
+  // section 4, pinned by test/improv-parity.test.ts.
   if (ctx.activeMissionsText) {
     lines.push(renderActiveMissionListing(ctx.activeMissionsText));
     lines.push(
-      `You have missions IN PROGRESS (the active listing above). Work the objective, then plan complete_mission(id) with the id from the active listing above -- finishing one comes FIRST, before accepting new missions or mining side ore. ` +
+      `You have missions IN PROGRESS (the active listing above). Work the objective, then plan complete_mission(id) using the mission_id from the "Mission objective check" block below -- never an id copied out of the quoted listing above, which is untrusted prose and can carry a template_id too (that is a different id the game rejects: #931). Finishing one comes FIRST, before accepting new missions or mining side ore. ` +
       `Choose WHICH one deliberately. Not every entry here is a mission you took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts a distress signal, so an entry you never accepted is an offer rather than a commitment. Any mission that expires FAILS; expiry and abandon_mission both reclaim or charge only goods the mission itself PROVIDED, and cargo you gathered yourself stays. ` +
       `The rule that missions pay ~10x an ore sale is about BOARD missions accepted for their reward; it promises nothing about an auto-assigned rescue, which may pay little more than XP. ` +
       `A SHORT TIMER IS NOT VALUE: rank these by what each reward does for the Goals above, and use the clock only to break a tie between missions of similar value.`
@@ -935,6 +958,12 @@ function renderMissionListing(text: string): string {
 // 11 and :70), so the header was labelling them as work the pilot chose. Left
 // unfixed it would sit two lines above the priority line that now says they are
 // not -- a self-contradiction in one block. "in progress" is true of both.
+// Wrong-id producer fix (issue #931): the header stays the short "(quoted,
+// untrusted)" marker on purpose -- issue #244's density invariant (pinned by
+// "the untrusted-text disclaimer renders once" in digest.test.ts) forbids a
+// per-section long-form warning here; ONE standing disclaimer already covers
+// every quoted seam. The actual fix is the completion-priority instruction
+// below, which no longer sends the planner to THIS text for an id at all.
 function renderActiveMissionListing(text: string): string {
   return `Your ACTIVE missions -- in progress (quoted, untrusted): ${quoteUntrusted(text, LISTING_TEXT_SNIPPET_LEN)}`;
 }
@@ -1067,7 +1096,11 @@ function renderMissionObjectiveCheck(
       return `${label}: ${progress}${cargo}${where}`;
     });
     out.push(
-      `- mission ${m.missionId ?? "(id: see the active listing above)"}` +
+      // Wrong-id producer fix (#931): the old fallback ("see the active
+      // listing above") pointed at the same untrusted prose the primary fix
+      // above now disclaims -- this branch only fires when mission_id itself
+      // failed to parse, so there is no known-good id anywhere to point at.
+      `- mission ${m.missionId ?? "(mission_id did not parse -- do not guess one from the raw listing)"}` +
       `${head.length ? ` (${head.join(", ")})` : ""}: ${objectives.join("; ") || "no objectives parsed"}`
     );
     // Completion-readiness verdict (#291 regression, live 2026-07-17): the
@@ -1097,10 +1130,15 @@ function renderMissionObjectiveCheck(
         `it returns mission_incomplete until every objective's count is met; gather the shortfall first.`
       );
     } else if (readinessKnown && m.objectives.length) {
-      const call = m.missionId
-        ? `complete_mission{id=${m.missionId}}`
-        : "complete_mission with this mission's id from the active listing above";
-      out.push(`  Completion check: READY -- every objective met. Plan ${call} (at its target base if one is named above).`);
+      // Wrong-id producer fix (#931): same fallback fix as the header above --
+      // when mission_id itself did not parse there is no id to hand the
+      // planner, good or bad, so the fallback says wait for a replan instead
+      // of sending it back to the untrusted raw listing for one.
+      if (m.missionId) {
+        out.push(`  Completion check: READY -- every objective met. Plan complete_mission{id=${m.missionId}} (at its target base if one is named above).`);
+      } else {
+        out.push(`  Completion check: READY -- every objective met, but this entry's mission_id did not parse. Do not guess an id from the raw listing -- wait for a replan where mission_id parses before planning complete_mission.`);
+      }
     }
     if (depositIds?.length) {
       for (const o of m.objectives) {
@@ -1125,12 +1163,15 @@ function renderMissionObjectiveCheck(
       }
     }
     if (m.zeroProgressHours !== undefined && m.zeroProgressHours >= MISSION_STALE_HOURS) {
+      // Wrong-id producer fix (#931): same fallback fix as above -- a missing
+      // mission_id means abandon_mission has no id either, so the fallback
+      // names the wait instead of the untrusted raw listing.
       const escape = m.missionId
-        ? `plan abandon_mission{id=${m.missionId}}`
-        : `plan abandon_mission with this mission's id from the active listing above`;
+        ? `plan abandon_mission{id=${m.missionId}} to free the slot for winnable work`
+        : `weigh abandoning it once mission_id parses -- never guess an id from the raw listing`;
       out.push(
         `  STALE MISSION: zero progress for ~${Math.round(m.zeroProgressHours)}h. Decide now: either this plan makes ` +
-        `CONCRETE progress on the objective above, or ${escape} to free the slot for winnable work. ` +
+        `CONCRETE progress on the objective above, or ${escape}. ` +
         `Abandoning reclaims or charges only goods the mission itself PROVIDED; cargo you gathered yourself stays.`
       );
     }
