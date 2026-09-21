@@ -484,6 +484,28 @@ const SEAMS: Seam[] = [
     anchors: ["220,108cr", "100,500cr", /8x the catalog base_value/],
   },
   {
+    guard: "item-id plan-admission guard (#982/#1003: a fabricated item id on buy/sell/jettison/" +
+      "withdraw/deposit/create_sell_order/create_buy_order -- 'wreck' (a salvage ENTITY, never a " +
+      "catalog item) and 'exotic_matter_sample' (no such id exists) -- is rejected before the step " +
+      "reaches the executor; the only prior backstop was executor.ts's post-hoc, buy-only " +
+      "nearestCatalogItemId correction, which never ran for the other six actions at all)",
+    // Pins the CALL SITE and its live condition together, the same shape
+    // buyPriceGuard's seam above explains: the function existing (or even
+    // being CALLED) proves nothing if the branch that acts on its result is
+    // dead. Verified by ablation: wrapping the real condition as
+    // `if (false && !itemCheck.ok)` -- which keeps the `normalizePlanItems(plan)`
+    // call itself untouched -- fails this marker, so a bare call-site marker
+    // alone would have stayed green over that exact regression.
+    code: {
+      file: "src/agent/agent.ts",
+      marker: /const itemCheck = normalizePlanItems\(plan\);\s*if \(!itemCheck\.ok\)/,
+    },
+    // Each anchor was absent from §4 before this bullet was added (checked,
+    // not assumed): 'wreck' and 'exotic_matter_sample' appear nowhere else in
+    // section 4, and "WORLD OBJECT" is this bullet's own coinage.
+    anchors: ["wreck", "exotic_matter_sample", "WORLD OBJECT", /plan-admission check rejects/],
+  },
+  {
     guard: "mine-objective buy-is-a-no-op teaching (#458: the digest's shortfall hint for a mine-type " +
       "objective now states that buying the item does not advance it -- a live capture on the same " +
       "issue bought 12 titanium_ore for 120,600cr and complete_mission was still blocked " +

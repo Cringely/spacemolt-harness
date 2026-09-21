@@ -126,3 +126,64 @@ describe("Agent plan admission normalization (SM-3)", () => {
     expect(store.recentEvents("a1", 20).filter((e) => e.type === "plan_normalized")).toEqual([]);
   });
 });
+
+// Issue #982/#1003, root-caused #1054: the planner sold/withdrew a fabricated
+// item id ('wreck', 'exotic_matter_sample' -- live capture, verified absent
+// from src/catalog/catalog.data.json). These tests guard the fix's wiring
+// into Agent.replan() -- normalizePlanItems (normalize-plan.ts), called
+// UNCONDITIONALLY (no surroundings gate, unlike the SM-3 block above).
+describe("Agent plan admission normalization: item ids (#982/#1003)", () => {
+  test("a fabricated item id retries the planner once with the item error, then commits the corrected plan", async () => {
+    const api = stubApiWithMap(commerceFieldsSystem);
+    const store = new Store(":memory:");
+    const badPlan: Plan = { goal: "salvage", steps: [{ action: "sell", params: { id: "wreck", quantity: 1 } }] };
+    const goodPlan: Plan = { goal: "salvage (corrected)", steps: [{ action: "sell", params: { id: "iron_ore", quantity: 1 } }] };
+    const planner = new MockPlanner([badPlan, goodPlan]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(2); // original attempt + the one retry
+    expect(planner.contexts[1]!.instruction).toContain("sell.id: 'wreck' is not a catalog item id");
+    expect(planner.contexts[1]!.instruction).toContain("never invented");
+
+    expect(store.loadPlan("a1")!.plan.goal).toBe("salvage (corrected)");
+  });
+
+  test("a fabricated item id that fails again on retry falls through to the existing planner_error path", async () => {
+    const api = stubApiWithMap(commerceFieldsSystem);
+    const store = new Store(":memory:");
+    const badPlan: Plan = { goal: "stock", steps: [{ action: "withdraw", params: { item_id: "exotic_matter_sample", quantity: 1 } }] };
+    const planner = new MockPlanner([badPlan]); // MockPlanner repeats the last plan on the retry too
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce(); // must not throw
+    expect(planner.contexts.length).toBe(2);
+    expect(store.loadPlan("a1")).toBeNull(); // never committed
+    const events = store.recentEvents("a1", 20).filter((e) => e.type === "planner_error");
+    expect(events.length).toBe(1);
+    expect((events[0]!.payload as { message: string }).message)
+      .toContain("plan item-id validation failed after retry");
+  });
+
+  test("no surroundings (no getSystem) does not skip the item check -- it runs unconditionally, unlike the location guard", async () => {
+    const store = new Store(":memory:");
+    const badPlan: Plan = { goal: "salvage", steps: [{ action: "jettison", params: { id: "wreck", quantity: 1 } }] };
+    const api: GameApi = {
+      async action(): Promise<V2Result> { return { result: "ok" }; },
+      async status() {
+        return {
+          credits: 0, fuel: 80, maxFuel: 100, hull: 100, maxHull: 100,
+          cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false,
+        };
+      },
+      async notifications() { return []; },
+      // no getSystem -- gatherSurroundings() degrades to undefined
+    };
+    const planner = new MockPlanner([badPlan]); // repeats on retry -> still bad
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(2); // the item retry fired despite no surroundings
+    expect(planner.contexts[1]!.instruction).toContain("jettison.id: 'wreck' is not a catalog item id");
+  });
+});

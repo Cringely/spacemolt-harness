@@ -15,7 +15,7 @@ import {
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
 import { evaluateReflex, reflexGaveUpAt, type ReflexConfig, type ReflexFailureRecord } from "./reflex";
-import { normalizePlanLocations, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
+import { normalizePlanLocations, normalizePlanItems, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
 import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
@@ -2680,6 +2680,37 @@ export class Agent {
           }
           plan = norm2.plan;
           rewrites = norm2.rewrites;
+        }
+      }
+
+      // Item-id fabrication guard (issue #982/#1003, root-caused in #1054):
+      // same name/id confusion class as normalizePlanLocations above, but for
+      // buy/sell/jettison/withdraw/deposit/create_sell_order/create_buy_order's
+      // item id -- the planner invented 'wreck' (a salvage ENTITY, never a
+      // catalog item) and 'exotic_matter_sample' (no such id exists), and the
+      // only backstop before this was executor.ts's post-hoc, buy-only
+      // correction, which fires after the game already spent a tick and never
+      // ran for the other six actions. Unconditional (no surroundings gate,
+      // unlike the location block above): the catalog is a static SSOT, not a
+      // per-tick observation, so there is nothing to wait on. Same one-retry
+      // pattern as the location check: one more planner call with the error
+      // appended, and a still-bad id after that retry is a genuine failure
+      // worth surfacing rather than silently discarding the whole replan.
+      const itemCheck = normalizePlanItems(plan);
+      if (!itemCheck.ok) {
+        const errorText = `Previous plan invalid: ${itemCheck.error} ` +
+          `Item ids are exact catalog ids copied from your cargo, a listing, or this briefing -- never invented.`;
+        const retryCtx: PlanContext = {
+          ...ctx,
+          instruction: ctx.instruction ? `${ctx.instruction} ${errorText}` : errorText,
+        };
+        const rawItemRetry = await planner.plan(retryCtx);
+        plan = PlanSchema.parse(rawItemRetry.plan);
+        promptChars += rawItemRetry.promptChars;
+        responseChars += rawItemRetry.responseChars;
+        const itemCheck2 = normalizePlanItems(plan);
+        if (!itemCheck2.ok) {
+          throw new Error(`plan item-id validation failed after retry: ${itemCheck2.error}`);
         }
       }
 

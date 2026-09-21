@@ -3,7 +3,7 @@ import type { FittedModule, GameApi, ModuleSpec, PurchaseCostEstimate, ShipFit, 
 import type { Plan, PlanStep } from "../registry/plan";
 import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { PlanCursor } from "../store/store";
-import { catalog } from "../catalog/catalog";
+import { catalog, nearestCatalogItemId } from "../catalog/catalog";
 import { fuelUrgent } from "./reflex";
 
 // Invariant: resultText carries a short snippet (capped ~120 chars, see
@@ -193,31 +193,9 @@ export function classifyGameError(e: SpacemoltError): StepResult {
 // Receipt for the edit-distance scan (simplicity rule 3): a bare "check the
 // catalog" instruction was already IN the game's error text ("Use exact item
 // ID") and failed 86 times; the deterministic nearest-match is the smallest
-// mechanism that turns the rejection into the exact id.
-function nearestCatalogItemId(attempted: string): string | undefined {
-  // Exact singular/plural strip first: the live incident class, and
-  // deterministic when several ids sit within distance 1.
-  const stripped = attempted.replace(/s$/, "");
-  if (stripped !== attempted && catalog.itemMeta(stripped)) return stripped;
-  for (const item of catalog.items()) {
-    if (withinEditDistanceOne(attempted, item.id)) return item.id;
-  }
-  return undefined;
-}
-
-// True when a and b differ by at most one insert/delete/substitute.
-function withinEditDistanceOne(a: string, b: string): boolean {
-  if (Math.abs(a.length - b.length) > 1) return false;
-  const [s, l] = a.length <= b.length ? [a, b] : [b, a];
-  let i = 0, j = 0, edits = 0;
-  while (i < s.length && j < l.length) {
-    if (s[i] === l[j]) { i++; j++; continue; }
-    if (++edits > 1) return false;
-    if (s.length === l.length) i++; // substitution consumes both
-    j++; // insert/delete consumes only the longer
-  }
-  return edits + (l.length - j) <= 1;
-}
+// mechanism that turns the rejection into the exact id. Promoted to
+// catalog.ts by #982/#1003 so normalize-plan.ts's plan-admission item guard
+// can reuse the same algorithm instead of a second copy.
 
 async function conditionMet(api: GameApi, until: NonNullable<PlanStep["until"]>): Promise<boolean> {
   const s = await api.status(); // query: free, unlimited

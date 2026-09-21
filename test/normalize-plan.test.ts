@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeGiftTargets, normalizePlanLocations, type FleetPilot } from "../src/agent/normalize-plan";
+import { normalizeGiftTargets, normalizePlanItems, normalizePlanLocations, type FleetPilot } from "../src/agent/normalize-plan";
 import type { Surroundings } from "../src/planner/types";
 import type { Plan } from "../src/registry/plan";
 
@@ -306,6 +306,115 @@ describe("normalizePlanLocations", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.plan.steps[1]).toEqual({ action: "jump", params: { id: "some_far_system" } });
+  });
+});
+
+// Issue #982/#1003, root-caused #1054: the planner sold/withdrew/deposited
+// item ids that are not real catalog items -- 'wreck' (a salvage ENTITY per
+// docs/game-reference, never an item) and 'exotic_matter_sample' (no such id
+// exists at all). Both are LIVE catalog facts, not invented for the test:
+// verified against src/catalog/catalog.data.json (710 items) -- 'wreck' and
+// 'exotic_matter_sample' are absent, 'fuel_cell'/'iron_ore'/'exotic_matter'
+// are present.
+describe("normalizePlanItems (issue #982/#1003)", () => {
+  test("a real catalog item id on every item-bearing action passes through unchanged", () => {
+    const plan: Plan = {
+      goal: "trade",
+      steps: [
+        { action: "buy", params: { id: "fuel_cell", quantity: 1 } },
+        { action: "sell", params: { id: "iron_ore", quantity: 1 } },
+        { action: "jettison", params: { id: "iron_ore", quantity: 1 } },
+        { action: "create_sell_order", params: { item_id: "iron_ore", quantity: 1, price_each: 10 } },
+        { action: "create_buy_order", params: { item_id: "iron_ore", quantity: 1, price_each: 10 } },
+        { action: "withdraw", params: { item_id: "iron_ore", quantity: 1 } },
+        { action: "deposit", params: { item_id: "iron_ore", quantity: 1 } },
+      ],
+    };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan).toEqual(plan);
+    expect(result.rewrites).toEqual([]);
+  });
+
+  // Live case: 'wreck' is a salvage ENTITY (docs/game-reference/commands.md's
+  // spacemolt_salvage section), not a catalog id at all -- no edit-distance-1
+  // catalog id exists for it, so the guard must NOT guess one, only tell the
+  // planner to copy a real id.
+  test("live case #982: sell id 'wreck' rejects with no guessed correction", () => {
+    const plan: Plan = { goal: "salvage", steps: [{ action: "sell", params: { id: "wreck", quantity: 1 } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("sell.id: 'wreck' is not a catalog item id");
+    expect(result.error).not.toContain("did you mean");
+    expect(result.error).toContain("never invent one");
+  });
+
+  // Live case #1003: same class, a different fabricated id, on withdraw --
+  // proves the guard is not buy-only (the ONLY prior backstop, executor.ts's
+  // nearestCatalogItemId correction, never ran for withdraw at all).
+  test("live case #1003: withdraw item_id 'exotic_matter_sample' rejects (no near match, distinct from real 'exotic_matter')", () => {
+    const plan: Plan = { goal: "stock", steps: [{ action: "withdraw", params: { item_id: "exotic_matter_sample", quantity: 1 } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("withdraw.item_id: 'exotic_matter_sample' is not a catalog item id");
+    expect(result.error).not.toContain("did you mean");
+  });
+
+  // The #152 fuel_cells/fuel_cell precedent, now caught at PLAN ADMISSION
+  // instead of post-hoc after the game rejects a buy: a genuine near-miss (one
+  // character off) gets a guessed correction in the retry text, unlike the two
+  // outright fabrications above.
+  test("a near-miss (one character off a real id) suggests the correction", () => {
+    const plan: Plan = { goal: "refuel", steps: [{ action: "buy", params: { id: "fuel_cells", quantity: 1 } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("buy.id: 'fuel_cells' is not a catalog item id");
+    expect(result.error).toContain("did you mean 'fuel_cell'");
+  });
+
+  test("deposit's gift form (no item_id, target+credits only) is not checked -- it is a different step shape, not a bad id", () => {
+    const plan: Plan = { goal: "fund", steps: [{ action: "deposit", params: { target: "Corvus Marrek", credits: 100 } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan).toEqual(plan);
+  });
+
+  test("actions with no item param (travel, mine, dock) pass through unexamined", () => {
+    const plan: Plan = { goal: "mine", steps: [{ action: "mine", params: {}, repeat: 2 }, { action: "dock", params: {} }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan).toEqual(plan);
+  });
+
+  // install_mod/uninstall_mod are deliberately excluded from ITEM_PARAM_BY_ACTION
+  // (catalog.ts's comment): their id can be a fitted-module INSTANCE id, not a
+  // catalog key, so checking them would manufacture false failures.
+  test("install_mod's id is never checked against the catalog (it may be a fitted-instance id)", () => {
+    const plan: Plan = { goal: "fit", steps: [{ action: "install_mod", params: { id: "not_a_catalog_id_at_all" } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+  });
+
+  test("the first bad item id in a multi-step plan is reported (fail fast, same pattern as normalizePlanLocations)", () => {
+    const plan: Plan = {
+      goal: "trade",
+      steps: [
+        { action: "sell", params: { id: "iron_ore", quantity: 1 } },
+        { action: "jettison", params: { id: "wreck", quantity: 1 } },
+        { action: "withdraw", params: { item_id: "exotic_matter_sample", quantity: 1 } },
+      ],
+    };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("jettison.id: 'wreck'");
   });
 });
 

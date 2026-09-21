@@ -1,5 +1,5 @@
 import { REGISTRY, getAction } from "../registry/actions";
-import { catalog } from "../catalog/catalog";
+import { catalog, ITEM_PARAM_BY_ACTION } from "../catalog/catalog";
 import { EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
 import type { CandidatePlan, CandidateStep, EvalCase, ScoreResult, Scorer } from "./types";
 
@@ -121,23 +121,13 @@ const knownPoiRef: Scorer = (plan, c) => {
   return pass("known_poi_ref", `${travels.length} POI reference(s) resolve`);
 };
 
-// Which params carry an ITEM id. install_mod/uninstall_mod are deliberately
-// EXCLUDED: their `id` accepts a module type id OR a fitted-module INSTANCE id
-// from get_ship (registry/actions.ts, upstream openapi-v1 uninstall_mod
-// description), and an instance id is not a catalog key -- scoring them would
-// manufacture false failures.
-const ITEM_PARAM_BY_ACTION: Record<string, string> = {
-  buy: "id",
-  sell: "id",
-  jettison: "id",
-  create_sell_order: "item_id",
-  create_buy_order: "item_id",
-};
-
 /**
  * CLASS: item id derived from prose. The game's own refuel error says "Buy fuel
  * cells"; the item id is `fuel_cell`, singular -- 86/86 lifetime buy failures on
- * `fuel_cells` (#179/#152). The catalog (src/catalog/) is the id SSOT.
+ * `fuel_cells` (#179/#152). The catalog (src/catalog/) is the id SSOT. Which
+ * params carry an item id is ITEM_PARAM_BY_ACTION, catalog.ts -- shared with
+ * the runtime plan-admission guard (normalize-plan.ts's normalizePlanItems)
+ * since #982/#1003/#1054, one SSOT instead of two hand-maintained copies.
  */
 const knownItemId: Scorer = (plan) => {
   const checked: Array<{ s: CandidateStep; i: number; id: string }> = [];
