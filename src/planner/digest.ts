@@ -5,7 +5,7 @@ import { JETTISON_VALUE_FLOOR, SPARSE_LOCK_MULTIPLIER, canLockDeposit, totalMini
 import { failureClass } from "../server/failures";
 import { FUEL_PRICE_FLOOR_CR, LISTING_FEE_BPS } from "../agent/net-trip";
 import { catalog } from "../catalog/catalog";
-import type { PlanContext, ChatMessage } from "./types";
+import type { PlanContext, ChatMessage, ActiveMissionStatus } from "./types";
 import type { ActiveMissionObjective, FittedModule, LocationInfo, StatusSnapshot } from "../client/client";
 
 // Prompt-injection boundary (SECURITY, security-baseline.md's "LLM output is
@@ -952,6 +952,44 @@ function renderActiveMissionListing(text: string): string {
 // timer would be a new destructive reflex, not a guardrail.
 export const MISSION_STALE_HOURS = 24;
 
+// Per-mission stale-advisory threshold (issue #700): MISSION_STALE_HOURS alone
+// assumes every mission's own clock runs long enough to accumulate a day of
+// zero progress. It doesn't. A distress-response mission expires on its own
+// in about 3 hours (docs/game-reference/upstream/docs/missions.md:70: "the
+// generated missions expire in 3 hours"; one tick is ~10s per
+// docs/game-reference/upstream/docs/connections.md:100), so it is gone long
+// before 24h of zero progress can accumulate -- the advisory was structurally
+// incapable of ever firing on the mission class the pilot holds most of (live
+// capture 2026-08-02: six distress missions at 0%, none flagged, #700).
+//
+// The fix derives a per-mission threshold instead of shrinking the global
+// constant -- lowering MISSION_STALE_HOURS itself was considered and rejected
+// for #592's missions and explicitly kept separate as this issue's own
+// producer (decisions.md, 2026-09-11 entry, option E). The derived threshold
+// is half of the mission's own total time budget, where that budget is
+// zeroProgressHours (elapsed at zero progress, from accepted_at) plus the
+// remaining hours implied by expiresInTicks -- both computed by the SAME
+// producer (Agent.summarizeActiveMission) against the SAME clock reading, so
+// their sum approximates one consistent total. Half leaves the planner at
+// least half the mission's remaining life to act once flagged (a distress
+// mission now trips at roughly its 1.5h mark, with ~1.4h left before its own
+// ~2.9h expiry, instead of never). The MISSION_STALE_HOURS cap keeps every
+// long-fused mission's behavior exactly as tuned against the #291 57h
+// incident: a mission whose half-budget already exceeds 24h never sees a
+// smaller threshold, so nothing changes for the missions this constant was
+// originally tuned against. Falls back to the flat 24h when either input is
+// unavailable -- a hand-built ctx, or a plan_context event persisted before
+// this fix -- because a missing datum is never a reason to invent urgency
+// (#94), and the flat threshold is the behavior every such artifact already
+// replays.
+const TICK_SECONDS = 10; // connections.md:100, "ticks of roughly 10 seconds"
+function staleAdvisoryThresholdHours(m: ActiveMissionStatus): number {
+  if (m.expiresInTicks === undefined || m.zeroProgressHours === undefined) return MISSION_STALE_HOURS;
+  const remainingHours = (m.expiresInTicks * TICK_SECONDS) / 3600;
+  const totalBudgetHours = m.zeroProgressHours + remainingHours;
+  return Math.min(MISSION_STALE_HOURS, totalBudgetHours / 2);
+}
+
 // Objective types the deposit check must NOT fire on (issue #330). The deposit
 // membership verdict exists for MINING-fulfilled objectives -- "this belt does
 // not list your ore". A deliver_item objective carries an item_id too, but it
@@ -1124,7 +1162,7 @@ function renderMissionObjectiveCheck(
         }
       }
     }
-    if (m.zeroProgressHours !== undefined && m.zeroProgressHours >= MISSION_STALE_HOURS) {
+    if (m.zeroProgressHours !== undefined && m.zeroProgressHours >= staleAdvisoryThresholdHours(m)) {
       const escape = m.missionId
         ? `plan abandon_mission{id=${m.missionId}}`
         : `plan abandon_mission with this mission's id from the active listing above`;
