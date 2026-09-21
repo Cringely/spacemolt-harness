@@ -128,6 +128,52 @@ describe("craft deposit guard: scope, on purpose", () => {
     expect(calls.map((c) => c.name)).toEqual(["craft"]);
   });
 
+  // The bug this guard shipped with: it OR'd the two raw fields, so a
+  // faction deliver_to skipped the check even when source explicitly named
+  // "storage" as the actual input origin. This is openapi-v2.json:33680's
+  // own worked example -- source="storage" deliver_to="faction:Crafting"
+  // pulls inputs from PERSONAL storage and deposits the output to a faction
+  // bucket -- so an empty personal locker must still refuse the craft.
+  test("source=storage with a faction deliver_to still reads the personal locker", async () => {
+    const { api, calls } = stubApi({ storage: [] });
+    const r = await executeTick(
+      api,
+      craft({ id: "iron_plates", quantity: 10, source: "storage", deliver_to: "faction:Crafting" }),
+      { step: 0, iteration: 0 },
+    );
+    expect(r.kind).toBe("blocked");
+    expect(calls.length).toBe(0);
+  });
+
+  // source is the higher-priority field per the same API doc (deliver_to is
+  // only the DEFAULT for an unset source), so an explicit source=faction
+  // must still skip the check even when deliver_to names personal storage.
+  test("source=faction with deliver_to=storage is still skipped", async () => {
+    const { api, calls } = stubApi({ storage: [] });
+    const r = await executeTick(
+      api,
+      craft({ id: "iron_plates", quantity: 10, source: "faction", deliver_to: "storage" }),
+      { step: 0, iteration: 0 },
+    );
+    expect(r.kind).not.toBe("blocked");
+    expect(calls.map((c) => c.name)).toEqual(["craft"]);
+  });
+
+  // Only "faction" and "faction:<bucket>" are documented values -- a
+  // leading-substring match would also skip the check for any other string
+  // that happens to start with "faction", which is not one of the API's
+  // three documented values and must not be treated as a faction route.
+  test("a value that merely starts with 'faction' is not treated as a faction route", async () => {
+    const { api, calls } = stubApi({ storage: [] });
+    const r = await executeTick(
+      api,
+      craft({ id: "iron_plates", quantity: 10, source: "factional_reserve" }),
+      { step: 0, iteration: 0 },
+    );
+    expect(r.kind).toBe("blocked");
+    expect(calls.length).toBe(0);
+  });
+
   // Same receipt as mineDepositBlock: storage cannot change between repeat
   // ticks of the SAME step (nothing else runs in between), so re-querying
   // past the first submission would only double the hottest path's traffic.

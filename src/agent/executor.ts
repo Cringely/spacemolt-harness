@@ -827,9 +827,16 @@ async function withdrawStorageBlock(api: GameApi, step: PlanStep): Promise<StepR
 // when personal storage/credits fall short and the pilot is "permitted to
 // spend them" -- a path this guard cannot observe (no faction-membership
 // field in any response this codebase parses). Two guards against a false
-// block from it: (1) skip outright when the step's own deliver_to/source
-// names a faction destination (openapi-v2.json:33680 -- source defaults to
-// deliver_to, values "storage"/"faction"/"faction:<bucket>", never "cargo");
+// block from it: (1) skip outright when the step's EFFECTIVE input source
+// names a faction destination -- `source` is where inputs are actually
+// pulled from and defaults to `deliver_to` only when `source` itself is
+// unset (openapi-v2.json:33680, whose own worked example is
+// source="storage" deliver_to="faction:Crafting": pulls from PERSONAL
+// storage, delivers to a faction bucket -- so the two fields are never
+// interchangeable and the check must resolve source-then-deliver_to, not
+// OR the raw fields together); values are "storage"/"faction"/
+// "faction:<bucket>", never "cargo", matched exactly or by the
+// "faction:" prefix, not any string that merely starts with "faction";
 // (2) for the unnamed-default case, the fallback requires FACTION MEMBERSHIP,
 // which is PROVEN unreachable for every pilot this harness has ever run --
 // see actions.ts's scan_poi deletion comment (issue #552): 9/9 lifetime
@@ -857,9 +864,17 @@ async function craftDepositBlock(api: GameApi, step: PlanStep): Promise<StepResu
 
   // Faction-routed jobs draw from a store this guard does not read (see
   // header comment). "faction" and "faction:<bucket>" are the only two
-  // non-"storage" values the API documents for either param.
-  const namesFaction = (v: unknown) => typeof v === "string" && v.startsWith("faction");
-  if (namesFaction(p.deliver_to) || namesFaction(p.source)) return null;
+  // non-"storage" values the API documents for either param -- matched
+  // exactly or by the "faction:" prefix, never any string that merely
+  // starts with "faction". `source` is where inputs are actually pulled
+  // FROM and defaults to `deliver_to` only when `source` itself is unset
+  // (openapi-v2.json:33680), so the effective input store is
+  // source-then-deliver_to, never an OR of the two raw fields -- a step
+  // naming source="storage" with a faction deliver_to still reads the
+  // personal locker.
+  const namesFaction = (v: unknown) => typeof v === "string" && (v === "faction" || v.startsWith("faction:"));
+  const effectiveSource = typeof p.source === "string" && p.source ? p.source : p.deliver_to;
+  if (namesFaction(effectiveSource)) return null;
 
   let items: readonly { itemId: string; quantity: number }[] | undefined;
   try {
