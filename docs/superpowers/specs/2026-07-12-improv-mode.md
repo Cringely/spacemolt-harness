@@ -399,6 +399,21 @@ Vocabulary / data shapes:
   reads these ids from the catalog SSOT and briefs them whenever fuel is below reserve, and the
   executor enriches an invalid_item buy block with the nearest catalog id — surfaced in the
   blocked detail, never auto-retried.)
+- The same "copy the id, never invent one" rule covers `withdraw`, `deposit`, `create_sell_order`,
+  and `create_buy_order` too, and a WORLD OBJECT is never a shortcut around it. `wreck` is a
+  salvage ENTITY you interact with via `tow`/`loot` (see the withdraw rule below) — it is not, and
+  never becomes, an item id, however plausible it reads next to a real one. Live, #982: `sell
+  {id:"wreck"}` blocked 8 times in 72h with `invalid_item: Unknown item 'wreck'`. A name that
+  merely SOUNDS like a catalog id is no safer: live, #1003, `exotic_matter_sample` was named in
+  `sell`/`buy`/`deposit`/`withdraw` steps 7 times in one window and failed every time —
+  `exotic_matter` is real, `exotic_matter_sample` is not, and no amount of retrying invents it.
+  Before naming an id for any of these six actions, confirm it against a listing, your cargo, or
+  this briefing; if you cannot point to where you read it, do not send it. (Also a §5 deterministic
+  backstop, #982/#1003: in plan-then-execute a plan-admission check rejects a step whose item id
+  does not resolve in the catalog SSOT BEFORE it reaches the executor — zero ticks spent, layered
+  under the fuel_cell-style nearest-match correction above for a real near-miss, and a flat
+  "copy the id" instruction for an outright fabrication like these two. The improv driver reaches
+  no plan-admission step at all, so here the rule is yours to keep.)
 - Selling or jettisoning CARGO specifically: the item_id must come from your own cargo listing
   (`get_status` or `get_cargo`), never guessed from the display name — a name like "Common Ore" is
   NOT its id, and `ore_common` is not a real catalog id (a live plan-then-execute run invented

@@ -65,6 +65,30 @@ describe("SM-9 replay: the scorers catch every failure the live incident produce
     expect(verdict(s, "known_item_id").reason).toContain("fuel_cells");
   });
 
+  // Issue #982/#1003/#1054: ITEM_PARAM_BY_ACTION (catalog.ts) is now shared
+  // between this scorer and normalize-plan.ts's runtime guard -- before, this
+  // scorer's own copy covered only buy/sell/jettison/create_sell_order/
+  // create_buy_order and withdraw/deposit sailed through unchecked even
+  // offline. Built inline (no eval-cases.json fixture): the shared map is the
+  // thing under test, not a recorded incident.
+  test("withdraw/deposit item ids are now checked too, not just buy/sell/jettison/create_*_order (#982/#1003/#1054)", () => {
+    const ctx: EvalCase["ctx"] = {
+      persona: "test", goals: [], wake: { reason: "no_plan" }, statusSummary: "", recentEvents: [],
+    };
+    const bad = scorePlan(
+      { goal: "stock", steps: [{ action: "withdraw", params: { item_id: "exotic_matter_sample", quantity: 1 } }] },
+      { id: "item-param-withdraw", ctx },
+    );
+    expect(verdict(bad, "known_item_id").verdict).toBe("fail");
+    expect(verdict(bad, "known_item_id").reason).toContain("exotic_matter_sample");
+
+    const good = scorePlan(
+      { goal: "stock", steps: [{ action: "withdraw", params: { item_id: "iron_ore", quantity: 1 } }] },
+      { id: "item-param-withdraw-ok", ctx },
+    );
+    expect(verdict(good, "known_item_id").verdict).toBe("pass");
+  });
+
   test("invented action name ('Sell cargo') and a sell with no quantity", () => {
     const s = scoresFor("invented-action-and-bad-params");
     expect(verdict(s, "known_action").verdict).toBe("fail");

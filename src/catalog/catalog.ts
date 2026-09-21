@@ -189,3 +189,56 @@ export const itemValue = (id: string): number | undefined => catalog.itemValue(i
 export const itemMeta = (id: string): ItemMeta | undefined => catalog.itemMeta(id);
 export const isRecipeInput = (id: string): boolean => catalog.isRecipeInput(id);
 export const recipesUsing = (id: string): Recipe[] => catalog.recipesUsing(id);
+
+// Which params carry an ITEM id, shared by the offline eval (eval/scorers.ts's
+// knownItemId) and the runtime plan-admission guard (agent/normalize-plan.ts's
+// normalizePlanItems, issue #982/#1003/#1054) -- one SSOT instead of the two
+// hand-maintained copies the #1054 triage found (the eval had it, runtime did
+// not check withdraw/deposit at all). install_mod/uninstall_mod are
+// deliberately EXCLUDED: their `id` accepts a module type id OR a fitted-module
+// INSTANCE id from get_ship (registry/actions.ts, upstream openapi-v1
+// uninstall_mod description), and an instance id is not a catalog key --
+// checking them would manufacture false failures. deposit's item_id is
+// OPTIONAL on our side (registry/actions.ts's gift-form refinement), so a
+// deposit gift step (target+credits, no item_id) is simply not checked -- the
+// consumer below only checks a param that is actually present as a string.
+export const ITEM_PARAM_BY_ACTION: Record<string, string> = {
+  buy: "id",
+  sell: "id",
+  jettison: "id",
+  create_sell_order: "item_id",
+  create_buy_order: "item_id",
+  withdraw: "item_id",
+  deposit: "item_id",
+};
+
+// Nearest-match correction for a fabricated item id (issue #152's buy-id
+// correction, promoted from executor.ts to this shared module by #982/#1003
+// so normalize-plan.ts's plan-admission guard can reuse the same algorithm
+// instead of a second copy). Exact singular/plural strip first: the live
+// incident class, and deterministic when several ids sit within distance 1.
+// Returns undefined when nothing is within one edit -- an outright
+// fabrication like 'wreck' or 'exotic_matter_sample' has no real near match,
+// and guessing one would hand the planner a wrong id with false confidence.
+export function nearestCatalogItemId(attempted: string): string | undefined {
+  const stripped = attempted.replace(/s$/, "");
+  if (stripped !== attempted && catalog.itemMeta(stripped)) return stripped;
+  for (const item of catalog.items()) {
+    if (withinEditDistanceOne(attempted, item.id)) return item.id;
+  }
+  return undefined;
+}
+
+// True when a and b differ by at most one insert/delete/substitute.
+function withinEditDistanceOne(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  const [s, l] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0, j = 0, edits = 0;
+  while (i < s.length && j < l.length) {
+    if (s[i] === l[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (s.length === l.length) i++; // substitution consumes both
+    j++; // insert/delete consumes only the longer
+  }
+  return edits + (l.length - j) <= 1;
+}
