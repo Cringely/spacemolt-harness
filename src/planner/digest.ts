@@ -965,29 +965,29 @@ export const MISSION_STALE_HOURS = 24;
 // The fix derives a per-mission threshold instead of shrinking the global
 // constant -- lowering MISSION_STALE_HOURS itself was considered and rejected
 // for #592's missions and explicitly kept separate as this issue's own
-// producer (decisions.md, 2026-09-11 entry, option E). The derived threshold
-// is half of the mission's own total time budget, where that budget is
-// zeroProgressHours (elapsed at zero progress, from accepted_at) plus the
-// remaining hours implied by expiresInTicks -- both computed by the SAME
-// producer (Agent.summarizeActiveMission) against the SAME clock reading, so
-// their sum approximates one consistent total. Half leaves the planner at
-// least half the mission's remaining life to act once flagged (a distress
-// mission now trips at roughly its 1.5h mark, with ~1.4h left before its own
-// ~2.9h expiry, instead of never). The MISSION_STALE_HOURS cap keeps every
-// long-fused mission's behavior exactly as tuned against the #291 57h
-// incident: a mission whose half-budget already exceeds 24h never sees a
-// smaller threshold, so nothing changes for the missions this constant was
-// originally tuned against. Falls back to the flat 24h when either input is
-// unavailable -- a hand-built ctx, or a plan_context event persisted before
-// this fix -- because a missing datum is never a reason to invent urgency
-// (#94), and the flat threshold is the behavior every such artifact already
-// replays.
+// producer (decisions.md, 2026-09-11 entry, option E). The threshold is
+// whichever is smaller: MISSION_STALE_HOURS, or the remaining hours the
+// mission's own expiresInTicks implies. That fires at the same elapsed-time
+// point as the earlier "half the elapsed+remaining budget" formula -- for any
+// elapsed value e and remaining value r, e >= min(24, (e+r)/2) holds exactly
+// when e >= min(24, r), so the halving (and the elapsed-hours input it
+// needed) was inert and is dropped. A distress mission still trips at roughly
+// its own halfway point (~1.5h into a ~3h life). The MISSION_STALE_HOURS cap
+// still keeps a mission with a day or more of remaining life at the #291-
+// tuned 24h -- but that guarantee holds only once remaining time reaches 24h,
+// not for "board contract" as a class: a board contract with less than a day
+// of life left now fires earlier than it did before this fix, the same as
+// any other short-lived mission. Falls back to the flat 24h when
+// expiresInTicks is missing OR not a genuine positive duration (zero or
+// negative -- the field is parsed as a bare optional number with no such
+// floor) -- a missing or nonsensical datum is never a reason to invent
+// urgency (#94), the same convention Agent.summarizeActiveMission already
+// applies to zeroProgressHours (agent.ts, `if (hours >= 0)`).
 const TICK_SECONDS = 10; // connections.md:100, "ticks of roughly 10 seconds"
 function staleAdvisoryThresholdHours(m: ActiveMissionStatus): number {
-  if (m.expiresInTicks === undefined || m.zeroProgressHours === undefined) return MISSION_STALE_HOURS;
+  if (m.expiresInTicks === undefined || m.expiresInTicks <= 0) return MISSION_STALE_HOURS;
   const remainingHours = (m.expiresInTicks * TICK_SECONDS) / 3600;
-  const totalBudgetHours = m.zeroProgressHours + remainingHours;
-  return Math.min(MISSION_STALE_HOURS, totalBudgetHours / 2);
+  return Math.min(MISSION_STALE_HOURS, remainingHours);
 }
 
 // Objective types the deposit check must NOT fire on (issue #330). The deposit

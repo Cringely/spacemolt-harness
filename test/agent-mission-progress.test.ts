@@ -329,10 +329,11 @@ describe("mission objective check rendering (#291)", () => {
   // #700: MISSION_STALE_HOURS alone can never fire on a distress-response
   // mission, which expires on its own in ~3h (missions.md:70) -- 24h of zero
   // progress cannot accumulate before the game removes the mission first. The
-  // threshold now derives from the mission's OWN expiresInTicks (half its
-  // total time budget: zeroProgressHours elapsed + the remaining hours the
-  // ticks imply), so a short-fused mission gets flagged near its own halfway
-  // point instead of never.
+  // threshold now derives from the mission's OWN expiresInTicks (whichever is
+  // smaller: 24h, or the remaining hours the ticks imply -- the same firing
+  // point as an earlier elapsed+remaining/2 draft, see digest.ts), so a
+  // short-fused mission gets flagged near its own halfway point instead of
+  // never.
   test("a distress-length mission (~3h total life via expiresInTicks) fires near its own halfway point, well inside that 3h", () => {
     const distressMission = (zeroProgressHours: number, expiresInTicks: number) => buildDigest({
       ...baseCtx,
@@ -368,6 +369,26 @@ describe("mission objective check rendering (#291)", () => {
     });
     expect(longMission(MISSION_STALE_HOURS - 0.1)).not.toContain("STALE MISSION");
     expect(longMission(MISSION_STALE_HOURS)).toContain("STALE MISSION");
+  });
+
+  // Degenerate expiry (#700 fix-round finding): expiresInTicks is parsed as a
+  // bare optional number with no positivity floor, so zero or negative is not
+  // "missing" and must not slip past the fallback. Left unguarded, a zero/
+  // negative value collapses the derived threshold toward zero and any
+  // positive zeroProgressHours clears it immediately -- the advisory firing
+  // on a mission the pilot just accepted, the exact inverted-urgency failure
+  // the fallback exists to prevent (#94).
+  test("a zero or negative expiresInTicks falls back to the flat threshold instead of manufacturing urgency", () => {
+    const withExpiry = (expiresInTicks: number) => buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-1", zeroProgressHours: 1, expiresInTicks,
+        objectives: [titaniumObjective],
+      }],
+    });
+    // 1h of zero progress must not read as stale under the flat 24h fallback.
+    expect(withExpiry(0)).not.toContain("STALE MISSION");
+    expect(withExpiry(-50)).not.toContain("STALE MISSION");
   });
 
   // Completion-readiness verdict (#291 regression): the raw "14/20" numbers did

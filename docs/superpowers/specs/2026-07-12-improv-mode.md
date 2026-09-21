@@ -477,9 +477,10 @@ Vocabulary / data shapes:
   missions sat at 0% the pilot never once weighed abandoning, because none had a day to give).
   (Also a §5-adjacent deterministic producer in plan-then-execute: the harness derives the
   zero-progress age from accepted_at, and the digest renders a stale-mission advisory once that age
-  crosses half the mission's own total time budget — elapsed plus the remaining hours its
-  expires_in_ticks implies — capped at 24h for long-fused missions, so a board contract's behavior
-  is unchanged from before #700. Advisory only, never an auto-abandon.)
+  reaches whichever is smaller — 24h, or the remaining hours the mission's own expiry implies — so
+  the #291-tuned 24h behavior stays put once a mission still has a day or more of life left; a board
+  contract with less than that fires earlier than it did before #700, the same as any other
+  short-fused mission. Advisory only, never an auto-abandon.)
 - Before you plan `complete_mission`, confirm the mission's objective is actually MET — every
   objective's `current` must be at least its `required` (or the objective already `completed`).
   complete_mission on an unmet objective returns `mission_incomplete: Objective incomplete: Mine N

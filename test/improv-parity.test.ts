@@ -252,8 +252,8 @@ const SEAMS: Seam[] = [
     // per-mission derivation and restores a flat MISSION_STALE_HOURS comparison
     // must fail HERE, not there).
     code: { file: "src/planner/digest.ts", marker: "function staleAdvisoryThresholdHours(" },
-    anchors: [/distress-response rescue expires/, /own HALFWAY point/, /own total time budget/,
-      /expires_in_ticks implies/],
+    anchors: [/distress-response rescue expires/, /own HALFWAY point/, /whichever is smaller/,
+      /own expiry implies/],
   },
   {
     guard: "complete_mission objective guard (#291 regression: current<required -> blocked wake before the doomed tick)",
