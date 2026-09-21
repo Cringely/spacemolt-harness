@@ -1076,6 +1076,19 @@ function shortfallHint(o: ActiveMissionObjective, need: number): string {
 // with both id lists printed right there for the planner to override -- the
 // verdict text is deliberately soft ("unlikely to yield", "trust the game")
 // and names the list it derived from for exactly that reason.
+// Reward parsing (issue #1051): rewardSkillXp is a skill_id -> XP map (see
+// ActiveMissionRewardsSchema, client.ts), possibly holding several skills or
+// a non-finite/non-number value from a divergent live payload -- filtered
+// defensively rather than trusted, same discipline as every other parsed-map
+// consumer in this file. undefined (no rewards object, or a rewards object
+// with no skill_xp) renders no XP text at all, never a fabricated "+0 xp".
+function formatSkillXp(xp: Record<string, number> | undefined): string | undefined {
+  if (!xp) return undefined;
+  const entries = Object.entries(xp).filter(([, v]) => typeof v === "number" && Number.isFinite(v));
+  if (!entries.length) return undefined;
+  return entries.map(([skill, v]) => `+${v} ${skill} xp`).join(", ");
+}
+
 function renderMissionObjectiveCheck(
   missions: NonNullable<PlanContext["activeMissions"]>,
   depositIds: PlanContext["currentPoiDepositIds"],
@@ -1087,6 +1100,15 @@ function renderMissionObjectiveCheck(
     const head: string[] = [];
     if (m.percentComplete !== undefined) head.push(`${m.percentComplete}% complete`);
     if (m.expiresInTicks !== undefined) head.push(`expires in ${m.expiresInTicks} ticks`);
+    // Reward parsing (issue #1051): the value counterweight #592's ranking
+    // rule asked for and never had -- "rank these by what each reward does
+    // for the Goals" had no reward datum to rank by until this. Rendered
+    // beside the fuse (same `head` line) so urgency and value sit together,
+    // not the fuse alone. Gated per-field (#94): a mission with credits but
+    // no skill_xp (or vice versa) still shows the half it has.
+    if (m.rewardCredits !== undefined) head.push(`reward ${m.rewardCredits}cr`);
+    const xpText = formatSkillXp(m.rewardSkillXp);
+    if (xpText) head.push(xpText);
     const objectives = m.objectives.map((o) => {
       const label = o.itemId ?? o.type ?? "objective";
       if (o.completed) return `${label}: DONE`;

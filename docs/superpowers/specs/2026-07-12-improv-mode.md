@@ -456,7 +456,14 @@ Vocabulary / data shapes:
   milestone took zero steps and a stalled mission went from 20.6h to 22.0h of no progress).
   (Also a §5-adjacent deterministic producer in plan-then-execute: the digest's
   completion-priority line carries this same ranking rule, gated on having an active listing,
-  and its section header no longer calls an auto-assigned mission "accepted".)
+  and its section header no longer calls an auto-assigned mission "accepted". Reward parsing
+  fix, #1051: for two months that ranking rule had no reward datum to rank by -- the digest's
+  parsed "Mission objective check" block now renders each mission's `rewards.credits` and
+  `rewards.skill_xp` beside the expiry fuse, reference-backed from openapi-v2.json's
+  V2GameState.missions.active.rewards, not yet confirmed by a live capture of a non-empty
+  envelope. A mission with no rewards object renders no reward line, never a false 0. Under
+  improv you already see the full rewards object in the raw API response -- read `rewards.credits`
+  and `rewards.skill_xp` directly rather than guessing value from the mission's title or type.)
 - A mining objective advances ONLY at a deposit that actually CONTAINS the objective item. Before
   committing to mine for a mission, run `get_poi` at your location and read its resources list —
   if the objective's item_id is NOT among the deposit's resource ids, mining there can never yield

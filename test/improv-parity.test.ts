@@ -249,6 +249,19 @@ const SEAMS: Seam[] = [
       /reclaim or charge\s+only goods the mission itself PROVIDED/],
   },
   {
+    guard: "mission reward rendering (#1051, split out of #592: the digest's parsed Mission objective " +
+      "check now renders rewards.credits and rewards.skill_xp beside the expiry fuse -- #592's ranking " +
+      "rule had no reward datum to rank by until this; reference-backed against openapi-v2.json, not " +
+      "yet confirmed by a live capture)",
+    // The gate that gives the render its #94 absence contract (undefined ->
+    // no line, never a false 0). Reverting this branch (or the reward fields
+    // it reads) removes the marker.
+    code: { file: "src/planner/digest.ts", marker: "m.rewardCredits !== undefined" },
+    anchors: ["rewards.credits", "rewards.skill_xp",
+      /V2GameState\.missions\.active\.rewards/,
+      /renders no reward line, never a false 0/i],
+  },
+  {
     guard: "mission objective check + deposit cross-ref (#291: objective item vs current POI's deposit resource ids)",
     code: { file: "src/agent/agent.ts", marker: "gatherPoiDeposits(" },
     anchors: ["get_poi", /never yield/i, /deposits DO list it/i],

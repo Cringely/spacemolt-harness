@@ -295,8 +295,11 @@ export interface MarketRow {
 // `item_name`/`description` strings). They exist for the DASHBOARD consumer
 // (src/server/missions.ts) only -- the deterministic digest block still
 // renders ids and numbers, never this prose (see renderMissionObjectiveCheck,
-// digest.ts). Giver dialog and reward prose stay unparsed: the raw listing
-// already carries them quoted+truncated.
+// digest.ts). Giver dialog stays unparsed: the raw listing already carries
+// it quoted+truncated. Reward NUMBERS (rewards.credits, rewards.skill_xp) are
+// parsed below (issue #1051) -- they are the one numeric per-mission value
+// signal, not display prose, so they feed the same deterministic block as
+// ids and numbers rather than staying raw-text-only.
 export interface ActiveMissionObjective {
   type?: string;
   itemId?: string;
@@ -316,6 +319,13 @@ export interface ActiveMissionInfo {
   acceptedAt?: string; // ISO date-time, per the spec's format: date-time
   expiresInTicks?: number;
   percentComplete?: number;
+  // Reward parsing (issue #1051): the one numeric value signal per mission,
+  // parsed alongside expiresInTicks so the digest can rank by worth, not only
+  // urgency (#592's ranking rule had nothing to rank by until this). Both
+  // undefined when the mission carries no rewards object or the game omits
+  // the field -- that reads as UNKNOWN, never as a 0-credit mission (#94).
+  rewardCredits?: number;
+  rewardSkillXp?: Record<string, number>;
   objectives: ActiveMissionObjective[];
 }
 
@@ -824,12 +834,33 @@ const ActiveMissionObjectiveSchema = z.object({
   system_id: z.string().optional(),
 });
 
+// Reward parsing (issue #1051, split out of #592 -- see that decision's
+// rejected option B in decisions.md). openapi-v2.json's V2GameState.missions.
+// active[] items carry a `rewards` object (credits int64, an items map,
+// pirate_rep, reputation, skill_xp map) beside mission_id/template_id; only
+// credits and skill_xp have a consumer (renderMissionObjectiveCheck below),
+// so only those two are parsed -- items/pirate_rep/reputation stay unparsed,
+// no dead data (the convention this file follows throughout, e.g.
+// PoiDepositsSchema's richness/remaining note). REFERENCE-BACKED, NOT LIVE-
+// CAPTURED: no non-empty get_active_missions envelope has ever been recorded
+// (same gap ActiveMissionSchema's own comment below already flags), so both
+// field names here are read off the vendored spec alone. Optional/tolerant
+// per the spec (it marks nothing under rewards required): a mission whose
+// reward parse comes back undefined must read as UNKNOWN, never as a
+// worthless 0-credit mission -- the digest's render gate (rewardCredits
+// !== undefined) is what keeps absence from reading as a verdict (#94).
+const ActiveMissionRewardsSchema = z.object({
+  credits: z.number().optional(),
+  skill_xp: z.record(z.string(), z.number()).optional(),
+}).optional();
+
 const ActiveMissionSchema = z.object({
   mission_id: z.string().optional(),
   title: z.string().optional(),
   accepted_at: z.string().optional(),
   expires_in_ticks: z.number().optional(),
   percent_complete: z.number().optional(),
+  rewards: ActiveMissionRewardsSchema,
   objectives: z.array(ActiveMissionObjectiveSchema).default([]),
 });
 
@@ -1147,6 +1178,12 @@ export class SpacemoltClient implements GameApi {
           acceptedAt: m.accepted_at,
           expiresInTicks: m.expires_in_ticks,
           percentComplete: m.percent_complete,
+          // Reward parsing (issue #1051): undefined stays undefined here too
+          // -- m.rewards itself is optional, so a mission with no rewards
+          // object (or one whose credits/skill_xp fields are absent) carries
+          // both through as undefined rather than a fabricated 0.
+          rewardCredits: m.rewards?.credits,
+          rewardSkillXp: m.rewards?.skill_xp,
           objectives: m.objectives.map((o) => ({
             type: o.type,
             itemId: o.item_id,

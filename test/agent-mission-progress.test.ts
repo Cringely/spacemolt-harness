@@ -376,6 +376,80 @@ describe("mission objective check rendering (#291)", () => {
   });
 });
 
+// Reward rendering (issue #1051, split out of #592). #592 shipped a ranking
+// RULE ("rank these by what each reward does for the Goals") with no reward
+// DATUM to follow it: the digest's one per-mission discriminator was the
+// expiry fuse, urgency with no counterweight for value. These tests pin the
+// render, each failing against the pre-#1051 line (which had no rewardCredits
+// or rewardSkillXp field to read at all).
+describe("mission reward rendering (#1051)", () => {
+  const baseCtx: PlanContext = {
+    persona: "p", goals: [], wake: { reason: "heartbeat" },
+    statusSummary: "s", recentEvents: [],
+  };
+
+  test("renders reward credits beside the expiry fuse", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-titanium-1", expiresInTicks: 9400, rewardCredits: 2500,
+        objectives: [titaniumObjective],
+      }],
+    });
+    expect(digest).toContain("mission m-titanium-1 (expires in 9400 ticks, reward 2500cr):");
+  });
+
+  test("renders skill xp reward, formatted per skill", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-1", rewardSkillXp: { mining: 40, piloting: 5 },
+        objectives: [titaniumObjective],
+      }],
+    });
+    expect(digest).toContain("+40 mining xp, +5 piloting xp");
+  });
+
+  // Scoped to the ONE mission line, not the whole digest: the unconditional
+  // runbook prose below it carries its own unrelated "0cr"-ish substrings
+  // ("catalog value under 50cr") and "xp"-ish substrings ("expands into jump
+  // hops"), so a whole-digest toContain/not.toContain is not count- or
+  // position-aware enough to tell "this mission's reward" from "some other
+  // sentence sharing a substring". An exact match on the mission's own line
+  // is what actually pins the render.
+  const missionLineOf = (text: string, id: string) =>
+    text.split("\n").find((l) => l.startsWith(`- mission ${id}`));
+
+  test("a mission with no rewards object renders no reward text -- absent, not a fabricated 0 (#94)", () => {
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{ missionId: "m-1", expiresInTicks: 500, objectives: [titaniumObjective] }],
+    });
+    const line = missionLineOf(digest, "m-1");
+    expect(line).toBe(
+      "- mission m-1 (expires in 500 ticks): titanium_ore: progress 0/20, 0 in cargo, complete at gold_run_station",
+    );
+  });
+
+  test("credits and skill xp render independently -- one present without the other still shows its half (#94)", () => {
+    const creditsOnly = buildDigest({
+      ...baseCtx,
+      activeMissions: [{ missionId: "m-1", rewardCredits: 900, objectives: [titaniumObjective] }],
+    });
+    const creditsLine = missionLineOf(creditsOnly, "m-1")!;
+    expect(creditsLine).toContain("(reward 900cr):");
+    expect(creditsLine).not.toContain("xp");
+
+    const xpOnly = buildDigest({
+      ...baseCtx,
+      activeMissions: [{ missionId: "m-2", rewardSkillXp: { combat: 12 }, objectives: [titaniumObjective] }],
+    });
+    const xpLine = missionLineOf(xpOnly, "m-2")!;
+    expect(xpLine).toContain("(+12 combat xp):");
+    expect(xpLine).not.toContain("reward");
+  });
+});
+
 // Shortfall phrasing by objective type (issue #571). The old code hardcoded
 // "mine N more" for every objective, including visit_system -- a target the
 // planner (an LLM) reads as an instruction, so the wrong verb is a wrong-action
