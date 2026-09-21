@@ -220,10 +220,10 @@ export const ITEM_PARAM_BY_ACTION: Record<string, string> = {
 // Returns undefined when nothing is within one edit -- an outright
 // fabrication like 'wreck' or 'exotic_matter_sample' has no real near match,
 // and guessing one would hand the planner a wrong id with false confidence.
-export function nearestCatalogItemId(attempted: string, cat: Catalog = catalog): string | undefined {
+export function nearestCatalogItemId(attempted: string): string | undefined {
   const stripped = attempted.replace(/s$/, "");
-  if (stripped !== attempted && cat.itemMeta(stripped)) return stripped;
-  for (const item of cat.items()) {
+  if (stripped !== attempted && catalog.itemMeta(stripped)) return stripped;
+  for (const item of catalog.items()) {
     if (withinEditDistanceOne(attempted, item.id)) return item.id;
   }
   return undefined;

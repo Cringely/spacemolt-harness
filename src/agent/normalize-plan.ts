@@ -1,6 +1,12 @@
 import type { Plan, PlanStep } from "../registry/plan";
 import type { Surroundings } from "../planner/types";
 import { itemMeta, nearestCatalogItemId, ITEM_PARAM_BY_ACTION } from "../catalog/catalog";
+// Bounding an echoed planner-authored id, same reuse precedent as the
+// #1053 decisions.md entry (strategy-review-dump.ts clips a failure sample
+// through this same export rather than inventing a new number). Safe here,
+// unlike failures.ts's case that entry also names: digest.ts does not import
+// normalize-plan.ts, so this edge does not cycle.
+import { clipUntrusted } from "../planner/digest";
 
 // SM-3 flight diagnosis (2026-07-10): an otherwise-perfect plan passed the
 // display NAME as a location id -- `travel {id: "Commerce Fields"}` where the
@@ -269,12 +275,57 @@ export function normalizePlanItems(plan: Plan): NormalizeResult {
     const hint = suggestion
       ? `did you mean '${suggestion}'?`
       : `copy the exact id from your cargo, a listing, or this briefing -- never invent one.`;
+    // Bound the echo (review finding, #982/#1003 fix round): `raw` is
+    // planner-authored and can be text the planner copied out of QUOTED,
+    // untrusted game data (#669's class). This error string is spliced into
+    // ctx.instruction one call later (agent.ts) and rendered by digest.ts as
+    // "Operator instruction: ..." -- the one digest field with no quoting and
+    // no clip of its own -- so an unbounded id here would return under the
+    // prompt's strongest label. clipUntrusted(raw) suggestion is computed
+    // against the FULL raw string (edit distance needs the real text); only
+    // the echoed copy in the error is bounded.
+    const shown = clipUntrusted(raw);
     return {
       ok: false,
-      error: `${step.action}.${param}: '${raw}' is not a catalog item id -- ${hint}`,
+      error: `${step.action}.${param}: '${shown}' is not a catalog item id -- ${hint}`,
     };
   }
   return { ok: true, plan, rewrites: [] };
+}
+
+/**
+ * Single plan-admission pass, folding normalizePlanLocations and
+ * normalizePlanItems into one call with one combined rewrites array.
+ *
+ * Fix-round on #982/#1003 (review finding, this PR): Agent.replan() used to
+ * run these as two SEPARATE sequential blocks, each with its own retry. That
+ * let a plan admitted only via the ITEM retry skip location normalization
+ * entirely -- the item retry calls the planner again and re-parses a BRAND
+ * NEW plan, but nothing re-ran normalizePlanLocations on that replacement,
+ * so a location display-name (the SM-3 class) riding along in the
+ * item-corrected plan reached the executor unrewritten and unrejected.
+ * Folding both checks into one function makes that impossible structurally:
+ * every plan this returns ok:true for has passed BOTH checks in the SAME
+ * call, never a plan that only passed one of them.
+ *
+ * Order matters and is preserved from the original two blocks: locations
+ * first (gated on `surroundings`, since the game rejects a bad id anyway
+ * when surroundings is unavailable), then items (unconditional, since the
+ * catalog is a static SSOT with nothing to wait on). Locations run first so
+ * a location rewrite is visible in `plan` by the time normalizePlanItems
+ * reads the same plan object.
+ */
+export function admitPlan(plan: Plan, surroundings: Surroundings | undefined): NormalizeResult {
+  let rewrites: PlanRewrite[] = [];
+  if (surroundings) {
+    const loc = normalizePlanLocations(plan, surroundings);
+    if (!loc.ok) return loc;
+    plan = loc.plan;
+    rewrites = loc.rewrites;
+  }
+  const items = normalizePlanItems(plan);
+  if (!items.ok) return items;
+  return { ok: true, plan, rewrites };
 }
 
 /** One pilot this harness runs: the agents.yaml `id` and the in-game `username`. */

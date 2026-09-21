@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeGiftTargets, normalizePlanItems, normalizePlanLocations, type FleetPilot } from "../src/agent/normalize-plan";
+import { admitPlan, normalizeGiftTargets, normalizePlanItems, normalizePlanLocations, type FleetPilot } from "../src/agent/normalize-plan";
 import type { Surroundings } from "../src/planner/types";
 import type { Plan } from "../src/registry/plan";
 
@@ -416,6 +416,23 @@ describe("normalizePlanItems (issue #982/#1003)", () => {
     if (result.ok) throw new Error("unreachable");
     expect(result.error).toContain("jettison.id: 'wreck'");
   });
+
+  // Review finding, fix round on #982/#1003: `raw` is planner-authored text
+  // that can itself have been copied out of QUOTED, untrusted game data
+  // (#669's template-obedience class). This error string is spliced into
+  // ctx.instruction one call later and rendered by digest.ts as "Operator
+  // instruction: ..." with no quoting or clip of its own, so an unbounded id
+  // here returns under the prompt's strongest label. Bounded via
+  // clipUntrusted's default snippet length (imported by the fixture below).
+  test("a long id is clipped in the rejection error, not echoed unbounded", () => {
+    const longId = "a".repeat(400);
+    const plan: Plan = { goal: "salvage", steps: [{ action: "sell", params: { id: longId, quantity: 1 } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).not.toContain(longId);
+    expect(result.error.length).toBeLessThan(longId.length);
+  });
 });
 
 describe("normalizeGiftTargets (issue #788)", () => {
@@ -444,5 +461,64 @@ describe("normalizeGiftTargets (issue #788)", () => {
     expect(result.plan.steps[0]).toEqual({
       action: "deposit", params: { target: "Corvus Marrek", credits: 27 },
     });
+  });
+});
+
+// Unit-level coverage for the fold itself (Agent.replan's admission call is
+// covered end-to-end in test/agent-plan-normalization.test.ts's "fix round
+// on #982/#1003" describe block; these pin admitPlan's own composition
+// rules directly).
+describe("admitPlan (fix round on #982/#1003: one admission pass, not two)", () => {
+  test("a location rewrite AND a passing item id combine into one ok result", () => {
+    const plan: Plan = {
+      goal: "salvage run",
+      steps: [
+        { action: "travel", params: { id: "Commerce Fields" } },
+        { action: "sell", params: { id: "iron_ore", quantity: 1 } },
+      ],
+    };
+    const result = admitPlan(plan, commerceFieldsSurroundings);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan.steps[0]).toEqual({ action: "travel", params: { id: "commerce_fields" } });
+    expect(result.rewrites).toEqual([
+      { step: 0, action: "travel", param: "id", from: "Commerce Fields", to: "commerce_fields" },
+    ]);
+  });
+
+  test("a bad location fails admission before the item check ever runs", () => {
+    const plan: Plan = {
+      goal: "salvage run",
+      steps: [
+        { action: "travel", params: { id: "Nonexistent Place" } },
+        { action: "sell", params: { id: "wreck", quantity: 1 } }, // also bad, must not be what's reported
+      ],
+    };
+    const result = admitPlan(plan, commerceFieldsSurroundings);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("unknown id 'Nonexistent Place'");
+  });
+
+  test("a good location with a bad item id fails on the item check, carrying the location's rewrite state internally", () => {
+    const plan: Plan = {
+      goal: "salvage run",
+      steps: [
+        { action: "travel", params: { id: "Commerce Fields" } }, // rewritten en route
+        { action: "sell", params: { id: "wreck", quantity: 1 } }, // then fails here
+      ],
+    };
+    const result = admitPlan(plan, commerceFieldsSurroundings);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("sell.id: 'wreck' is not a catalog item id");
+  });
+
+  test("surroundings undefined skips the location check but still runs the item check", () => {
+    const plan: Plan = { goal: "salvage", steps: [{ action: "sell", params: { id: "wreck", quantity: 1 } }] };
+    const result = admitPlan(plan, undefined);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("sell.id: 'wreck' is not a catalog item id");
   });
 });

@@ -15,7 +15,7 @@ import {
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
 import { evaluateReflex, reflexGaveUpAt, type ReflexConfig, type ReflexFailureRecord } from "./reflex";
-import { normalizePlanLocations, normalizePlanItems, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
+import { admitPlan, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
 import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
 import { progressCountersTotal, progressCounters, skillsSignature, PROGRESS_COUNTERS } from "./no-progress-detector";
@@ -2641,78 +2641,56 @@ export class Agent {
       const model = raw.model;
 
       // Name/id confusion (docs/archive/decisions-2026-07-10-to-2026-07-11.md,
-      // 2026-07-10, "The first flight campaign", SM-3) caught here,
-      // deterministically, against the SAME fresh surroundings gathered above
-      // (not re-gathered, per simplicity rule 5). Skipped when surroundings is
-      // undefined: the game rejects an invalid id regardless, so the agent
-      // still wakes on the resulting blocked step.
-      if (surroundings) {
-        const norm = normalizePlanLocations(plan, surroundings);
-        if (norm.ok) {
-          plan = norm.plan;
-          rewrites = norm.rewrites;
-        } else {
-          // Routed into the same single-retry pattern every Planner
-          // implementation already applies to JSON/schema validation
-          // failures (see claude-subscription.ts and ollama.ts): one more
-          // call to the same planner with the error appended, so the model
-          // gets a chance to self-correct using the ids it was actually
-          // shown, instead of the whole replan being silently discarded.
-          // Cost receipt: the retries COMPOUND -- this correction retry
-          // wraps each planner's internal JSON-validation retry
-          // (claude-subscription.ts:37-38), so the worst case is 4 CLI
-          // invocations per replan (correction retry x planner-internal
-          // retry). Acceptable because replans are rare by design (4-10/hr
-          // target) and the F-3 thrash damper caps sustained frequency.
-          const errorText = `Previous plan invalid: ${norm.error}. ` +
-            `Params take the id exactly as shown in surroundings, never the display name.`;
-          const retryCtx: PlanContext = {
-            ...ctx,
-            instruction: ctx.instruction ? `${ctx.instruction} ${errorText}` : errorText,
-          };
-          const raw2 = await planner.plan(retryCtx);
-          plan = PlanSchema.parse(raw2.plan);
-          promptChars += raw2.promptChars;
-          responseChars += raw2.responseChars;
-          const norm2 = normalizePlanLocations(plan, surroundings);
-          if (!norm2.ok) {
-            throw new Error(`plan id-normalization failed after retry: ${norm2.error}`);
-          }
-          plan = norm2.plan;
-          rewrites = norm2.rewrites;
-        }
-      }
-
-      // Item-id fabrication guard (issue #982/#1003, root-caused in #1054):
-      // same name/id confusion class as normalizePlanLocations above, but for
-      // buy/sell/jettison/withdraw/deposit/create_sell_order/create_buy_order's
-      // item id -- the planner invented 'wreck' (a salvage ENTITY, never a
-      // catalog item) and 'exotic_matter_sample' (no such id exists), and the
-      // only backstop before this was executor.ts's post-hoc, buy-only
-      // correction, which fires after the game already spent a tick and never
-      // ran for the other six actions. Unconditional (no surroundings gate,
-      // unlike the location block above): the catalog is a static SSOT, not a
-      // per-tick observation, so there is nothing to wait on. Same one-retry
-      // pattern as the location check: one more planner call with the error
-      // appended, and a still-bad id after that retry is a genuine failure
-      // worth surfacing rather than silently discarding the whole replan.
-      const itemCheck = normalizePlanItems(plan);
-      if (!itemCheck.ok) {
-        const errorText = `Previous plan invalid: ${itemCheck.error} ` +
-          `Item ids are exact catalog ids copied from your cargo, a listing, or this briefing -- never invented.`;
+      // 2026-07-10, "The first flight campaign", SM-3) and the item-id
+      // fabrication guard (issue #982/#1003, root-caused in #1054) are the
+      // SAME failure class -- an invented reference where the wire wants a
+      // real id -- and are validated together in ONE admission pass
+      // (normalize-plan.ts's admitPlan), against the SAME fresh surroundings
+      // gathered above (not re-gathered, per simplicity rule 5).
+      //
+      // Fix-round receipt (#982/#1003 review): this used to be two
+      // independent sequential blocks, each with its own retry. That let a
+      // plan admitted only via the item-id retry skip location
+      // normalization entirely -- the item retry re-parses a BRAND NEW plan
+      // from the planner, and nothing re-ran normalizePlanLocations on that
+      // replacement, so a display-name location riding along in an
+      // item-corrected plan reached the executor unrewritten and
+      // unrejected. Folding both checks into admitPlan makes that
+      // structurally impossible: every plan reaching the retry gate below
+      // has already failed (or passed) BOTH checks together, and the SAME
+      // is true of the retried plan.
+      let admitted = admitPlan(plan, surroundings);
+      if (!admitted.ok) {
+        // Routed into the same single-retry pattern every Planner
+        // implementation already applies to JSON/schema validation
+        // failures (see claude-subscription.ts and ollama.ts): one more
+        // call to the same planner with the error appended, so the model
+        // gets a chance to self-correct using the ids it was actually
+        // shown, instead of the whole replan being silently discarded.
+        // Cost receipt: the retries COMPOUND -- this correction retry
+        // wraps each planner's internal JSON-validation retry
+        // (claude-subscription.ts:37-38), so the worst case is 4 CLI
+        // invocations per replan (correction retry x planner-internal
+        // retry). Acceptable because replans are rare by design (4-10/hr
+        // target) and the F-3 thrash damper caps sustained frequency.
+        const errorText = `Previous plan invalid: ${admitted.error} ` +
+          `Params take the id exactly as shown in surroundings, never the display name; ` +
+          `item ids are exact catalog ids copied from your cargo, a listing, or this briefing -- never invented.`;
         const retryCtx: PlanContext = {
           ...ctx,
           instruction: ctx.instruction ? `${ctx.instruction} ${errorText}` : errorText,
         };
-        const rawItemRetry = await planner.plan(retryCtx);
-        plan = PlanSchema.parse(rawItemRetry.plan);
-        promptChars += rawItemRetry.promptChars;
-        responseChars += rawItemRetry.responseChars;
-        const itemCheck2 = normalizePlanItems(plan);
-        if (!itemCheck2.ok) {
-          throw new Error(`plan item-id validation failed after retry: ${itemCheck2.error}`);
+        const rawRetry = await planner.plan(retryCtx);
+        plan = PlanSchema.parse(rawRetry.plan);
+        promptChars += rawRetry.promptChars;
+        responseChars += rawRetry.responseChars;
+        admitted = admitPlan(plan, surroundings);
+        if (!admitted.ok) {
+          throw new Error(`plan admission failed after retry: ${admitted.error}`);
         }
       }
+      plan = admitted.plan;
+      rewrites = admitted.rewrites;
 
       // Fleet-gift id->username resolution (issue #788), the same name/id
       // failure class as the block above and handled the same deterministic way.
