@@ -17,7 +17,7 @@ enough that one fix closes every member. The Corsair battle-lockout condition al
 20 times. Three doc PRs stalled on merge conflicts drew 16 reports. This spec designs the
 ceremony meant to keep that pile from re-forming, and asks a harder question first: is a
 ceremony even the right fix, or does it treat a symptom a producer-side change should prevent
-instead? The short answer, argued in "Ceremony vs. producer fix" below, is both, in sequence.
+instead? The short answer, argued in "Ceremony vs. producer fix" below, is both.
 
 A *ceremony*, in this project's vocabulary, is one of the scheduled, unattended agent runs: the
 standup, the 6-hour strategy review, the doc steward. Each is chartered under `docs/charters/`,
@@ -87,20 +87,47 @@ reading lists, the same way the human-made report already treats them.
 ## Matching
 
 The ceremony reuses the primitives `filing.ts` already exports (`entityAnchors`, `keySegments`,
-`isNearDuplicate`, `normalizeDedupKey`) rather than writing a second matcher beside the first.
-Two dedup implementations in one codebase would be exactly the drift class this spec exists to
-close, one level up.
+`isNearDuplicate`, `normalizeDedupKey`) rather than writing a second matcher beside the first,
+with one seam those primitives don't cover: they tokenize a kebab-case dedup key, and an issue
+title is prose. Closing that seam needs a title-to-key adapter, `titleToSegments()`, named here
+because leaving that seam unnamed is exactly where a second matcher gets born: lowercase, strip
+punctuation, split on whitespace, drop the same severity and staleness words `keySegments`
+already strips. `titleToSegments()` stays a pure adapter into the existing scoring math, never a
+second scorer. Two dedup implementations in one codebase would be exactly the drift class this
+spec exists to close, one level up.
 
 Any issue still carrying an `sm-dedup:` marker is already solved, the cheapest pass there is, and
 the ceremony skips it unless a new candidate merges into it.
 
-The second pass is deterministic and calls no model. It tokenizes each issue's title the way
-`keySegments` tokenizes a dedup key, but widens `ENTITY_ANCHOR_RE` for this pass only, never for
-`filing.ts` itself, to recognize this domain's real entities: the three pilot names, and
-action or mechanic names pulled from `docs/game-reference/commands.md`. This alone should catch
-most of what the report's largest clusters share: strong, repeated entity-plus-action vocabulary
-across near-identical titles. Nearly all 20 members of the Corsair lockout cluster contain both
-"corsair" and "battle" or "flee."
+The second pass is deterministic and calls no model. It runs each issue's title through
+`titleToSegments()` and scores it against every other title's segments the way `isNearDuplicate`
+scores two keys, except for the anchor gate. `isNearDuplicate` treats entity-anchor equality as
+absolute: two keys with different `pr`/`issue`/`gh` anchors never match at any similarity score,
+and that absolute gate is what keeps PR #40's report from merging into PR #83's. This pass reuses
+that gate unwidened: `entityAnchors`/`ENTITY_ANCHOR_RE` run exactly as `filing.ts` defines them,
+still absolute, still the numbered-entity separation.
+
+Pilot names and action or mechanic names pulled from `docs/game-reference/commands.md` are not
+folded into that gate. Checked directly against this spec's own regression fixture: the Corsair
+cluster's canonical, #819 ("Unarmed pilot trapped in battle: retreat/get_battle_status
+unregistered, only self_destruct escapes"), and at least two other members of that 20-issue
+cluster never use the word "corsair" at all. An equality gate over a widened anchor set would
+make each of them unreachable from the seventeen-plus members that do use it: stricter, not
+broader, the opposite of what this pass needs. So pilot and action vocabulary scores as ordinary
+segments in the Jaccard overlap instead, weighted like any other `titleToSegments()` output: two
+titles sharing "corsair" and "battle" score higher, but neither word is required for a match.
+This mirrors the split `filing.ts` already draws between its two gates, anchors absolute and
+everything else a similarity score, applied to the vocabulary this pass adds.
+
+Named plainly: this pass extends `filing.ts`'s matcher rather than purely reusing it.
+`entityAnchors` stays the one place the numbered-entity-separation property is defined, reused
+here unchanged. `titleToSegments()` and the widened vocabulary are new, because `filing.ts`'s
+primitives compare two minted keys and this pass ranks many prose titles against each other, a
+job no existing primitive does. `filing.ts` remains the sole definition of whether a freshly
+filed finding matches an already-open issue at mint time. This ceremony owns the separate
+question of clustering already-filed prose after the fact. One property, defined once. One new
+adapter for a job `filing.ts` was never asked to do. Not two competing definitions of "these two
+things are probably the same."
 
 The third pass runs on Sonnet, and only on what the second pass leaves unresolved: issues that
 stayed singletons or scored below the match floor. It compares title and body meaning directly.
@@ -121,7 +148,8 @@ issues is the best one to keep.
 ## Setting and measuring a precision target
 
 The target is precision of 0.95 or better on high-confidence proposals, and 0.85 or better on
-medium. A false merge buries a real, distinct finding inside another issue's comment thread,
+medium, measured against reviewed proposals only (see below), never against the full unread
+total. A false merge buries a real, distinct finding inside another issue's comment thread,
 where the default priority-P2 labeling (#687, #858: every machine-filed issue gets the same
 priority regardless of stated severity) already makes it easy to miss. A missed duplicate only
 costs one extra line in a report. The bias runs the same direction the human pass took by its
@@ -131,30 +159,52 @@ A ceremony cannot certify its own precision. Grading a matcher's confidence with
 is circular. So precision gets measured, not asserted, two ways. Every proposal comment cites its
 evidence inline (the matched anchors, the Jaccard score, or the semantic-similarity basis), so a
 person can check the specific claim against the two issues without re-deriving it. And a
-precision ledger, kept in the tracker rather than a local file, tracks outcomes over time: if a
-person ever strips the `dedupe:candidate` label from an issue or comments disagreement on it, the
-next run notices the label is gone and records that as one measured false positive against the
-running total of proposals made.
+precision ledger, kept in the tracker rather than a local file, counts only proposals a person
+actually adjudicated. A proposal enters the denominator when a person acts on it. Stripping the
+`dedupe:candidate` label or commenting disagreement records one false positive. Applying a
+`dedupe:confirmed` label or commenting agreement records one true positive. A proposal nobody has
+touched contributes to neither count. It stays visible, tallied separately as unreviewed, so the
+ratio can never approach 0.95 by inattention on a backlog nobody read.
 
-The ceremony's own standing report (see "Done-when," below) carries the ledger's current ratio.
-This turns "is the ceremony accurate" from a claim into a number a later run can read back, the
-same way `filing.ts`'s consumer-evidence probe turns "is anyone closing issues" from an
-assumption into a mechanical read of tracker state (`probeConsumerAction`, `filing.ts:471`).
+The ceremony's own standing report (see "Done-when," below) states the ratio as true positives
+over reviewed total, in the form "0.93 (14/15 reviewed)," beside the count still unreviewed and
+the raw proposal count. A denominator of zero prints as "no reviewed proposals yet," never as a
+ratio. This turns "is the ceremony accurate" from a claim into a number that names its own
+sample, the same way `filing.ts`'s consumer-evidence probe turns "is anyone closing issues" from
+an assumption into a mechanical read of tracker state (`probeConsumerAction`, `filing.ts:471`).
 
 ## Idempotence
 
 A year of weekly runs over a backlog that stops changing must produce zero new comments after
 the first pass, not 52 reports and not 52 restatements of the same pairing.
 
-Each proposal's marker lives in the issue itself, not on the scheduler host. Each comment and its
-paired label carry `<!-- sm-dupe-cluster:<canonical-number>:<member-count> -->`, the same
-in-tracker-marker pattern `filing.ts` already uses for its own idempotence
-(`SM_DEDUP_MARKER_RE`), rather than a second, host-local state file that a redeployed container
-or a wiped state directory could silently drop. Before posting anything, the ceremony reads the
-target issue's existing comments. If a marker for the same canonical number and member count is
-already present, it does nothing. A cluster whose membership actually changed, a new duplicate
-joining, carries a different member-count in its marker, so it gets exactly one fresh comment for
-the change and never repeats the unchanged case.
+Each proposal's marker lives in the issue itself, not on the scheduler host, and is keyed on the
+pairing it proposes, this member issue and this canonical issue, never on the cluster's overall
+size. Each comment and its paired label carry `<!-- sm-dupe-cluster:<canonical-number> -->` on
+the member issue, the same in-tracker-marker pattern `filing.ts` already uses for its own
+idempotence (`SM_DEDUP_MARKER_RE`), rather than a second, host-local state file that a redeployed
+container or a wiped state directory could silently drop. Before posting anything, the ceremony
+reads the target member issue's existing comments. If a marker naming this same canonical is
+already present, it does nothing. Because the marker carries no member count, a cluster gaining
+or losing members never touches the issues already marked. Corsair gaining a 21st report
+proposes one new pairing for that new issue alone, not twenty repeat comments on the nineteen
+already marked. A member that gets re-clustered under a different canonical is a real change
+in the ceremony's conclusion, not churn, and correctly earns one fresh comment naming the new
+pairing.
+
+Cold start against today's 83 clusters (389 members, 249 of them in the 43 high-confidence
+clusters, the rest in the 40 medium- and low-confidence ones) proposes at the same 20-per-run
+budget "Cadence and cost" sets, largest cluster first. The high-confidence set alone takes
+roughly 13 weekly runs to fully propose, and the full 83 clusters roughly 20. The delta gate
+described in "Cadence and cost" does not apply during this drain. A run always spends its budget
+against the not-yet-proposed set first, regardless of how many issues opened since the last run,
+so a quiet week cannot stall a cold start that has not yet finished. The not-yet-proposed set and
+the high-water mark the delta gate reads once drain completes both live in the ceremony's own
+standing report issue, the one "Done-when" already requires, as a machine-readable marker in its
+body: the newest issue number scanned, and the count of clusters still carrying an unmarked
+member. Every piece of the ceremony's state stays tracker-resident this way, the same posture the
+per-member marker above takes, and it survives a redeployed container or a wiped state directory
+exactly as that marker does.
 
 The standing report follows the doc steward's own lesson about empty output. #1049, filed by that
 same steward against itself, names the cost of a ceremony that reports even when it found
@@ -170,7 +220,11 @@ weeks of drift, so nothing is lost running less often than the 6-hour strategy r
 2-hour standup, and every run past the first is cheap: it gates the same way the
 strategy-reviewer charter gates its own step 0, by counting how many issues opened since the
 last run's high-water mark. A week with fewer than 10 new issues re-scans only the delta against
-the existing cluster set and never re-derives all 83 clusters from a cold start.
+the existing cluster set and never re-derives all 83 clusters from a cold start. That gate is on
+re-deriving clusters, not on proposing from clusters already known: a week under the threshold
+still spends its 20-proposal budget against the not-yet-proposed set from prior full derivations
+(see "Idempotence" for where that set lives), so a quiet week thins the backlog of un-proposed
+clusters instead of pausing on it.
 
 The fetch is paginated and reports its own truncation, the same honesty `filing.ts`'s
 `findNearMatch` already builds in (`NearMatchFetch` is `"ok"`, `"truncated"`, or
@@ -214,16 +268,17 @@ auto-close is ever considered.
 
 ## Ceremony vs. producer fix
 
-Is a ceremony even the right instrument? Only partly: the producer fix matters more, and this
-spec still recommends building this ceremony now, alongside filing an issue for that larger fix,
-rather than folding both into one change.
+Is a ceremony even the right instrument? Only partly: the producer fix matters more. It is
+already filed as its own tracker issue, #1133, and the operator has approved building both the
+ceremony and the producer fix, rather than gating one on the other or folding both into one
+change.
 
 The root cause, established above, is that `fileFinding()`'s matcher only ever sees a slug an
-agent invented, never the finding itself. The producer-side fix is to make the filer see defects
-instead of key wording: have `fileFinding()` run this same widened-anchor or semantic check
-against the open backlog before minting a key, so most of the 389 duplicates in today's report
-never get filed in the first place, instead of getting filed and cleaned up after. That is the
-fix that actually stops the leak. A ceremony only mops the floor under it.
+agent invented, never the finding itself. The producer-side fix, #1133, is to make the filer see
+defects instead of key wording: have `fileFinding()` run this same widened-anchor or semantic
+check against the open backlog before minting a key, so most of the 389 duplicates in today's
+report never get filed in the first place, instead of getting filed and cleaned up after. That is
+the fix that actually stops the leak. A ceremony only mops the floor under it.
 
 Three reasons to build the ceremony first anyway. `filing.ts` is a security-reviewed, load path
 every ceremony calls (the Batch C security-review comments run through the whole file). A
@@ -242,13 +297,14 @@ review. That is closer to the dispatch-authority class of change the same spec's
 covers than to a one-line filing tweak, and it deserves its own spec and its own review before it
 merges.
 
-What waiting on the producer fix costs, stated plainly: every week the filer stays dumb is
-another week of new near-duplicates for the ceremony to work through next cycle. The report's
-largest clusters are still growing week over week by their own timelines. This spec treats the
-symptom, cheaply and safely. The producer fix is the one that stops the disease. Recommendation:
-build this ceremony now, and file the producer-side fix as its own issue and its own future spec
-rather than bundling the two. One change at a time (AGENTS.md, SSOT/DRY/KISS, and
-simplicity-rules on isolating before bundling).
+What a slow producer fix costs, stated plainly: every week the filer stays dumb is another week
+of new near-duplicates for the ceremony to work through next cycle. The report's largest clusters
+are still growing week over week by their own timelines. This spec treats the symptom, cheaply
+and safely. The producer fix, #1133, is the one that stops the disease. Decision: build this
+ceremony now. #1133 stays separate, its own issue and its own future spec, with the operator's
+approval to build both rather than bundle them. One change at a time still governs the build
+(AGENTS.md, SSOT/DRY/KISS, and simplicity-rules on isolating before bundling): this spec covers
+the ceremony, #1133 tracks the filer fix.
 
 ## Non-goals
 
