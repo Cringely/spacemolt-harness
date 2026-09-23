@@ -95,6 +95,13 @@ if [ "$identity_state" -eq 0 ]; then
   identity_control || exit 1
 fi
 
+# Personal-term channel (#147), opt-in per clone; see identity-patterns.sh.
+# Scanned once per pushed ref, after the identity channels, over the ref
+# names, object paths, commit messages, tag body and blob content together.
+personal_terms_load
+personal_terms_state=$?
+[ "$personal_terms_state" -eq 1 ] && exit 1
+
 # True (0) when $1 is an all-zero object id, whatever length the
 # repository's hash algorithm gives it (SHA-1: 40, SHA-256: 64). Checked by
 # content rather than length, so this needs no opinion on which algorithm a
@@ -126,6 +133,11 @@ identity_stdin=$(cat)
 while read -r identity_local_ref identity_local_oid identity_remote_ref identity_remote_oid; do
   [ -n "${identity_local_ref:-}" ] || continue
   identity_is_zero_oid "$identity_local_oid" && continue
+  # Assigned only on some branches below; the personal-term scan at the end
+  # of this loop reads all three, and `set -u` would abort on an unset one.
+  identity_object_paths=
+  identity_content=
+  identity_tag_body=
 
   # Both sides of the refspec, not only the local one: `git push origin
   # HEAD:refs/heads/x` sends the literal symbolic name "HEAD" as the local
@@ -269,6 +281,28 @@ while read -r identity_local_ref identity_local_oid identity_remote_ref identity
       fi
       ;;
   esac
+
+  # Personal-term channel (#147): one grep over everything this ref sends.
+  # Only on a hit does it look again, per channel, to say which one; that
+  # second look ends in a refusal whatever it finds, so a scan that fails
+  # there still cannot read as clean. Messages never name the ref, since a
+  # ref name can be what carries the term.
+  if [ "$personal_terms_state" -eq 0 ]; then
+    personal_term_match "${identity_local_ref}${personal_terms_nl}${identity_remote_ref}${personal_terms_nl}${identity_object_paths}${personal_terms_nl}${identity_messages}${personal_terms_nl}${identity_tag_body}${personal_terms_nl}${identity_content}"
+    personal_terms_rc=$?
+    [ "$personal_terms_rc" -gt 1 ] && personal_term_scan_failed pre-push "$personal_terms_rc"
+    if [ "$personal_terms_rc" -eq 0 ]; then
+      personal_term_match "${identity_local_ref}${personal_terms_nl}${identity_remote_ref}" &&
+        personal_term_refuse pre-push "A ref name being pushed"
+      personal_term_match "$identity_object_paths" &&
+        personal_term_refuse pre-push "The path of one or more objects being pushed"
+      personal_term_match "$identity_messages" &&
+        personal_term_refuse pre-push "The commit message of one or more commits being pushed"
+      personal_term_match "$identity_tag_body" &&
+        personal_term_refuse pre-push "The annotated tag object being pushed"
+      personal_term_refuse pre-push "The content of one or more commits being pushed"
+    fi
+  fi
 done <<EOF
 $identity_stdin
 EOF
