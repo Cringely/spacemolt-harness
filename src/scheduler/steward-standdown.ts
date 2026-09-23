@@ -76,7 +76,7 @@ export function stewardPrInFlight(gh: GhRunner | undefined, now: number): boolea
   if (!Array.isArray(rows)) return false;
   for (const row of rows as Array<{ headRefName?: unknown; createdAt?: unknown; isCrossRepository?: unknown }>) {
     if (typeof row?.headRefName !== "string" || !row.headRefName.startsWith("docs/steward-")) continue;
-    if (row.isCrossRepository === true) continue; // a fork PR must never count as in-flight coverage
+    if (row.isCrossRepository !== false) continue; // only an explicit same-repo row counts; missing/true both fall back to firing
     const t = Date.parse(typeof row?.createdAt === "string" ? row.createdAt : "");
     // age >= 0 guards backward host-clock skew the same way filing.ts's own
     // consumer probe does: a future-dated createdAt reads as NOT fresh,

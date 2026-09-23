@@ -243,7 +243,12 @@ describe("tick orchestration (D-Tick)", () => {
     const ghCalls: string[][] = [];
     const ghRunner: GhRunner = (args) => {
       ghCalls.push(args);
-      return { stdout: JSON.stringify([{ headRefName: "docs/steward-2026-09-19-wave", createdAt: new Date(T - 10 * MIN).toISOString() }]), exitCode: 0 };
+      return {
+        stdout: JSON.stringify([
+          { headRefName: "docs/steward-2026-09-19-wave", createdAt: new Date(T - 10 * MIN).toISOString(), isCrossRepository: false },
+        ]),
+        exitCode: 0,
+      };
     };
     const { spawner, calls } = fakeSpawner();
     const r = await tick({ clock: () => T, gitRunner: fakeGit(repo, dirs.checkoutDir), spawner, ghRunner, ...dirs });

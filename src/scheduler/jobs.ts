@@ -174,7 +174,7 @@ export const JOBS: JobDef[] = [
     // cluster timestamps found gaps of 46, 35 and 26 minutes where nothing
     // merged mid-cluster, each one long enough to cross a 20-min settle and
     // fire the ceremony BEFORE the cluster was actually done (the #106/#125/
-    // #130 first-firing races). 60 min clears all three with margin while
+    // #134 first-firing races). 60 min clears all three with margin while
     // staying far inside the issue's week-long done-when horizon. It also
     // means the stewardPrInFlight probe (steward-standdown.ts) now runs
     // after the PM's own dispatched-pass turnaround (observed at 2-17 min

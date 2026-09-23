@@ -35,14 +35,14 @@ describe("stewardPrInFlight (#1136)", () => {
   // happens to be open right now (a batch fix PR, a spec PR) must not
   // suppress the ceremony. Only a docs/steward-* head counts as evidence.
   test("an open PR whose branch is not docs/steward-* ⇒ false", () => {
-    const gh = rowsGh([{ headRefName: "fix/some-bug-123", createdAt: ago(5 * 60_000) }]);
+    const gh = rowsGh([{ headRefName: "fix/some-bug-123", createdAt: ago(5 * 60_000), isCrossRepository: false }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(false);
   });
 
   // The core case: a fresh open docs/steward-* PR is exactly what #1136's
   // fix stands the ceremony down for.
   test("a fresh open docs/steward-* PR ⇒ true", () => {
-    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23-wave", createdAt: ago(20 * 60_000) }]);
+    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23-wave", createdAt: ago(20 * 60_000), isCrossRepository: false }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(true);
   });
 
@@ -51,13 +51,13 @@ describe("stewardPrInFlight (#1136)", () => {
   // into the NEW bug the "notices its own inactivity" requirement names.
   // Just past the window: no longer counts.
   test("an open docs/steward-* PR older than the standdown window ⇒ false", () => {
-    const gh = rowsGh([{ headRefName: "docs/steward-stale", createdAt: ago(STEWARD_STANDDOWN_WINDOW_MS + 60_000) }]);
+    const gh = rowsGh([{ headRefName: "docs/steward-stale", createdAt: ago(STEWARD_STANDDOWN_WINDOW_MS + 60_000), isCrossRepository: false }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(false);
   });
 
   // The boundary itself: exactly at the window age still counts (age <= window).
   test("an open docs/steward-* PR exactly at the standdown window ⇒ true", () => {
-    const gh = rowsGh([{ headRefName: "docs/steward-edge", createdAt: ago(STEWARD_STANDDOWN_WINDOW_MS) }]);
+    const gh = rowsGh([{ headRefName: "docs/steward-edge", createdAt: ago(STEWARD_STANDDOWN_WINDOW_MS), isCrossRepository: false }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe("stewardPrInFlight (#1136)", () => {
   // future-dated createdAt must not count as extra-fresh, mirroring
   // filing.ts's own consumer-probe guard against the same failure.
   test("a docs/steward-* PR created 1h in the future ⇒ false", () => {
-    const gh = rowsGh([{ headRefName: "docs/steward-skewed", createdAt: new Date(NOW + HOUR).toISOString() }]);
+    const gh = rowsGh([{ headRefName: "docs/steward-skewed", createdAt: new Date(NOW + HOUR).toISOString(), isCrossRepository: false }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(false);
   });
 
@@ -97,9 +97,9 @@ describe("stewardPrInFlight (#1136)", () => {
   // must not stop at (or be confused by) an unrelated row.
   test("a mixed PR list finds the steward row regardless of position", () => {
     const gh = rowsGh([
-      { headRefName: "fix/unrelated-1", createdAt: ago(10 * 60_000) },
-      { headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000) },
-      { headRefName: "fix/unrelated-2", createdAt: ago(10 * 60_000) },
+      { headRefName: "fix/unrelated-1", createdAt: ago(10 * 60_000), isCrossRepository: false },
+      { headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000), isCrossRepository: false },
+      { headRefName: "fix/unrelated-2", createdAt: ago(10 * 60_000), isCrossRepository: false },
     ]);
     expect(stewardPrInFlight(gh, NOW)).toBe(true);
   });
@@ -114,11 +114,19 @@ describe("stewardPrInFlight (#1136)", () => {
     expect(stewardPrInFlight(gh, NOW)).toBe(false);
   });
 
-  // Same fresh branch, same-repo (isCrossRepository omitted, matching every
-  // other test above): must still count as in-flight -- pins that the new
-  // filter is additive, not a silent narrowing of the existing case.
+  // Same fresh branch, same-repo (isCrossRepository explicitly false): must
+  // still count as in-flight.
   test("a fresh docs/steward-* PR from the repo itself ⇒ true", () => {
-    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000) }]);
+    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000), isCrossRepository: false }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(true);
+  });
+
+  // Catches (#1136 fix round): a MISSING isCrossRepository field must fall
+  // back to firing, the same direction every other missing signal in this
+  // module degrades toward, not toward silently counting the row as
+  // same-repo coverage.
+  test("a fresh docs/steward-* PR with isCrossRepository absent ⇒ false (the ceremony fires)", () => {
+    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000) }]);
+    expect(stewardPrInFlight(gh, NOW)).toBe(false);
   });
 });
