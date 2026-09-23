@@ -654,6 +654,17 @@ export function buildDigest(ctx: PlanContext): string {
     // mineDepositBlock) and the Deposit check section above carries the exact
     // numbers whenever the pilot sits at a mineable POI.
     `Mining needs a mining laser module fitted (e.g. mining_laser_i) -- with none fitted a mine cannot succeed; acquire and fit one before planning mine. Match the laser to the deposit: a deposit has a supported_power, and if your total mining_power runs over ${SPARSE_LOCK_MULTIPLIER}x that you CANNOT lock the deposit -- a BIGGER laser makes depleted or sparse deposits WORSE, not better (when you are at a mineable POI, the Deposit check section above carries the exact numbers). When a deposit is too sparse or won't lock, move to a fresh richer vein rather than scraping the same one or fitting a bigger laser.`,
+    // Craft deposit-precondition fix (issue #1076, dupes #932/#997): the
+    // planner had NEVER been told this rule -- 98+24+35 identical cannot_craft
+    // failures across three separate 72h windows, zero prior mention of
+    // "craft" anywhere in this digest. REFERENCE-CHECKED: crafting.md:3,13,94
+    // ("Crafting draws from storage, never cargo") and the game's own refusal
+    // text names this exact fix. The executor's craftDepositBlock (issue
+    // #1076) is the deterministic backstop for the provable case (storage
+    // proven empty); this line covers the harder case that guard cannot --
+    // storage holding some items but not enough of what THIS recipe needs,
+    // since no producer here knows a recipe's required inputs.
+    `craft draws its recipe's inputs from STATION STORAGE, never your cargo hold -- mined or bought materials sitting in cargo do nothing for a craft until moved. Before planning craft{id=<recipe>}, deposit{item_id=<material>, quantity=<n>} each input the recipe needs into storage first. "Not enough materials in your station storage" means deposit first, not retry the same craft.`,
     // Remote-POI targeting fix (issue #176): scan's "pick right the first
     // time" nudge, paired with the executor's target-locality guard
     // (executor.ts). 16/16 lifetime scans were rejected with `invalid_target:

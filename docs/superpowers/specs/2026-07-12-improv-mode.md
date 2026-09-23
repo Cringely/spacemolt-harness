@@ -615,6 +615,15 @@ Social / security (VERBATIM, non-negotiable — matters MORE under improv, model
   (Also a §5 deterministic backstop in plan-then-execute: the executor reads the locker before a
   withdraw and refuses one it can prove is short. The improv driver reaches no executor guard, so
   here the rule is yours to keep.)
+- `craft` escrows its recipe's inputs from your STATION STORAGE at the moment you queue the job --
+  never from cargo, however full your hold is. Mined or bought materials do nothing for a craft
+  until you `deposit` them: `deposit{item_id=<material>, quantity=<n>}` for each input, THEN
+  `craft{id=<recipe>}`. A craft refused with "Not enough materials in your station storage to
+  craft this" means deposit first, never retry the same craft unchanged -- retrying only spends
+  another tick on the identical refusal. (Also a §5 deterministic backstop in plan-then-execute:
+  the executor refuses a craft when it can prove storage holds nothing at all. It cannot prove a
+  narrower shortfall -- which specific input and how much -- because a recipe's exact inputs are
+  deliberately undocumented; that half of the precondition is yours to keep, in both modes.)
 
 ## 5. Deterministic backstops that REMAIN (harness-enforced; the model cannot disable them)
 
