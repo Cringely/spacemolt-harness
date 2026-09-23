@@ -149,8 +149,16 @@ const FILING_HOWTO =
   " Dedup-key rule (#635): mint the key as a lowercase-kebab-case slug naming the CONDITION ONLY (e.g. `core-harvest-unimplemented`) — leave severity/priority (p0, blocker) out of it, it belongs in the title. You do not need to search for a prior key yourself: filing already auto-normalizes a severity word out of the key before matching, so `core-harvest-unimplemented-p0` and `p0-core-harvest-unimplemented` land on the same open issue even without you reusing the exact prior spelling. That normalization does not cover a genuinely different WORDING for the same condition (`core-harvest-unimplemented` vs `core-harvest-job-unimplemented` still file as two) — keep the key short and literal to the condition to avoid that.";
 
 function workOrder(job: JobDef, cycleId: string): string {
+  // dedupe holds no file-finding.ts grant (see the filingTail note below), so
+  // its cycle-id line drops the "file-finding call" clause the other four
+  // jobs still get — naming a call this job cannot make would contradict its
+  // own allowedTools list.
+  const cycleIdLine =
+    job.id === "dedupe"
+      ? `Job: ${job.id}. Cycle id: ${cycleId} — use it verbatim in your report line.`
+      : `Job: ${job.id}. Cycle id: ${cycleId} — use it verbatim in every file-finding call and report line.`;
   const common = [
-    `Job: ${job.id}. Cycle id: ${cycleId} — use it verbatim in every file-finding call and report line.`,
+    cycleIdLine,
     "You run headless on the scheduler host against a dedicated checkout (your cwd). `gh` is authenticated via GH_TOKEN in your environment.",
   ];
   const perJob: Record<JobDef["id"], string[]> = {
@@ -183,7 +191,16 @@ function workOrder(job: JobDef, cycleId: string): string {
       "Reporting channel: the script's own report, plus your five-field completion report on stdout carrying the `run` command's JSON summary.",
     ],
   };
-  return [...common, ...perJob[job.id], FILING_HOWTO, OBSERVE_AND_FILE_ONLY].join("\n\n");
+  // Fix round on PR #143: dedupe holds no file-finding.ts grant (jobs.ts) —
+  // the script is the only thing that writes to the tracker, gated by
+  // dedupePosting, not by the separate (default-on) fileFindings gate
+  // FILING_HOWTO assumes. Teaching that how-to here would name a command its
+  // closed allowedTools list denies, and OBSERVE_AND_FILE_ONLY's own sentence
+  // ("file via `bun scripts/file-finding.ts`") would be actively wrong for
+  // this job — its charter's own NEVER section already forbids commenting,
+  // editing and dispatching. See seam-manifest.md §9.
+  const filingTail = job.id === "dedupe" ? [] : [FILING_HOWTO, OBSERVE_AND_FILE_ONLY];
+  return [...common, ...perJob[job.id], ...filingTail].join("\n\n");
 }
 
 export function composePrompt(

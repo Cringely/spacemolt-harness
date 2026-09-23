@@ -652,11 +652,20 @@ interface Snapshot {
   previousReport: string | null;
 }
 
+// Report identity needs BOTH conditions, not a bare marker substring: the
+// title exactly matches REPORT_TITLE (the only string the ceremony itself
+// ever passes to `gh issue create --title`) AND the body STARTS WITH the
+// marker (the ceremony writes it as line one — see reportBody below). A
+// substring-only match adopts any issue that merely quotes the marker as
+// evidence (filers routinely quote source lines), losing that issue's body on
+// the next live run and never letting it be flagged as a duplicate again.
+const isReportIssue = (i: DedupeIssue): boolean => i.title === REPORT_TITLE && i.body.startsWith(REPORT_MARKER);
+
 function snapshot(runner: GhRunner, stateDir: string): Snapshot {
   const mode = resolveDedupeMode(stateDir);
   const fetch = fetchOpenIssues(runner);
-  const reportIssue = fetch.issues.filter((i) => i.body.includes(REPORT_MARKER)).sort((a, b) => a.number - b.number)[0] ?? null;
-  const backlog = fetch.issues.filter((i) => !i.body.includes(REPORT_MARKER));
+  const reportIssue = fetch.issues.filter(isReportIssue).sort((a, b) => a.number - b.number)[0] ?? null;
+  const backlog = fetch.issues.filter((i) => !isReportIssue(i));
   const openNumbers = new Set(fetch.issues.map((i) => i.number));
   // Over the backlog, like the delta gate's count: the report issue is not
   // backlog, and counting it there would read it as a new issue.

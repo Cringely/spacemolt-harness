@@ -483,15 +483,51 @@ describe("semantic pair input and scheduler wiring", () => {
   // closed allowedTools list does not cover is denied at run time while every
   // offline test stays green. And the agent holds no gh grant at all, so the
   // script stays the only tracker path.
-  test("the dedupe job's work order teaches only commands its grant covers, and it holds no gh grant", () => {
+  //
+  // Fix round on PR #143: the ONLY prior check here was the gh-prefixed one —
+  // it never looked for the file-finding.ts grant, so a dedupePosting-off run
+  // could still hold `Bash(bun scripts/file-finding.ts *)` and file issues /
+  // post bump comments through the separate (default-on) fileFindings gate,
+  // straight from untrusted issue excerpts. Asserted here too now.
+  test("the dedupe job's work order teaches only commands its grant covers, and it holds neither a gh grant nor the file-finding.ts filer", () => {
     const job = JOBS.find((j) => j.id === "dedupe")!;
     const grant = "Bash(bun scripts/backlog-dedupe.ts *)";
     expect(job.allowedTools).toContain(grant);
     expect(job.allowedTools.some((t) => t.startsWith("Bash(gh "))).toBe(false);
+    expect(job.allowedTools.some((t) => t.includes("file-finding"))).toBe(false);
     const prefix = grant.slice("Bash(".length, -" *)".length);
     const prompt = composePrompt(job, { charterText: "x", stateNow: "y", cycleId: "dedupe-1" });
     expect(prompt).toContain(`${prefix} candidates`);
     expect(prompt).toContain(`${prefix} run`);
     expect(prompt).toContain("--semantic-b64");
+    expect(prompt).not.toContain("file-finding");
+  });
+});
+
+// --- Report identity (unauthenticated marker match) ----------------------------------------
+
+describe("standing-report identity (fix round, PR #143)", () => {
+  // Catches: the report being "whichever open issue's body contains the
+  // marker anywhere", with no title check. A filer routinely quotes source
+  // lines as evidence, so an unrelated issue that cites the marker string
+  // used to be adopted as the standing report itself — dropped from the
+  // backlog count, and (in live mode) had its body overwritten on the next
+  // run, never to be flagged as a duplicate again. Report identity now needs
+  // BOTH the exact REPORT_TITLE and a body that starts with the marker (the
+  // ceremony writes it as line one) — a mid-body quote satisfies neither.
+  test("an issue that quotes the report marker mid-body is neither adopted as the report nor dropped from the backlog", () => {
+    const quoting = issue(
+      600,
+      "Filer cited the dedupe report marker verbatim as reproduction evidence",
+      "Repro: the work order's filing template embeds <!-- sm-dedupe-report --> mid-sentence as a worked example; this issue is not the report.",
+    );
+    const tracker = fakeTracker([...backlog(), quoting]);
+    const dir = liveStateDir();
+    const r = runDedupe(tracker.gh, { stateDir: dir, now: NOW });
+    expect(r.openIssues).toBe(9); // #600 counted as backlog, never silently dropped
+    expect(r.report.action).toBe("created"); // a fresh report issue, never #600 "updated" in place
+    const report = [...tracker.db.values()].find((i) => i.title === "Backlog dedupe: standing report")!;
+    expect(report.number).not.toBe(600);
+    expect(tracker.db.get(600)!.body).toContain("worked example"); // #600's own body untouched
   });
 });
