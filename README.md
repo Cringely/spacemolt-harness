@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-57).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-58).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -91,9 +91,9 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts + secrets DONE, both flying; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: PR #94 (M-56, 2026-09-06) merged the consumer gate (new-issue filing pauses when no machine-filed issue has closed in 7 days); its scheduler deployment status was last checked 2026-09-11. Fleet-flight (#591) F1, F2, and now F3 are closed (M-52 to M-57, the last F3 issue closing 2026-09-19); F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) and the 2026-08-11 findings (#812-#821) remain. A five-PR wave on 2026-09-19 (#112-#116) closed #534, #669, #458, #672, and #817, plus #681 and #569 by re-triage; deploy state as of that wave is unconfirmed, last known prod image `a892877` (2026-09-11). See [docs/STATE.md](docs/STATE.md).
+Current work: a wave-4 cluster of five PRs (#127-#132, 2026-09-21 to 2026-09-23) closed six tracker issues (#982, #1003, #700, #1076, #931, #1051) and merged a backlog-dedupe-ceremony spec (#132) measuring 389 of the 521 open issues as duplicates across 83 clusters. Separately, a 2026-09-20 corsair strand (M-58) gave the first live-production proof of the #534 escalation and the #458 buy-price guard, and surfaced the real F4 blocker: no pilot can request or offer a fleet rescue without a human (#1114). Prod ran `7ab54a3` (PR #131's merge commit) as of 2026-09-23T04:20Z, healthy. Fleet-flight (#591) F1, F2, and F3 are closed (M-52 to M-57). F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) remains open. See [docs/STATE.md](docs/STATE.md).
 
-The major-milestone timeline (M-01..M-57) is [docs/milestones.md](docs/milestones.md); current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-58) is [docs/milestones.md](docs/milestones.md). Current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 
