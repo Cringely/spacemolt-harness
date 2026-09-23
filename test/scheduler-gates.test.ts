@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canAmend, canDispatch, canFile, defaultGates, loadGates } from "../src/scheduler/gates";
+import { canAmend, canDispatch, canFile, canPostDedupe, defaultGates, loadGates } from "../src/scheduler/gates";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "sched-gates-"));
 
@@ -76,5 +76,19 @@ describe("D1 capability gates (C1)", () => {
     const g = loadGates(dir);
     expect(canFile(g)).toBe(false); // the operator's explicit off is honored
     expect(canDispatch(g)).toBe(false); // missing key → default off, not a throw
+  });
+
+  // Catches (#1135): the dedupe ceremony posting without the operator's
+  // opt-in. The scheduler host auto-pulls main, so every gates.json on it
+  // predates this key, and each one must read as posting OFF.
+  test("dedupe posting: off by default and for a predating gates.json, on only when the operator sets it", () => {
+    expect(canPostDedupe(loadGates(tmp()))).toBe(false);
+    const dir = tmp();
+    writeFileSync(join(dir, "gates.json"), JSON.stringify({ fileFindings: { enabled: true }, dispatchFixAgents: { enabled: false, verifiedLiveAt: null }, amendOwnCharter: {} }));
+    expect(canPostDedupe(loadGates(dir))).toBe(false);
+    writeFileSync(join(dir, "gates.json"), JSON.stringify({ dedupePosting: { enabled: "yes" } }));
+    expect(canPostDedupe(loadGates(dir))).toBe(false); // a malformed value never reads as on
+    writeFileSync(join(dir, "gates.json"), JSON.stringify({ dedupePosting: { enabled: true } }));
+    expect(canPostDedupe(loadGates(dir))).toBe(true);
   });
 });

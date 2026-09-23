@@ -176,6 +176,12 @@ function workOrder(job: JobDef, cycleId: string): string {
       "Authorized write path: one docs-only branch + PR — `git checkout -b docs/<name>`, `git add`/`git commit`, `git push origin <branch>`, `gh pr create`. Open the PR and STOP: never merge it.",
       "Reporting channel: the PR body (plus your five-field completion report on stdout).",
     ],
+    dedupe: [
+      "Target: this week's backlog dedupe pass, per your charter. You are the semantic pass only. The script runs the deterministic passes and does every tracker read and write.",
+      "Commands, each the WHOLE command on ONE LINE: first `bun scripts/backlog-dedupe.ts candidates`, then `bun scripts/backlog-dedupe.ts run`, adding `--semantic-b64 <base64 of a JSON array of {\"member\":N,\"target\":M} pairs>` only when the candidates output says the semantic pass is due and you found pairs. Standard base64, no line wrapping, no heredoc, no pipe.",
+      "Whether anything reaches the tracker is the operator's gates.json dedupePosting gate, OFF by default. With it off the run is a dry run: it writes $SCHEDULER_STATE_DIR/reports/backlog-dedupe.md and nothing else. You cannot and must not change that.",
+      "Reporting channel: the script's own report, plus your five-field completion report on stdout carrying the `run` command's JSON summary.",
+    ],
   };
   return [...common, ...perJob[job.id], FILING_HOWTO, OBSERVE_AND_FILE_ONLY].join("\n\n");
 }

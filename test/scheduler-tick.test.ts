@@ -67,7 +67,7 @@ function fakeSpawner(plan: Array<"ok" | "reject"> = []) {
 
 /** Which job a spawn belonged to, read from its work order (`Job: <id>.`). */
 function jobOf(call: SpawnCall): JobId {
-  const m = /Job: (standup|strategy|council|steward)\./.exec(call.opts.stdin);
+  const m = /Job: (standup|strategy|council|steward|dedupe)\./.exec(call.opts.stdin);
   if (!m) throw new Error("spawn stdin carries no work-order job line");
   return m[1] as JobId;
 }
@@ -115,20 +115,20 @@ describe("tick orchestration (D-Tick)", () => {
     const { spawner, calls } = fakeSpawner();
     const deps = (now: number) => ({ clock: () => now, gitRunner: fakeGit(repo, dirs.checkoutDir), spawner, ...dirs });
 
-    // T: fresh anchors ⇒ the three periodic jobs fire once each (the ledger
+    // T: fresh anchors ⇒ the four periodic jobs fire once each (the ledger
     // absorption, plan decision 6); steward adopts the head without firing.
     let r = await tick(deps(T));
     expect(r.skipped).toBe(null);
-    expect(calls.map(jobOf).sort()).toEqual(["council", "standup", "strategy"]);
+    expect(calls.map(jobOf).sort()).toEqual(["council", "dedupe", "standup", "strategy"]);
     expect(r.absorbed).toEqual(["steward"]);
     let anchors = loadAnchors(dirs.stateDir);
     expect(anchors.steward.stewardAnchorSha).toBe("aaa");
     expect(anchors.standup.lastAttemptAt).toBe(T);
     // lock released after the walk — a held lock here kills every later tick
     expect(existsSync(join(dirs.stateDir, "lock"))).toBe(false);
-    // #585 disk-bound proof: three jobs fired and finished, and each one's
+    // #585 disk-bound proof: four jobs fired and finished, and each one's
     // ephemeral worktree was removed on the way out — steady state is EMPTY,
-    // not "three leftover directories."
+    // not "four leftover directories."
     expect(readdirSync(worktreesRoot(dirs.stateDir))).toEqual([]);
     expect(r.worktreesReaped).toBe(0); // nothing stale — this is the first tick
 
@@ -198,6 +198,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "old" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, anchors);
     const repo = { sha: "new", commitAtMs: T - 30 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
@@ -234,6 +235,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet); // quiesced: this tick fires nothing itself
     const stray = join(worktreesRoot(dirs.stateDir), "steward-crashed-run");
@@ -285,7 +287,7 @@ describe("tick orchestration (D-Tick)", () => {
     const repo = { sha: "aaa", commitAtMs: T - HOUR, subjects: [] as string[] };
     const { spawner, calls } = fakeSpawner(["reject"]);
     const r = await tick({ clock: () => T, gitRunner: fakeGit(repo, dirs.checkoutDir), spawner, ...dirs });
-    expect(calls.map(jobOf)).toEqual(["standup", "strategy", "council"]); // all attempted, in JOBS order
+    expect(calls.map(jobOf)).toEqual(["standup", "strategy", "council", "dedupe"]); // all attempted, in JOBS order
     const anchors = loadAnchors(dirs.stateDir);
     expect(anchors.standup.lastResult).toBe("fail");
     expect(anchors.standup.failStreak).toBe(1);
@@ -295,6 +297,7 @@ describe("tick orchestration (D-Tick)", () => {
       { jobId: "standup", result: "fail" },
       { jobId: "strategy", result: "ok" },
       { jobId: "council", result: "ok" },
+      { jobId: "dedupe", result: "ok" },
     ]);
     expect(existsSync(join(dirs.stateDir, "lock"))).toBe(false);
   });
@@ -310,6 +313,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     const logs = join(dirs.stateDir, "logs");
@@ -350,6 +354,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     const failingGit: GitRunner = (args) => {
@@ -373,6 +378,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     const repo = { sha: "aaa", commitAtMs: T - HOUR, subjects: [] as string[] };
@@ -392,6 +398,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     recordDispatch(dirs.stateDir, {

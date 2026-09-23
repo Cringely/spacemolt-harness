@@ -7,6 +7,10 @@
 //       condition 1, "merged is not enough"). Stage 1 ships no dispatch call
 //       site (structurally off); canDispatch exists so stage 3 wires ONE check.
 //   (c) amend own charter — NEVER. Not a flag, not a file entry.
+//   (d) post backlog-dedupe proposals (#1135): OFF until the operator turns
+//       it on. The scheduler host auto-pulls main and runs every registered
+//       job, so the dedupe ceremony shipped registered AND gated: with this
+//       off it only reads the tracker and writes a local dry-run report.
 // gates.json lives in the state dir and loads with the same schema tolerance
 // as anchors (state.ts): invalid or missing pieces degrade to defaults, never
 // a throw (binding AGENTS.md persisted-state rule).
@@ -27,6 +31,8 @@ const GatesSchema = z.object({
   // Kept in the file shape so a forged/edited entry parses and is then
   // visibly IGNORED — canAmend never reads it.
   amendOwnCharter: z.record(z.string(), z.unknown()).catch({}),
+  // A gates.json that predates this key parses with posting OFF.
+  dedupePosting: z.object({ enabled: z.boolean().catch(false) }).catch({ enabled: false }),
 });
 
 export type CapabilityGates = z.infer<typeof GatesSchema>;
@@ -36,6 +42,7 @@ export function defaultGates(): CapabilityGates {
     fileFindings: { enabled: true },
     dispatchFixAgents: { enabled: false, verifiedLiveAt: null },
     amendOwnCharter: {},
+    dedupePosting: { enabled: false },
   };
 }
 
@@ -56,6 +63,11 @@ export function canFile(g: CapabilityGates): boolean {
 
 export function canDispatch(g: CapabilityGates): boolean {
   return g.dispatchFixAgents.enabled && g.dispatchFixAgents.verifiedLiveAt !== null;
+}
+
+/** Capability (d): may the backlog dedupe ceremony write to the tracker? */
+export function canPostDedupe(g: CapabilityGates): boolean {
+  return g.dedupePosting.enabled;
 }
 
 // Verdict (c): DENIED, permanently. The parameter exists so call sites read

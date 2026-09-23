@@ -196,6 +196,7 @@ describe("tick failure alarm (#558 part 2, integration)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: defaultAnchor(), // never attempted ⇒ due immediately
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     const repo = { sha: "aaa", commitAtMs: T - HOUR, subjects: [] as string[] };
@@ -248,6 +249,7 @@ describe("tick failure alarm (#558 part 2, integration)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: defaultAnchor(),
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     const repo = { sha: "aaa", commitAtMs: T - HOUR, subjects: [] as string[] };
@@ -264,6 +266,7 @@ describe("tick failure alarm (#558 part 2, integration)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: defaultAnchor(),
       steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiet);
     const repo = { sha: "aaa", commitAtMs: T - HOUR, subjects: [] as string[] };
