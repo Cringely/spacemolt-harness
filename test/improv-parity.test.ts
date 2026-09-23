@@ -242,6 +242,20 @@ const SEAMS: Seam[] = [
     anchors: ["abandon_mission", /zero progress/i, /stale mission/i],
   },
   {
+    guard: "stale-mission threshold derives from the mission's own expiry (#700: a distress-response " +
+      "mission expires in ~3h -- under the flat MISSION_STALE_HOURS=24h, the advisory above was " +
+      "structurally incapable of ever firing on the mission class the pilot holds most of, since the " +
+      "mission is always gone before 24h of zero progress can accumulate)",
+    // Pins the derivation function itself, not just MISSION_STALE_HOURS (the
+    // seam above already pins that constant, and it survives unchanged as the
+    // long-mission fallback/cap -- so a regression that deletes ONLY the
+    // per-mission derivation and restores a flat MISSION_STALE_HOURS comparison
+    // must fail HERE, not there).
+    code: { file: "src/planner/digest.ts", marker: "function staleAdvisoryThresholdHours(" },
+    anchors: [/distress-response rescue expires/, /own HALFWAY point/, /whichever is smaller/,
+      /own expiry implies/],
+  },
+  {
     guard: "complete_mission objective guard (#291 regression: current<required -> blocked wake before the doomed tick)",
     code: { file: "src/agent/executor.ts", marker: "completeMissionBlock" },
     anchors: ["complete_mission", /mission_incomplete/i, /before completing/i],

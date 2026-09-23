@@ -484,9 +484,18 @@ Vocabulary / data shapes:
   noise: either your next actions make concrete progress on its objective, or `abandon_mission(id)`
   frees the slot for winnable work. Abandoning reclaims or charges only goods the mission itself
   PROVIDED; cargo you gathered yourself stays (live, 2026-07-16, #291: a contract sat at 0/20 for
-  ~57h with abandon_mission registered and never weighed). (Also a §5-adjacent deterministic
-  producer in plan-then-execute: the harness derives the zero-progress age from accepted_at and
-  the digest renders a stale-mission advisory at 24h+ — advisory only, never an auto-abandon.)
+  ~57h with abandon_mission registered and never weighed). A DAY is the right yardstick for a
+  board contract, but a short-fused mission does not get a day: a distress-response rescue expires
+  on its own in about 3 hours (missions.md:70), so treat one still at zero progress past roughly
+  its own HALFWAY point — about 1.5h for a 3h rescue — the same way: make concrete progress now, or
+  abandon it while there is still time left to matter (live, 2026-08-02, #700: six distress
+  missions sat at 0% the pilot never once weighed abandoning, because none had a day to give).
+  (Also a §5-adjacent deterministic producer in plan-then-execute: the harness derives the
+  zero-progress age from accepted_at, and the digest renders a stale-mission advisory once that age
+  reaches whichever is smaller — 24h, or the remaining hours the mission's own expiry implies — so
+  the #291-tuned 24h behavior stays put once a mission still has a day or more of life left; a board
+  contract with less than that fires earlier than it did before #700, the same as any other
+  short-fused mission. Advisory only, never an auto-abandon.)
 - Before you plan `complete_mission`, confirm the mission's objective is actually MET — every
   objective's `current` must be at least its `required` (or the objective already `completed`).
   complete_mission on an unmet objective returns `mission_incomplete: Objective incomplete: Mine N

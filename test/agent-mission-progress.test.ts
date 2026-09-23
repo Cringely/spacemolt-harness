@@ -326,6 +326,71 @@ describe("mission objective check rendering (#291)", () => {
     expect(stale).toContain("PROVIDED");
   });
 
+  // #700: MISSION_STALE_HOURS alone can never fire on a distress-response
+  // mission, which expires on its own in ~3h (missions.md:70) -- 24h of zero
+  // progress cannot accumulate before the game removes the mission first. The
+  // threshold now derives from the mission's OWN expiresInTicks (whichever is
+  // smaller: 24h, or the remaining hours the ticks imply -- the same firing
+  // point as an earlier elapsed+remaining/2 draft, see digest.ts), so a
+  // short-fused mission gets flagged near its own halfway point instead of
+  // never.
+  test("a distress-length mission (~3h total life via expiresInTicks) fires near its own halfway point, well inside that 3h", () => {
+    const distressMission = (zeroProgressHours: number, expiresInTicks: number) => buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-distress-1", zeroProgressHours, expiresInTicks,
+        objectives: [{ type: "visit_system", systemId: "nekkar", required: 1, current: 0, inCargo: 0, completed: false }],
+      }],
+    });
+    // 1.4h elapsed, 1.6h left (576 ticks): under half the ~3h life -- no advisory yet.
+    expect(distressMission(1.4, 576)).not.toContain("STALE MISSION");
+    // 1.5h elapsed, 1.5h left (540 ticks): exactly half the ~3h life, with
+    // real time still left to act on the advisory before the mission
+    // self-expires. Elapsed + remaining here is 3h total, under
+    // MISSION_STALE_HOURS itself -- the flat 24h threshold could not have
+    // fired on this mission even once, for its entire life.
+    expect(1.5 + 1.5).toBeLessThan(MISSION_STALE_HOURS);
+    const stale = distressMission(1.5, 540);
+    expect(stale).toContain("STALE MISSION");
+    expect(stale).toContain("abandon_mission{id=m-distress-1}");
+  });
+
+  // The cap: a mission whose own expiry is far off (a long board contract)
+  // must not fire any EARLIER than MISSION_STALE_HOURS just because
+  // expiresInTicks is now known -- the #291-tuned 24h behavior stays put for
+  // the missions it was tuned against.
+  test("a long-fused mission with a known expiry still caps at MISSION_STALE_HOURS, unchanged from before #700", () => {
+    const longMission = (zeroProgressHours: number) => buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-1", zeroProgressHours, expiresInTicks: 100_000, // ~278h remaining -- half the total budget would exceed 24h
+        objectives: [titaniumObjective],
+      }],
+    });
+    expect(longMission(MISSION_STALE_HOURS - 0.1)).not.toContain("STALE MISSION");
+    expect(longMission(MISSION_STALE_HOURS)).toContain("STALE MISSION");
+  });
+
+  // Degenerate expiry (#700 fix-round finding): expiresInTicks is parsed as a
+  // bare optional number with no positivity floor, so zero or negative is not
+  // "missing" and must not slip past the fallback. Left unguarded, a zero/
+  // negative value collapses the derived threshold toward zero and any
+  // positive zeroProgressHours clears it immediately -- the advisory firing
+  // on a mission the pilot just accepted, the exact inverted-urgency failure
+  // the fallback exists to prevent (#94).
+  test("a zero or negative expiresInTicks falls back to the flat threshold instead of manufacturing urgency", () => {
+    const withExpiry = (expiresInTicks: number) => buildDigest({
+      ...baseCtx,
+      activeMissions: [{
+        missionId: "m-1", zeroProgressHours: 1, expiresInTicks,
+        objectives: [titaniumObjective],
+      }],
+    });
+    // 1h of zero progress must not read as stale under the flat 24h fallback.
+    expect(withExpiry(0)).not.toContain("STALE MISSION");
+    expect(withExpiry(-50)).not.toContain("STALE MISSION");
+  });
+
   // Completion-readiness verdict (#291 regression): the raw "14/20" numbers did
   // not stop 12 premature complete_mission calls; the digest now derives the
   // complete_mission GATE explicitly. Each test pins a distinct branch.
