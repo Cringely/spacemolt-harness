@@ -161,6 +161,14 @@ const PlanContextSchema = z.object({
     services: z.array(z.string()).default([]),
     lastSeen: z.number(),
   })).optional(),
+  // Fleet-rescue briefing (issue #1114): mirrors PlanContext.fleetDistress /
+  // FleetDistress (planner/types.ts), so a harvested case replays the same
+  // distress facts the planner was actually shown.
+  fleetDistress: z.array(z.object({
+    username: z.string(),
+    fuel: z.number(),
+    credits: z.number(),
+  })).optional(),
 });
 
 // Key parity, at COMPILE time (issue #272). The comment above promised a drift

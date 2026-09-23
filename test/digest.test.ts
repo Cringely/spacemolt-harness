@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildDigest, summarizeStatus } from "../src/planner/digest";
+import { buildDigest, summarizeStatus, FLEET_REFUEL_FLOOR_CR } from "../src/planner/digest";
 import { parseMarketText } from "../src/client/mcp-text-parser";
 import type { PlanContext } from "../src/planner/types";
 import type { StatusSnapshot } from "../src/client/client";
@@ -560,6 +560,79 @@ describe("buildDigest", () => {
       // unavailable): the gate is the threaded status check, not the wake
       // label, so no flag means no fuel-id line.
       expect(buildDigest(baseCtx)).not.toMatch(fuelIdAnchor);
+    });
+  });
+
+  // Fleet-rescue briefing (issue #1114, the #703 gift path's read half).
+  // Agent.fleetDistress (agent.ts) does the selection; buildDigest only
+  // renders what it is handed, so these tests drive ctx.fleetDistress
+  // directly rather than a live Store.
+  describe("fleet distress briefing (#1114)", () => {
+    test("renders a distress line naming the fleet-mate, its fuel, and its credits", () => {
+      const text = buildDigest({
+        ...baseCtx,
+        fleetDistress: [{ username: "Corvus Marrek", fuel: 0, credits: 5 }],
+      });
+      expect(text).toContain("FLEET DISTRESS");
+      expect(text).toContain("Corvus Marrek");
+      expect(text).toContain("0 fuel");
+      expect(text).toContain("5 credits");
+    });
+
+    // Security (SECURITY note on FleetDistress, planner/types.ts): the remedy
+    // must read as prose an operator could have written, never as a
+    // pre-filled action call the planner could copy verbatim -- the exact
+    // shape #681's create_buy_order incident and #1116 are about. Scoped to
+    // the FLEET DISTRESS line itself: the digest's unrelated craft/withdraw
+    // runbook legitimately uses `deposit{item_id=..., quantity=...}`
+    // pseudo-syntax elsewhere for ITEM deposits, so asserting against the
+    // whole document would fail on that pre-existing, unrelated line.
+    // Ablation: reverting the render to interpolate a
+    // `deposit{target:..., credits:...}` string fails this.
+    test("names the remedy in prose, never as a filled-in action call", () => {
+      const text = buildDigest({
+        ...baseCtx,
+        fleetDistress: [{ username: "Corvus Marrek", fuel: 0, credits: 5 }],
+      });
+      const distressLine = text.split("\n").find((l) => l.startsWith("FLEET DISTRESS"));
+      expect(distressLine).toBeDefined();
+      expect(distressLine).toContain("credits gift via the fleet gift action");
+      // No callable-shaped syntax: neither the literal action name `deposit`
+      // nor a `key=value`/`key:value` pair that looks like filled-in params.
+      expect(distressLine).not.toContain("deposit");
+      expect(distressLine).not.toMatch(/\btarget\s*[:=]/);
+      expect(distressLine).not.toMatch(/\bcredits\s*[:=]\s*\d/);
+    });
+
+    test("renders every distressed fleet-mate when more than one is flagged", () => {
+      const text = buildDigest({
+        ...baseCtx,
+        fleetDistress: [
+          { username: "Corvus Marrek", fuel: 0, credits: 5 },
+          { username: "Vela Farsight", fuel: 12, credits: 8 },
+        ],
+      });
+      expect(text).toContain("Corvus Marrek");
+      expect(text).toContain("Vela Farsight");
+    });
+
+    // #94: absence is never a verdict. Undefined (no roster / no snapshot
+    // yet) and an empty array (nobody is distressed) must both render NO
+    // section -- neither is "everyone is fine" or "nothing is known", and
+    // the digest must not fabricate a claim from either.
+    test("omits the section when fleetDistress is absent", () => {
+      expect(buildDigest(baseCtx)).not.toContain("FLEET DISTRESS");
+    });
+
+    test("omits the section when fleetDistress is an empty array", () => {
+      expect(buildDigest({ ...baseCtx, fleetDistress: [] })).not.toContain("FLEET DISTRESS");
+    });
+
+    // Pins the floor's actual value against the digest's own export, so a
+    // future retune of FLEET_REFUEL_FLOOR_CR is a deliberate edit here too,
+    // not a silent drift between the constant and what this file documents.
+    test("the refuel floor is a real, positive credits amount", () => {
+      expect(FLEET_REFUEL_FLOOR_CR).toBeGreaterThan(0);
     });
   });
 
