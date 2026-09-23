@@ -15,7 +15,9 @@ import {
 } from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
-import { evaluateReflex, reflexGaveUpAt, type ReflexConfig, type ReflexFailureRecord } from "./reflex";
+import {
+  evaluateReflex, reflexGaveUpAt, classifyReflexFailureCause, type ReflexConfig, type ReflexFailureRecord,
+} from "./reflex";
 import { admitPlan, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
 import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
@@ -1455,8 +1457,18 @@ export class Agent {
       ? this.store.latestEventPerPayloadKey(this.id, "reflex_failed", "key", REFLEX_FAILURE_LOOKBACK)
           .map((e) => e.payload as ReflexFailureRecord)
       : [];
-    const fuelGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel");
-    const hullGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "repair");
+    // Issue #1115: this tick's known credits balance, threaded through so an
+    // affordability give-up can invalidate itself once credits have risen
+    // past what failed (see reflexGaveUpAt's doc comment, reflex.ts).
+    // creditsKnown false (a malformed/missing player block, #1030's guard)
+    // passes undefined -- no positive evidence, so the latch cannot clear on
+    // a guess, same fail-toward-the-existing-block direction the #94 fitment
+    // guards use for missing data.
+    const currentCredits = status?.creditsKnown ? status.credits : undefined;
+    const fuelGaveUpHere = stationKey !== null
+      && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel", currentCredits);
+    const hullGaveUpHere = stationKey !== null
+      && reflexGaveUpAt(recentReflexFailures, stationKey, "repair", currentCredits);
 
     // Issue #670: this ship's own measured fuel-per-jump (undefined until its
     // first completed jump, or after a switch_ship until the new hull's
@@ -1481,7 +1493,7 @@ export class Agent {
     let reflexSpentTick = false;
     if (reflex) {
       reflexSpentTick = true;
-      const fired = await this.fireReflex(reflex, stationKey);
+      const fired = await this.fireReflex(reflex, stationKey, currentCredits);
       if (fired) return; // succeeded: this tick's mutation budget spent, wake suppressed entirely
     }
 
@@ -1940,7 +1952,17 @@ export class Agent {
   // a non-base POI, e.g. an asteroid belt): the give-up can never arm without
   // a station key either (see the call site's `stationKey !== null` guards),
   // so an ungrouped row here is simply never queried back.
-  private async fireReflex(reflex: ReturnType<typeof evaluateReflex>, stationKey: string | null): Promise<boolean> {
+  //
+  // currentCredits (issue #1115): this tick's known credits balance, the same
+  // value the give-up read above computed (`undefined` when creditsKnown is
+  // false) -- recorded on a failed fire as `creditsAtFailure` so a LATER
+  // tick's give-up read can tell whether credits have since risen past it.
+  // Only meaningful on an affordability failure (see classifyReflexFailureCause
+  // below); recorded unconditionally anyway, since the row's own `cause` field
+  // is what gates whether anything ever reads it back.
+  private async fireReflex(
+    reflex: ReturnType<typeof evaluateReflex>, stationKey: string | null, currentCredits?: number,
+  ): Promise<boolean> {
     if (!reflex) return false;
     try {
       await this.api.action(reflex.action);
@@ -1957,11 +1979,18 @@ export class Agent {
       // client itself didn't wrap) is conservatively left untagged
       // (terminal: false) rather than guessed at.
       const terminal = e instanceof SpacemoltError && classifyGameError(e).kind === "blocked";
+      // Issue #1115: classified from the SAME message a non-SpacemoltError
+      // has none of, so it's undefined there too -- an untagged terminal
+      // failure (like an untagged non-terminal one) just never matches
+      // reflexGaveUpAt's invalidation branch and latches permanently, the
+      // pre-#1115 behavior.
+      const cause = e instanceof SpacemoltError ? classifyReflexFailureCause(e.message) : undefined;
       this.emit("reflex_failed", {
         action: reflex.action, reason: reflex.reason,
         message: e instanceof Error ? e.message : String(e),
         stationKey, terminal,
         key: stationKey !== null ? `${stationKey}:${reflex.action}` : undefined,
+        cause, creditsAtFailure: currentCredits,
       });
       return false;
     }

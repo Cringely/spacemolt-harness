@@ -1,0 +1,4 @@
+# The installer's own per-machine sidecar: an absolute path to the core checkout, plus the
+# detected plugin/output-style/MCP-server inventory. Neither travels between clones, so this
+# stays out of every commit (issue #137).
+.harness-manifest.local.json
