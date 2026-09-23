@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { join } from "node:path";
 import { z } from "zod";
 
-export const JOB_IDS = ["standup", "strategy", "council", "steward"] as const;
+export const JOB_IDS = ["standup", "strategy", "council", "steward", "dedupe"] as const;
 export type JobId = (typeof JOB_IDS)[number];
 
 export interface JobAnchor {

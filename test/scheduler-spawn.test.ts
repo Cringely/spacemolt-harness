@@ -97,6 +97,14 @@ const RESULT_JSON = JSON.stringify({
 
 const job = (id: JobDef["id"]): JobDef => JOBS.find((j) => j.id === id)!;
 
+// Fix round on PR #143: dedupe carries no file-finding.ts grant (jobs.ts), so
+// its work order carries neither FILING_HOWTO nor OBSERVE_AND_FILE_ONLY (see
+// spawn.ts's workOrder — both would name a command its closed allowedTools
+// list denies). The three filing/dispatch-clause tests below predate dedupe
+// (#1135) and looped over every job unconditionally; they now exclude it
+// here, on the one line, rather than each growing its own ad hoc filter.
+const FILING_JOBS = JOBS.filter((j) => j.id !== "dedupe");
+
 const OBSERVE_AND_FILE_ONLY =
   "Capability gate D1: dispatch is OFF. Where your charter says dispatch an agent (reviewer, next wave, redispatch), instead FLAG it: comment on the PR or file via `bun scripts/file-finding.ts`. Never dispatch agents. Never merge.";
 
@@ -113,19 +121,24 @@ describe("spawn composer + runner (C3)", () => {
 
   // Catches: the headless stand-up following its charter's "dispatch the next
   // wave" step — a capability-(b) leak at stage 1.
-  test("all four composed work orders carry the observe-and-file-only clause", () => {
-    for (const j of JOBS) {
+  test("all four filing-capable work orders carry the observe-and-file-only clause; dedupe carries neither it nor the filing how-to", () => {
+    for (const j of FILING_JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
       expect(prompt.includes(OBSERVE_AND_FILE_ONLY)).toBe(true);
     }
+    // dedupe holds no file-finding.ts grant (jobs.ts) — the dispatch-off
+    // clause's own "file via file-finding.ts" sentence would be wrong for it.
+    const dedupePrompt = composePrompt(job("dedupe"), { charterText: "x", stateNow: "y", cycleId: "dedupe-1" });
+    expect(dedupePrompt.includes(OBSERVE_AND_FILE_ONLY)).toBe(false);
+    expect(dedupePrompt).not.toContain("bun scripts/file-finding.ts");
   });
 
   // Catches: the ON-ARRIVAL filing defect returning (#114). The work order must
   // teach the WORKING method — a single-line `--body-b64 <base64>` argv token —
   // never a heredoc/STDIN body (denied: the headless permission layer splits a
   // Bash command on newlines) nor the dead `--body-file <under outbox/>` form.
-  test("every work order instructs single-line --body-b64 filing, never heredoc/STDIN/--body-file", () => {
-    for (const j of JOBS) {
+  test("every filing-capable work order instructs single-line --body-b64 filing, never heredoc/STDIN/--body-file", () => {
+    for (const j of FILING_JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
       expect(prompt).toContain("bun scripts/file-finding.ts");
       expect(prompt).toContain("--body-b64");
@@ -144,8 +157,8 @@ describe("spawn composer + runner (C3)", () => {
   // "severity-word near-match auto-bump" block, which is the test that
   // actually proves the invariant; this one only proves the guidance text
   // reached the prompt).
-  test("every work order names the dedup-key shape (condition-only, no severity word)", () => {
-    for (const j of JOBS) {
+  test("every filing-capable work order names the dedup-key shape (condition-only, no severity word)", () => {
+    for (const j of FILING_JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
       expect(prompt).toContain("leave severity/priority");
       expect(prompt).toContain("auto-normalizes a severity word");

@@ -149,8 +149,16 @@ const FILING_HOWTO =
   " Dedup-key rule (#635): mint the key as a lowercase-kebab-case slug naming the CONDITION ONLY (e.g. `core-harvest-unimplemented`) — leave severity/priority (p0, blocker) out of it, it belongs in the title. You do not need to search for a prior key yourself: filing already auto-normalizes a severity word out of the key before matching, so `core-harvest-unimplemented-p0` and `p0-core-harvest-unimplemented` land on the same open issue even without you reusing the exact prior spelling. That normalization does not cover a genuinely different WORDING for the same condition (`core-harvest-unimplemented` vs `core-harvest-job-unimplemented` still file as two) — keep the key short and literal to the condition to avoid that.";
 
 function workOrder(job: JobDef, cycleId: string): string {
+  // dedupe holds no file-finding.ts grant (see the filingTail note below), so
+  // its cycle-id line drops the "file-finding call" clause the other four
+  // jobs still get — naming a call this job cannot make would contradict its
+  // own allowedTools list.
+  const cycleIdLine =
+    job.id === "dedupe"
+      ? `Job: ${job.id}. Cycle id: ${cycleId} — use it verbatim in your report line.`
+      : `Job: ${job.id}. Cycle id: ${cycleId} — use it verbatim in every file-finding call and report line.`;
   const common = [
-    `Job: ${job.id}. Cycle id: ${cycleId} — use it verbatim in every file-finding call and report line.`,
+    cycleIdLine,
     "You run headless on the scheduler host against a dedicated checkout (your cwd). `gh` is authenticated via GH_TOKEN in your environment.",
   ];
   const perJob: Record<JobDef["id"], string[]> = {
@@ -176,8 +184,23 @@ function workOrder(job: JobDef, cycleId: string): string {
       "Authorized write path: one docs-only branch + PR — `git checkout -b docs/<name>`, `git add`/`git commit`, `git push origin <branch>`, `gh pr create`. Open the PR and STOP: never merge it.",
       "Reporting channel: the PR body (plus your five-field completion report on stdout).",
     ],
+    dedupe: [
+      "Target: this week's backlog dedupe pass, per your charter. You are the semantic pass only. The script runs the deterministic passes and does every tracker read and write.",
+      "Commands, each the WHOLE command on ONE LINE: first `bun scripts/backlog-dedupe.ts candidates`, then `bun scripts/backlog-dedupe.ts run`, adding `--semantic-b64 <base64 of a JSON array of {\"member\":N,\"target\":M} pairs>` only when the candidates output says the semantic pass is due and you found pairs. Standard base64, no line wrapping, no heredoc, no pipe.",
+      "Whether anything reaches the tracker is the operator's gates.json dedupePosting gate, OFF by default. With it off the run is a dry run: it writes $SCHEDULER_STATE_DIR/reports/backlog-dedupe.md and nothing else. You cannot and must not change that.",
+      "Reporting channel: the script's own report, plus your five-field completion report on stdout carrying the `run` command's JSON summary.",
+    ],
   };
-  return [...common, ...perJob[job.id], FILING_HOWTO, OBSERVE_AND_FILE_ONLY].join("\n\n");
+  // Fix round on PR #143: dedupe holds no file-finding.ts grant (jobs.ts) —
+  // the script is the only thing that writes to the tracker, gated by
+  // dedupePosting, not by the separate (default-on) fileFindings gate
+  // FILING_HOWTO assumes. Teaching that how-to here would name a command its
+  // closed allowedTools list denies, and OBSERVE_AND_FILE_ONLY's own sentence
+  // ("file via `bun scripts/file-finding.ts`") would be actively wrong for
+  // this job — its charter's own NEVER section already forbids commenting,
+  // editing and dispatching. See seam-manifest.md §9.
+  const filingTail = job.id === "dedupe" ? [] : [FILING_HOWTO, OBSERVE_AND_FILE_ONLY];
+  return [...common, ...perJob[job.id], ...filingTail].join("\n\n");
 }
 
 export function composePrompt(

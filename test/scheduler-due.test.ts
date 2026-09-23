@@ -39,7 +39,7 @@ describe("due evaluation (A2)", () => {
     const anchors = freshAnchors();
     const main: MainStatus = { headSha: "abc", headCommitAt: 0, newSubjectsSinceAnchor: [] };
     const r = dueJobs(JOBS, anchors, utc(18, 9, 0), main);
-    expect(firedIds(r)).toEqual(["standup", "strategy", "council"]);
+    expect(firedIds(r)).toEqual(["standup", "strategy", "council", "dedupe"]);
     expect(r.absorb).toEqual([{ jobId: "steward", sha: "abc" }]);
   });
 
@@ -53,6 +53,7 @@ describe("due evaluation (A2)", () => {
     anchors.standup.lastAttemptAt = utc(18, 8, 7);
     anchors.strategy.lastAttemptAt = utc(18, 6, 27);
     anchors.council.lastAttemptAt = utc(18, 6, 19);
+    anchors.dedupe.lastAttemptAt = utc(13, 3, 47); // weekly: its last Monday point, none crossed in this walk
     // Scheduler wakes ~26h later.
     const wake = utc(19, 10, 40);
     expect(firedIds(dueJobs(JOBS, anchors, wake, main))).toEqual(["standup", "strategy", "council"]);
@@ -73,6 +74,7 @@ describe("due evaluation (A2)", () => {
     anchors.standup.lastAttemptAt = utc(18, 8, 7);
     anchors.strategy.lastAttemptAt = utc(18, 8, 7);
     anchors.council.lastAttemptAt = utc(18, 8, 7);
+    anchors.dedupe.lastAttemptAt = utc(18, 8, 7);
     expect(firedIds(dueJobs(JOBS, anchors, utc(18, 9, 57), main))).toEqual([]);
     expect(firedIds(dueJobs(JOBS, anchors, utc(18, 10, 7), main))).toEqual(["standup"]);
   });
@@ -85,6 +87,7 @@ describe("due evaluation (A2)", () => {
     anchors.standup.lastAttemptAt = utc(18, 10, 7);
     anchors.strategy.lastAttemptAt = utc(18, 6, 27);
     anchors.council.lastAttemptAt = utc(18, 6, 19);
+    anchors.dedupe.lastAttemptAt = utc(18, 6, 19);
     expect(firedIds(dueJobs(JOBS, anchors, utc(18, 12, 0), main))).toEqual([]); // :07 not yet
     expect(firedIds(dueJobs(JOBS, anchors, utc(18, 12, 7), main))).toEqual(["standup"]);
     anchors.standup.lastAttemptAt = utc(18, 12, 7);
@@ -96,6 +99,21 @@ describe("due evaluation (A2)", () => {
     anchors.strategy.lastAttemptAt = utc(19, 0, 27);
     expect(firedIds(dueJobs(JOBS, anchors, utc(19, 6, 9), main))).toEqual([]); // 06:19 not yet
     expect(firedIds(dueJobs(JOBS, anchors, utc(19, 6, 19), main))).toEqual(["council"]);
+  });
+
+  // Catches (#1135): the weekly dedupe ceremony drifting off its Monday 03:47
+  // UTC phase, or firing more than once a week. July 2026: the 13th and the
+  // 20th are Mondays.
+  test("dedupe fires weekly at Monday 03:47 UTC, once", () => {
+    const anchors = freshAnchors();
+    const main = quietMain(anchors);
+    for (const id of ["standup", "strategy", "council"] as const) anchors[id].lastAttemptAt = utc(31, 0, 0); // attempted after every point in this walk
+    anchors.dedupe.lastAttemptAt = utc(13, 3, 47);
+    expect(firedIds(dueJobs(JOBS, anchors, utc(20, 3, 37), main))).toEqual([]); // Monday, 10 min early
+    expect(firedIds(dueJobs(JOBS, anchors, utc(20, 3, 47), main))).toEqual(["dedupe"]);
+    anchors.dedupe.lastAttemptAt = utc(20, 3, 47);
+    expect(firedIds(dueJobs(JOBS, anchors, utc(26, 23, 59), main))).toEqual([]); // the rest of the week
+    expect(firedIds(dueJobs(JOBS, anchors, utc(27, 3, 47), main))).toEqual(["dedupe"]);
   });
 
   // Catches: mid-cluster steward spam (fires inside the settle window) AND the
