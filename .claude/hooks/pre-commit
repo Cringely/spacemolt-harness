@@ -126,6 +126,15 @@ if [ "$identity_state" -eq 0 ]; then
   identity_control || exit 1
 fi
 
+# Personal-term channel (#147), opt-in per clone; see identity-patterns.sh.
+# Paths and blobs are collected during the identity loop below and scanned
+# once, after the branch-name check, in a single grep.
+personal_terms_load
+personal_terms_state=$?
+[ "$personal_terms_state" -eq 1 ] && exit 1
+personal_terms_paths=
+personal_terms_bodies=
+
 # `d` (lowercase) excludes only Deleted -- there is no content left to scan
 # for a deleted path. ACMR (uppercase, include-only) used to be here and
 # silently dropped typechanges (symlink <-> regular file, T status): the
@@ -137,6 +146,7 @@ identity_staged=$(git -c core.quotePath=false diff --cached --name-only --diff-f
 if [ -n "$identity_staged" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    [ "$personal_terms_state" -eq 0 ] && personal_terms_paths="${personal_terms_paths}${f}${personal_terms_nl}"
     # Path channel first, and its own refusal never echoes $f -- if the path
     # itself is the identifying string, printing it back would be the leak
     # this gate exists to prevent.
@@ -163,6 +173,7 @@ if [ -n "$identity_staged" ]; then
     # removes the pathspec argument entirely along with the skip it gated.
     identity_body=$(git show ":$f" 2>/dev/null) || continue
     [ -n "$identity_body" ] || continue
+    [ "$personal_terms_state" -eq 0 ] && personal_terms_bodies="${personal_terms_bodies}${identity_body}${personal_terms_nl}"
     if identity_match "$identity_body"; then
       identity_line=$(printf '%s\n' "$identity_body" | grep -noiE "$IDENTITY_PATTERN" | head -n1 | cut -d: -f1)
       echo "pre-commit: refused. '$f' line $identity_line carries an identifying string." >&2
@@ -191,6 +202,32 @@ identity_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || identity
 if [ -n "$identity_branch" ] && identity_match "$identity_branch"; then
   echo "pre-commit: refused. The current branch name carries an identifying string." >&2
   exit 1
+fi
+
+# Personal-term channel (#147): one grep over the branch name, every staged
+# path and every staged blob together. Only on a hit does it look again to
+# say where; that second look ends in a refusal whatever it finds, so a scan
+# failing there cannot read as clean. A file is named only after the path
+# check, since a path can be what carries the term.
+if [ "$personal_terms_state" -eq 0 ]; then
+  personal_term_match "${identity_branch}${personal_terms_nl}${personal_terms_paths}${personal_terms_bodies}"
+  personal_terms_rc=$?
+  [ "$personal_terms_rc" -gt 1 ] && personal_term_scan_failed pre-commit "$personal_terms_rc"
+  if [ "$personal_terms_rc" -eq 0 ]; then
+    personal_term_match "$identity_branch" &&
+      personal_term_refuse pre-commit "The current branch name"
+    personal_term_match "$personal_terms_paths" &&
+      personal_term_refuse pre-commit "A staged file's path"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      personal_terms_body=$(git show ":$f" 2>/dev/null) || continue
+      personal_term_match "$personal_terms_body" &&
+        personal_term_refuse pre-commit "'$f'"
+    done <<EOF
+$identity_staged
+EOF
+    personal_term_refuse pre-commit "Staged content"
+  fi
 fi
 
 # core.quotePath=false: its default (true) makes git emit non-ASCII paths as

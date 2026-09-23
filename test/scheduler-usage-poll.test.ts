@@ -219,6 +219,7 @@ function makeTickDirs() {
     strategy: { ...defaultAnchor(), lastAttemptAt: T },
     council: { ...defaultAnchor(), lastAttemptAt: T },
     steward: { ...defaultAnchor(), stewardAnchorSha: "aaa" },
+    dedupe: { ...defaultAnchor(), lastAttemptAt: T },
   };
   saveAnchors(stateDir, quiet);
   return { checkoutDir, secretsDir, stateDir };

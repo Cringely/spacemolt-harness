@@ -69,9 +69,10 @@ export interface TickResult {
 /** Written on every real tick; --health reads it (positive signal, L-17). */
 export const LAST_TICK_FILE = "last-tick";
 
-// ponytail: 3h stale threshold — the four job timeouts sum to 2h (15+30+45+30
-// min), so a lock older than 3h is a crashed tick, not a slow one. A crashed
-// tick therefore silences the scheduler for at most 3h before self-healing.
+// ponytail: 3h stale threshold. The five job timeouts sum to 2.5h
+// (15+30+45+30+30 min), so a lock older than 3h is a crashed tick, not a slow
+// one. A crashed tick therefore silences the scheduler for at most 3h before
+// self-healing.
 export const LOCK_STALE_MS = 3 * 3_600_000;
 
 // 14d prune horizon (squad checklist 5; receipt in the plan): spans two

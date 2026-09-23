@@ -3,10 +3,11 @@ import type { Store, PlanCursor } from "../store/store";
 import { PlanSchema, type Plan } from "../registry/plan";
 import type {
   Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
+  FleetDistress,
 } from "../planner/types";
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
-import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
+import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
 import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
@@ -14,7 +15,9 @@ import {
 } from "./stations";
 import { failureClass } from "../server/failures";
 import { evaluateWake, isNoBuyersBlock, NO_BUYERS_CLASS, blockedOutcomeKey, type BlockedOutcome, type WakeReason } from "./wake";
-import { evaluateReflex, reflexGaveUpAt, type ReflexConfig, type ReflexFailureRecord } from "./reflex";
+import {
+  evaluateReflex, reflexGaveUpAt, classifyReflexFailureCause, type ReflexConfig, type ReflexFailureRecord,
+} from "./reflex";
 import { admitPlan, normalizeGiftTargets, type FleetPilot, type PlanRewrite } from "./normalize-plan";
 import { extractChatMessages } from "./chat";
 import { shouldEmitSnapshot, snapshotKey, type SnapshotThrottleState } from "./snapshot-throttle";
@@ -1454,8 +1457,18 @@ export class Agent {
       ? this.store.latestEventPerPayloadKey(this.id, "reflex_failed", "key", REFLEX_FAILURE_LOOKBACK)
           .map((e) => e.payload as ReflexFailureRecord)
       : [];
-    const fuelGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel");
-    const hullGaveUpHere = stationKey !== null && reflexGaveUpAt(recentReflexFailures, stationKey, "repair");
+    // Issue #1115: this tick's known credits balance, threaded through so an
+    // affordability give-up can invalidate itself once credits have risen
+    // past what failed (see reflexGaveUpAt's doc comment, reflex.ts).
+    // creditsKnown false (a malformed/missing player block, #1030's guard)
+    // passes undefined -- no positive evidence, so the latch cannot clear on
+    // a guess, same fail-toward-the-existing-block direction the #94 fitment
+    // guards use for missing data.
+    const currentCredits = status?.creditsKnown ? status.credits : undefined;
+    const fuelGaveUpHere = stationKey !== null
+      && reflexGaveUpAt(recentReflexFailures, stationKey, "refuel", currentCredits);
+    const hullGaveUpHere = stationKey !== null
+      && reflexGaveUpAt(recentReflexFailures, stationKey, "repair", currentCredits);
 
     // Issue #670: this ship's own measured fuel-per-jump (undefined until its
     // first completed jump, or after a switch_ship until the new hull's
@@ -1480,7 +1493,7 @@ export class Agent {
     let reflexSpentTick = false;
     if (reflex) {
       reflexSpentTick = true;
-      const fired = await this.fireReflex(reflex, stationKey);
+      const fired = await this.fireReflex(reflex, stationKey, currentCredits);
       if (fired) return; // succeeded: this tick's mutation budget spent, wake suppressed entirely
     }
 
@@ -1939,7 +1952,17 @@ export class Agent {
   // a non-base POI, e.g. an asteroid belt): the give-up can never arm without
   // a station key either (see the call site's `stationKey !== null` guards),
   // so an ungrouped row here is simply never queried back.
-  private async fireReflex(reflex: ReturnType<typeof evaluateReflex>, stationKey: string | null): Promise<boolean> {
+  //
+  // currentCredits (issue #1115): this tick's known credits balance, the same
+  // value the give-up read above computed (`undefined` when creditsKnown is
+  // false) -- recorded on a failed fire as `creditsAtFailure` so a LATER
+  // tick's give-up read can tell whether credits have since risen past it.
+  // Only meaningful on an affordability failure (see classifyReflexFailureCause
+  // below); recorded unconditionally anyway, since the row's own `cause` field
+  // is what gates whether anything ever reads it back.
+  private async fireReflex(
+    reflex: ReturnType<typeof evaluateReflex>, stationKey: string | null, currentCredits?: number,
+  ): Promise<boolean> {
     if (!reflex) return false;
     try {
       await this.api.action(reflex.action);
@@ -1956,11 +1979,18 @@ export class Agent {
       // client itself didn't wrap) is conservatively left untagged
       // (terminal: false) rather than guessed at.
       const terminal = e instanceof SpacemoltError && classifyGameError(e).kind === "blocked";
+      // Issue #1115: classified from the SAME message a non-SpacemoltError
+      // has none of, so it's undefined there too -- an untagged terminal
+      // failure (like an untagged non-terminal one) just never matches
+      // reflexGaveUpAt's invalidation branch and latches permanently, the
+      // pre-#1115 behavior.
+      const cause = e instanceof SpacemoltError ? classifyReflexFailureCause(e.message) : undefined;
       this.emit("reflex_failed", {
         action: reflex.action, reason: reflex.reason,
         message: e instanceof Error ? e.message : String(e),
         stationKey, terminal,
         key: stationKey !== null ? `${stationKey}:${reflex.action}` : undefined,
+        cause, creditsAtFailure: currentCredits,
       });
       return false;
     }
@@ -2239,6 +2269,43 @@ export class Agent {
   // configured reserve threshold so callers keep a single-arg call.
   private fuelBelowReserve(status: StatusSnapshot): boolean {
     return fuelBelowReserve(status, this.config.fuelReservePct ?? AGENT_DEFAULTS.fuelReservePct);
+  }
+
+  // Fleet-rescue briefing (issue #1114): the read half of the #703 gift path
+  // -- every agent in this harness shares ONE Store (src/main.ts) and stamps
+  // its own status_snapshot on every wake (Layer 5 above), so a fleet-mate's
+  // last-known fuel/credits are already sitting in the shared events table
+  // under ITS agent id. This reads them back for every OTHER roster pilot and
+  // flags one on the sole trigger: credits below FLEET_REFUEL_FLOOR_CR
+  // (digest.ts). A bare zero-fuel reading is NOT its own trigger (round-2
+  // PR #142 review): the rendered remedy is a credits gift, and a fleet-mate
+  // at zero fuel with credits already at or above the floor is asked for
+  // nothing a gift would fix -- a stranded ship stays parked until fuel
+  // reaches it, and an empty station tank refuses refuel regardless of
+  // balance (upstream/guides/fuel.md:202, :136). The credits floor alone
+  // still catches the live incident (0 fuel, 5cr sits well under it).
+  // Returns bounded numeric + allowlisted-username data only -- see
+  // FleetDistress (planner/types.ts) for the security note on why nothing
+  // else rides this.
+  //
+  // Fails closed the #94 way and never throws: no roster configured, no
+  // snapshot yet for a pilot, or a snapshot whose credits/fuel aren't both
+  // numbers (an older build's payload shape, a partial write) all skip that
+  // pilot silently rather than rendering a fabricated distress line.
+  private fleetDistress(): FleetDistress[] {
+    const roster = this.config.fleetRoster;
+    if (!roster?.length) return [];
+    const out: FleetDistress[] = [];
+    for (const pilot of roster) {
+      if (pilot.id === this.id) continue; // your own state is already in Status above
+      const rows = this.store.recentEventsByType(pilot.id, "status_snapshot", 1);
+      const payload = rows[0]?.payload as { credits?: unknown; fuel?: unknown } | undefined;
+      if (!payload || typeof payload.credits !== "number" || typeof payload.fuel !== "number") continue;
+      if (payload.credits < FLEET_REFUEL_FLOOR_CR) {
+        out.push({ username: pilot.username, fuel: payload.fuel, credits: payload.credits });
+      }
+    }
+    return out;
   }
 
   /**
@@ -2601,6 +2668,10 @@ export class Agent {
         // the status snapshot as the fallback for a replan whose get_system
         // failed.
         knownStations: knownStationSystems(this.stationSightings, surroundings?.systemId ?? statusSnap?.systemId),
+        // Fleet-rescue briefing (issue #1114): see Agent.fleetDistress for the
+        // selection and the security note on why only numbers + a vetted
+        // username ride this field.
+        fleetDistress: this.fleetDistress(),
       };
       const raw = await planner.plan(ctx);
       // Offline planner eval (issue #263, born from SM-9): record the exact

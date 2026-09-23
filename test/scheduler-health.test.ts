@@ -47,6 +47,7 @@ function fixture() {
       failStreak: 0,
       stewardAnchorSha: "abc1234",
     },
+    dedupe: defaultAnchor(),
   });
   writeFileSync(join(stateDir, LAST_TICK_FILE), String(Date.UTC(2026, 6, 18, 8, 57)));
   writeFileSync(join(stateDir, "lock"), String(Date.UTC(2026, 6, 18, 8, 57)));
@@ -70,6 +71,7 @@ describe("--health probe (D-Health)", () => {
   test("gates summary, stop/lock presence, and last tick time are explicit", () => {
     const out = health(fixture(), JOBS, NOW);
     expect(out).toContain("filing ON / dispatch OFF / amend NEVER");
+    expect(out).toContain("dedupe posting OFF"); // #1135 ships gated off; the probe says so
     expect(out).toContain("lock: PRESENT");
     expect(out).toContain("stop: absent");
     expect(out).toContain("last tick: 2026-07-18T08:57:00.000Z (3m ago)");

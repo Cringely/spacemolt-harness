@@ -11,7 +11,7 @@ import { loadBreakers } from "./breaker";
 import { ledgerTotals, loadLedger, sweepLedger } from "./dispatch-ledger";
 import { latestGridPoint } from "./due";
 import { readFilingLog, type FilingLogEntry } from "./filing";
-import { canDispatch, canFile, loadGates } from "./gates";
+import { canDispatch, canFile, canPostDedupe, loadGates } from "./gates";
 import type { JobDef } from "./jobs";
 import { JOB_IDS, LOCK_FILE, STOP_FILE, loadAnchors, type JobAnchor } from "./state";
 import { LAST_TICK_FILE } from "./tick";
@@ -84,7 +84,7 @@ export function health(stateDir: string, jobs: JobDef[], now: number): string {
     `stop: ${existsSync(join(stateDir, STOP_FILE)) ? "PRESENT (scheduler paused)" : "absent"} | lock: ${existsSync(join(stateDir, LOCK_FILE)) ? "PRESENT (tick running, or crashed within the stale window)" : "absent"}`,
     // canAmend is unconditionally false by construction (gates.ts, verdict
     // (c)) — printed as the literal NEVER, not a state read.
-    `gates: filing ${canFile(gates) ? "ON" : "OFF"} / dispatch ${canDispatch(gates) ? "ON" : "OFF"} / amend NEVER`,
+    `gates: filing ${canFile(gates) ? "ON" : "OFF"} / dispatch ${canDispatch(gates) ? "ON" : "OFF"} / amend NEVER / dedupe posting ${canPostDedupe(gates) ? "ON" : "OFF"}`,
     filingSummary(filingLog, now),
   ];
 

@@ -89,14 +89,14 @@ reading lists, the same way the human-made report already treats them.
 The ceremony reuses the primitives `filing.ts` already exports (`entityAnchors`, `keySegments`,
 `isNearDuplicate`) rather than writing a second matcher beside the first, with two seams those
 primitives don't cover, both stemming from the same fact: they tokenize a kebab-case dedup key, and
-an issue title is prose. The first seam is segmentation, closed by an adapter below. The second is
-the anchor gate, which cannot be reused as is and gets its own title-side extractor, argued in full
-further down this section. Closing that seam needs a title-to-key adapter, `titleToSegments()`, named here
-because leaving that seam unnamed is exactly where a second matcher gets born: lowercase, strip
-punctuation, split on whitespace, drop the same severity and staleness words `keySegments`
-already strips. `titleToSegments()` stays a pure adapter into the existing scoring math, never a
-second scorer. Two dedup implementations in one codebase would be exactly the drift class this
-spec exists to close, one level up.
+an issue title is prose. The first seam is segmentation. Closing it needs a title-to-key adapter,
+`titleToSegments()`, named here because leaving that seam unnamed is exactly where a second
+matcher gets born: lowercase, strip punctuation, split on whitespace, drop the same severity and
+staleness words `keySegments` already strips. `titleToSegments()` stays a pure adapter into the
+existing scoring math, never a second scorer. Two dedup implementations in one codebase would be
+exactly the drift class this spec exists to close, one level up. The second seam is the anchor
+gate, which cannot be reused as is and gets its own title-side extractor, argued in full further
+down this section.
 
 Any issue still carrying an `sm-dedup:` marker is already solved, the cheapest pass there is, and
 the ceremony skips it unless a new candidate merges into it.
@@ -127,7 +127,11 @@ condition, near-identical wording) come out non-empty and disjoint, and the conf
 would split the very cluster this section uses as its example. Run against real titles, #707 returns `{pr83}`, #1084
 returns `{pr107}`, and #713 (`Doc PR cluster stalled: PR #83 red CI, PR #81 unreviewed`) returns
 `{pr83, pr81}`, because the match is global and each qualifying entity-word occurrence contributes
-its own anchor.
+its own anchor. A number in a list that carries no entity word of its own is not an anchor, so
+`PRs #107/#108` yields `{pr107}` alone. Across all 49 anchor-bearing snapshot titles that splits
+nothing, since every cluster lists its numbers in the same order, but a title written
+`PRs #108/#107` would anchor as `{pr108}` and conflict with the rest of its cluster. The fragility
+is latent, not observed.
 
 The gate built on top of it also has to change, because exact set equality is the wrong test over
 prose. `isNearDuplicate`'s gate passes two empty sets as equal, correctly, for a minted key, where
@@ -253,9 +257,12 @@ Cold start against today's 83 clusters (389 members, 249 of them in the 43 high-
 clusters, the rest in the 40 medium- and low-confidence ones) proposes at the same 20-per-run
 budget "Cadence and cost" sets, largest cluster first. The high-confidence set alone takes
 roughly 13 weekly runs to fully propose, and the full 83 clusters roughly 20. The delta gate
-described in "Cadence and cost" does not apply during this drain. A run always spends its budget
-against the not-yet-proposed set first, regardless of how many issues opened since the last run,
-so a quiet week cannot stall a cold start that has not yet finished.
+described in "Cadence and cost" never holds this drain back, because it gates only the semantic
+pass. The deterministic pass re-derives the clusters and spends the run's budget against the
+not-yet-proposed set every run, however few issues opened since the last one, so a quiet week
+cannot stall a cold start that has not yet finished. The semantic pass keeps its gate during the
+drain: on a backlog that grows every week, "still draining" has no mechanical end, and exempting
+the drain would run the one pass that costs a model call every week indefinitely.
 
 The not-yet-proposed set is never stored as a set. The second pass is deterministic and calls no
 model (see "Matching"), so re-deriving all 83 clusters from a fresh fetch costs nothing: every run
@@ -275,7 +282,11 @@ same steward against itself, names the cost of a ceremony that reports even when
 nothing: a branch, CI runs, and a review obligation spent on a negative. This ceremony's report
 updates in place, one issue edited, never a fresh one per run, and only when the cluster set
 actually changed from the last run. A stable backlog gets silence, not a weekly "checked, all
-clear."
+clear." The cluster set counts as changed when the report's cluster table does, and that table
+shows which members already carry a proposal, so a run that posted rewrites it. The high-water
+mark advances only when the report is rewritten. A week whose cluster set did not change leaves
+the report and its mark untouched, and the next run counts both weeks' new issues, which errs
+toward running the semantic pass sooner, never toward skipping it.
 
 ## Cadence and cost
 

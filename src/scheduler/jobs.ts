@@ -19,7 +19,7 @@
 // file-finding.ts, which is unaffected (it runs as the harness process, not
 // through the agent's Bash allowedTools).
 export interface JobDef {
-  id: "standup" | "strategy" | "council" | "steward";
+  id: "standup" | "strategy" | "council" | "steward" | "dedupe";
   schedule: { kind: "grid"; periodMs: number; offsetMs: number } | { kind: "main-merge"; settleMs: number };
   charterPath: string;
   model: "haiku" | "sonnet";
@@ -212,6 +212,35 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/steward-prep.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(vale *)",
+    ],
+  },
+  {
+    // #1135: the weekly backlog dedupe ceremony
+    // (docs/superpowers/specs/2026-09-22-backlog-dedupe-ceremony.md). The
+    // spawned agent is the spec's third, semantic pass and nothing more: the
+    // deterministic passes and every tracker write live in
+    // scripts/backlog-dedupe.ts, which posts only when the operator's
+    // gates.json dedupePosting gate is on (default OFF: a dry run that reads
+    // the tracker and writes a local report). No gh grant at all, and — fix
+    // round on PR #143 — no `Bash(bun scripts/file-finding.ts *)` grant
+    // either: that script writes to the tracker on ITS OWN gate
+    // (fileFindings, default ON), a different switch from dedupePosting, so
+    // holding it let a dedupePosting-off run still file issues and post bump
+    // comments straight from untrusted issue excerpts. backlog-dedupe.ts is
+    // now the only thing that talks to the tracker for this job, and the
+    // agent hands it bare issue-number pairs (see seam-manifest.md §9).
+    id: "dedupe",
+    // Weekly, Mondays 03:47 UTC (epoch day 0 was a Thursday, so +4 days).
+    schedule: { kind: "grid", periodMs: 7 * 24 * HOUR, offsetMs: 4 * 24 * HOUR + 3 * HOUR + 47 * MIN },
+    charterPath: "docs/charters/backlog-dedupe.md",
+    model: "sonnet",
+    patSecret: "gh_pat_readcomment",
+    timeoutMs: 30 * MIN,
+    allowedTools: [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(bun scripts/backlog-dedupe.ts *)",
     ],
   },
 ];

@@ -5,7 +5,7 @@ import { JETTISON_VALUE_FLOOR, SPARSE_LOCK_MULTIPLIER, canLockDeposit, totalMini
 import { failureClass } from "../server/failures";
 import { FUEL_PRICE_FLOOR_CR, LISTING_FEE_BPS } from "../agent/net-trip";
 import { catalog } from "../catalog/catalog";
-import type { PlanContext, ChatMessage, ActiveMissionStatus } from "./types";
+import type { PlanContext, ChatMessage, ActiveMissionStatus, FleetDistress } from "./types";
 import type { ActiveMissionObjective, FittedModule, LocationInfo, StatusSnapshot } from "../client/client";
 
 // Prompt-injection boundary (SECURITY, security-baseline.md's "LLM output is
@@ -31,6 +31,17 @@ export const UNTRUSTED_TEXT_SNIPPET_LEN = 200;
 // possible without guessing them). Still bounded so one hostile or bloated
 // listing can't pad out the whole prompt.
 export const LISTING_TEXT_SNIPPET_LEN = 1500;
+// Fleet-rescue briefing (issue #1114): the credits floor below which
+// Agent.fleetDistress (agent.ts) flags a fleet-mate even when its fuel isn't
+// literally zero. Sourced from the WORST published station price
+// (upstream/guides/fuel.md:126, "< 10% tank fill" = 20cr/unit) rather than
+// net-trip.ts's FUEL_PRICE_FLOOR_CR (2cr/unit, the BEST case) -- a near-empty
+// tank is exactly the band that price row describes, so the cheap floor
+// would clear pilots who cannot actually afford fuel at their real station.
+// Excludes empire fuel tax (upstream/guides/fuel.md:132, per-empire, not
+// captured live): the real threshold a given pilot faces can only be HIGHER,
+// so this stays a lower bound and can under-flag, never fabricate distress.
+export const FLEET_REFUEL_FLOOR_CR = 20;
 /**
  * The clip half of quoteUntrusted, exported so a second consumer bounds text to
  * the SAME length the prompt does rather than inventing its own number (the
@@ -183,13 +194,14 @@ const ORE_VALUE_SCALE = VALUED_ORES.length
  * Deterministic prompt text built from PlanContext. Enumerated inputs (every
  * field on PlanContext, per src/planner/types.ts): persona, goals, wake.reason,
  * wake.detail, statusSummary, recentEvents, instruction, standingInstruction,
- * surroundings, cargo,
+ * standingInstructionPinned, surroundings, cargo,
  * previousGoal, chatMessages, missionsText, activeMissionsText, activeMissions,
  * currentPoiDepositIds (replay-only legacy, read as the deposit-id fallback),
  * currentPoiDeposits, nearbyText,
  * lowFuel, marketRows, unavailableItemsAtStation, shipFit, fittedModules,
- * shipyardText, purchaseEstimates, marketInsightsText, locationInfo
- * -- all twenty-seven appear below, so nothing the agent knows
+ * shipyardText, purchaseEstimates, marketInsightsText, locationInfo,
+ * knownStations, fleetDistress
+ * -- all thirty appear below, so nothing the agent knows
  * is silently dropped from what the planner sees. No caching of ctx itself:
  * agent.ts builds a fresh PlanContext object on every replan() call
  * (src/agent/agent.ts's replan method), so buildDigest has nothing stale to
@@ -327,6 +339,17 @@ export function buildDigest(ctx: PlanContext): string {
       `Sequence: dock at a station selling them, buy the exact id (buy id=fuel_cell -- ` +
       `singular; 'fuel_cells' is NOT an item), then refuel.`
     );
+  }
+  // Fleet-rescue briefing (issue #1114): the read half of the #703 gift path
+  // -- rendered right under your own Status/fuel lines, the same priority as
+  // the low-fuel advisory above, so "a fleet-mate needs help" reads as a
+  // state fact rather than sitting buried under cargo/market sections a
+  // thrash-shortened prompt may never reach. Gated on a non-empty array:
+  // Agent.fleetDistress returns [] for "no roster configured", "no
+  // fleet-mate has snapshotted yet", and "everyone is fine" alike (#94 --
+  // absence is never a verdict, so none of those three renders a section).
+  if (ctx.fleetDistress?.length) {
+    lines.push(renderFleetDistress(ctx.fleetDistress));
   }
   // SM-6 fix: statusSummary carries cargoUsed/cargoCapacity as bare numbers
   // ("cargo 19/50") -- no item names, so a planner (especially a cheap-tier
@@ -1557,6 +1580,31 @@ function renderChatMessages(msgs: ChatMessage[]): string {
 // ('ore_common', which is not a real catalog id) rather than admit it hadn't
 // been shown one. Producer fix, same shape as FUEL_CELL_IDS_LINE below: give
 // the planner the id instead of relying on prose to say "don't guess".
+// Fleet-rescue briefing (issue #1114): the #703 gift path's read half. Each
+// entry is one fleet-mate Agent.fleetDistress (agent.ts) selected as
+// credits < FLEET_REFUEL_FLOOR_CR, off that pilot's own last status_snapshot
+// in the SHARED store (src/main.ts wires every agent to one Store instance)
+// -- never a live game query.
+//
+// SECURITY: this renders ONE agent's data into ANOTHER agent's prompt, the
+// exact seam #681/#1116 are about (a filled-in game template, or another
+// agent's free text, obeyed as if it were an instruction). Nothing here is
+// free text: `username` is the same fleet-roster string the credit-gift
+// guard already treats as safe to echo (executor.ts's fleetUsernames
+// message), and `fuel`/`credits` are two numbers off a typed StatusSnapshot,
+// never a fleet-mate's plan, chat, or strategy. The remedy is named in PROSE
+// only -- never as a filled-in action call, which is exactly what the #681
+// create_buy_order incident and #1116 warn against.
+function renderFleetDistress(entries: readonly FleetDistress[]): string {
+  const rows = entries
+    .map((e) => `${e.username} (${e.fuel} fuel, ${e.credits} credits)`)
+    .join(", ");
+  return (
+    `FLEET DISTRESS: a fleet-mate may be stranded and unable to refuel on its own -- ${rows}. ` +
+    `If you can spare it, a credits gift via the fleet gift action would let them refuel.`
+  );
+}
+
 function renderCargoManifest(cargo: NonNullable<PlanContext["cargo"]>): string {
   const items = cargo.items.map((i) => `${i.quantity}x ${i.name} (id: ${i.itemId})`).join(", ");
   // Sell/dock-precondition fix (2026-07-12): dropped the false "sellable at any

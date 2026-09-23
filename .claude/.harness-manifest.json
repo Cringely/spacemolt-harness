@@ -1,5 +1,4 @@
 {
-  "coreCommit": "3ccd2e5",
   "accepted": {
     "agents/adversarial-reviewer.md": "315494029C751462E1409173CB80D9BD74603F8339C38EEFC4D70D55CFD6572D",
     "agents/doc-steward.md": "AB764BB7DA800EED7494AA4FFD944170BDFBFF5D794F1B851AA24AE89091DE38",
@@ -11,53 +10,22 @@
     "hooks/wave-close-handoff.sh": "E7F0A1CBB80108A96A577D4FCB12C480863BE0FB18A0B8EE2C2345461D11F43D",
     "guardrails.md": "E7A7CE550AA590308681870290B7B9F1BF15977F11A046E1E457829AA159E23E"
   },
-  "coreRepo": "E:\\projects\\agent-harness-core",
+  "coreCommit": "84fcf89",
   "files": {
     "scratch/.gitignore": "A9CC1EA20FE525A1DD1BE4567D1F8CB1015855A80C207CB77E82B887B24CAD4A",
     "hooks/agent-write-scope.ts": "A82125C48E1A8968B5F4DA79BC8A982CE213A2859935F18385CFF516105C880F",
     "hooks/memory-transition-log.ts": "071778B33D39B6AC2A817007C737219AF3B735C7472676188D4C3C63CC13759B",
-    "hooks/pre-commit": "BFCACEDB82CD33DC49041BA244E48E498253EF7D3C1DA36AC3C3A93FCFE0AD7C",
+    "hooks/pre-commit": "D923EB04A746C8BBB293FCDA1F3FFA8FA53CB6BC3C4A1004988C0287030C8CEE",
     "hooks/review-gate.ts": "68E766E90B26480F25DF0908588B7960BA970741CA2058F3BB869597EF81F549",
     "agents/research-scout.md": "4EE211D29CAED3B19C05F5897239D5C7BB15EE9B3D9E59F342BEE4C311BD8E6E",
     "hooks/model-tier-gate.ts": "611860D790CAB54A9A3675E03CDD1D225F5155AB3417019F833B02004FA12E82",
     "hooks/agent-name.ts": "5A798D5C710B69B499CC5E70751ECD90CFED0B771F4DECE6E10D63F76C0F3455",
     "hooks/commit-msg": "E7AF2A2352DC7A722288F2824938133F02729BF92C6AC595408422BDB2BED705",
-    "hooks/identity-patterns.sh": "9CB980711EBD72CD737C8E987C02EACE72D263B16B758ED3D3649DBBE540B694",
-    "hooks/pre-push": "BF10B2E42AFB225923B56844C45A8964C2F39E7BB16FFD315B797919DC8E1D53",
-    "hooks/session-start-drift-check.sh": "44B2B6C5C87428699A629CDB3BCEB53593659D55402AE82E166C44A260E51BAB",
+    "hooks/identity-patterns.sh": "3F601DCE727989978F43147B4076B15A763E44A41A9715EAF9A5E1287AE27F7A",
+    "hooks/pre-push": "51468CBABE34BE284E74E9E6EBE89D615E53C737C3FBC23D30E90401578F7E95",
+    "hooks/session-start-drift-check.sh": "4E9CE7BCA8D55CB313FD4F1433BD251312B9A4B24845881F0381C572CF04CE29",
     "hooks/transcript-utils.ts": "2028754229ED79226343DDBDD84B22175949500660C92EDA30CF65DDB74351CD",
-    "ceremony-ledger.json": "2646070F9A480F0B72E9012900F87078AC3DBD12BCCE49740F6FE79C9EE72EDD"
-  },
-  "stackDetected": {
-    "scannedAt": "2026-09-11T02:40:06Z",
-    "plugins": [
-      "caveman/caveman",
-      "claude-plugin-marketplace/bash-master",
-      "claude-plugin-marketplace/docker-master",
-      "claude-plugin-marketplace/git-master",
-      "claude-plugin-marketplace/powershell-master",
-      "claude-plugins-official/claude-code-setup",
-      "claude-plugins-official/claude-md-management",
-      "claude-plugins-official/code-review",
-      "claude-plugins-official/code-simplifier",
-      "claude-plugins-official/commit-commands",
-      "claude-plugins-official/context7",
-      "claude-plugins-official/feature-dev",
-      "claude-plugins-official/frontend-design",
-      "claude-plugins-official/github",
-      "claude-plugins-official/greptile",
-      "claude-plugins-official/microsoft-docs",
-      "claude-plugins-official/ralph-loop",
-      "claude-plugins-official/security-guidance",
-      "claude-plugins-official/superpowers",
-      "ponytail/ponytail",
-      "trailofbits/ask-questions-if-underspecified",
-      "trailofbits/audit-context-building",
-      "trailofbits/differential-review"
-    ],
-    "outputStyles": [
-      "Explanatory"
-    ],
-    "mcpServers": []
+    "ceremony-ledger.json": "2646070F9A480F0B72E9012900F87078AC3DBD12BCCE49740F6FE79C9EE72EDD",
+    ".gitignore": "748DE9B06123F65CA92F6BFDE4F00244F762917F77067DF7A90834479D5B816E"
   }
 }
