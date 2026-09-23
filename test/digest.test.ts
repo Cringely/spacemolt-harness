@@ -636,7 +636,16 @@ describe("buildDigest", () => {
     test("renders the active listing quoted, above the available listing, with the priority line", () => {
       const active = "1. Haul 20 iron_ore to Vega Depot (id: m-77, expires tick 9400)";
       const available = "1. Courier run to Haven (template_id: courier_haven)";
-      const text = buildDigest({ ...baseCtx, activeMissionsText: active, missionsText: available });
+      // #931 continuation: the id-sourcing clause below is gated on
+      // activeMissions parsing (see the dedicated describe block), so this
+      // realistic ctx supplies the paired parsed field -- the diverged state
+      // (text with no parsed missions) is pinned separately, not here.
+      const text = buildDigest({
+        ...baseCtx,
+        activeMissionsText: active,
+        missionsText: available,
+        activeMissions: [{ missionId: "m-77", expiresInTicks: 9400, objectives: [] }],
+      });
       expect(text).toMatch(activeSection);
       expect(text).toContain(`"${active}"`);
       // active section renders ABOVE the available listing
@@ -690,7 +699,15 @@ describe("buildDigest", () => {
     });
 
     test("the completion-priority instruction points at the mission_id field, not at position in the prose", () => {
-      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      // Paired ctx (activeMissions alongside activeMissionsText): the clause
+      // under test is gated on ctx.activeMissions?.length (#931 continuation,
+      // see the diverged-state test below), so this must be the realistic
+      // both-populated state or the fallback branch renders instead.
+      const text = buildDigest({
+        ...baseCtx,
+        activeMissionsText: active,
+        activeMissions: [{ missionId: "m-77", expiresInTicks: 9400, objectives: [] }],
+      });
       expect(text).toMatch(/mission_id from the "Mission objective check"/);
     });
 
@@ -703,10 +720,13 @@ describe("buildDigest", () => {
     });
 
     test("the parsed Mission objective check (never the raw listing) is where a real mission_id renders", () => {
-      // Realistic scenario: both reads populated from the same
-      // get_active_missions envelope, as Agent.gatherActiveMissions always
-      // does live -- activeMissionsText and activeMissions never diverge in
-      // production.
+      // The common-case scenario: both reads populated from the same
+      // get_active_missions envelope, as Agent.gatherActiveMissions does when
+      // the array-level safeParse succeeds. See the diverged-state test below
+      // for the case client.ts's own getActiveMissions comment documents --
+      // a parse failure or an envelope whose missions.active is absent/not-an-
+      // array leaves activeMissions undefined while activeMissionsText still
+      // carries the raw envelope prose.
       const text = buildDigest({
         ...baseCtx,
         activeMissionsText: active,
@@ -714,6 +734,32 @@ describe("buildDigest", () => {
       });
       expect(text).toContain("mission m-77");
       expect(text).not.toContain("mission haul_iron_ore_tier1");
+    });
+
+    // Dangling-instruction fix (review round, #931 continuation): the state
+    // client.ts's getActiveMissions documents as a real degradation path --
+    // activeMissionsText non-empty (a live envelope's `result` text or
+    // stringified structuredContent) while activeMissions stays undefined
+    // (a safeParse failure, or missions.active absent/not-an-array). Before
+    // this fix the completion-priority line named the parsed "Mission
+    // objective check" block as the ONLY sanctioned id source even here,
+    // where that block never renders (it is gated on
+    // ctx.activeMissions?.length) -- a dangling pointer plus a forbidding of
+    // the one id source actually present. Ablation: reverting the gate in
+    // digest.ts back to the unconditional instruction makes the second
+    // assertion below fail (the dangling phrase reappears) while the first
+    // assertion (a `toContain` on wording this branch never had before the
+    // fix) is the positive control proving the fallback line is not simply
+    // absent.
+    test("the diverged state (raw text present, mission_id parse failed) does not point at a block that never renders", () => {
+      const text = buildDigest({ ...baseCtx, activeMissionsText: active });
+      // Positive control: the fallback instruction actually fired.
+      expect(text).toContain("mission_id did not parse this tick");
+      expect(text).toMatch(/wait for a replan/i);
+      // The dangling reference itself: with no parsed block, the digest must
+      // never name it as the id source.
+      expect(text).not.toContain('mission_id from the "Mission objective check"');
+      expect(text).not.toMatch(/^Mission objective check/m);
     });
   });
 

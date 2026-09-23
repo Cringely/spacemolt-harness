@@ -849,9 +849,22 @@ const ActiveMissionObjectiveSchema = z.object({
 // reward parse comes back undefined must read as UNKNOWN, never as a
 // worthless 0-credit mission -- the digest's render gate (rewardCredits
 // !== undefined) is what keeps absence from reading as a verdict (#94).
+// Field-level `.catch(undefined)` (review fix, #931/#1051 follow-up): this
+// object sits INSIDE the per-mission schema that z.array(ActiveMissionSchema)
+// validates in one array-level safeParse (getActiveMissions below) -- a
+// divergent value on EITHER field (the spec marks nothing about their shape
+// beyond "number"/"integer additional properties", so a live payload is free
+// to disagree) used to fail the whole mission object, which failed the whole
+// array, which degraded every mission's id/objectives/progress to undefined
+// for the tick -- the exact dangling state #931's fix above depends on
+// staying rare. `.catch()` contains a field's own parse failure to that
+// field alone (verified on this repo's pinned zod 3.25.76: a divergent
+// `credits` value yields a rewards object missing only `credits`, `skill_xp`
+// and the rest of the mission parse normally) -- a cosmetic display value
+// must not be able to blank the one sanctioned mission_id source.
 const ActiveMissionRewardsSchema = z.object({
-  credits: z.number().optional(),
-  skill_xp: z.record(z.string(), z.number()).optional(),
+  credits: z.number().optional().catch(undefined),
+  skill_xp: z.record(z.string(), z.number()).optional().catch(undefined),
 }).optional();
 
 const ActiveMissionSchema = z.object({

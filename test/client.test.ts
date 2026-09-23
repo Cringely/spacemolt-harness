@@ -825,6 +825,44 @@ describe("SpacemoltClient", () => {
     expect(res.missions?.[0]?.rewardSkillXp).toBeUndefined();
   });
 
+  // Field-level catch (review fix, #931/#1051 follow-up). Neither reward
+  // field carries more shape constraint than "number" / "integer map" in the
+  // spec, so a live payload is free to disagree -- and #553 below makes the
+  // ARRAY parse all-or-nothing BY DESIGN for every other field, so before
+  // this fix one mission's cosmetic reward value could blank every mission's
+  // id/objectives/progress for the tick (the exact dangling state the #931
+  // digest fix, tested in digest.test.ts, depends on staying rare).
+  // `.optional().catch(undefined)` on each reward field contains a
+  // divergence to that field alone, proven here in both directions on two
+  // missions in the same array.
+  test("getActiveMissions() contains a divergent reward field to itself -- the rest of that mission, and every other mission, still parses (#931/#1051 follow-up)", async () => {
+    server = startFakeServer();
+    const client = makeClient();
+    await client.login("TestPilot", "pw");
+    server.setHandler("spacemolt", "get_active_missions", () => ({
+      result: "Active missions (2/5): ...",
+      structuredContent: {
+        missions: {
+          active: [
+            // credits diverges; skill_xp beside it parses fine.
+            { mission_id: "m-1", objectives: [], rewards: { credits: "a lot", skill_xp: { mining: 40 } } },
+            // skill_xp diverges (a non-number value in the map); credits beside it parses fine.
+            { mission_id: "m-2", objectives: [], rewards: { credits: 900, skill_xp: { mining: "forty" } } },
+          ],
+          max_missions: 5,
+        },
+      },
+    }));
+    const res = await client.getActiveMissions();
+    // Positive control: BOTH missions still parsed -- not the array-wide
+    // degradation #553 (below) pins for every other field.
+    expect(res.missions?.map((m) => m.missionId)).toEqual(["m-1", "m-2"]);
+    expect(res.missions?.[0]?.rewardSkillXp).toEqual({ mining: 40 });
+    expect(res.missions?.[0]?.rewardCredits).toBeUndefined();
+    expect(res.missions?.[1]?.rewardCredits).toBe(900);
+    expect(res.missions?.[1]?.rewardSkillXp).toBeUndefined();
+  });
+
   // Mission-progress bridge (issue #291), schema tolerance: an active array
   // whose entries don't parse (a live shape divergence) must degrade to
   // missions:undefined with the raw text still flowing -- the parse must

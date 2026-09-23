@@ -228,6 +228,25 @@ const SEAMS: Seam[] = [
       /field name, not the position/i],
   },
   {
+    guard: "mission_id id-source fallback when the parse degrades (#931 continuation: activeMissionsText " +
+      "and activeMissions are independent fields in client.ts's getActiveMissions -- a safeParse failure, " +
+      "or an envelope whose missions.active is absent/not-an-array, leaves activeMissions undefined while " +
+      "activeMissionsText still carries the raw envelope prose; the completion-priority line above used to " +
+      "name the parsed block as the only sanctioned id source even on that tick, when the block never " +
+      "renders)",
+    // The fallback phrase itself; it appears nowhere in the pre-fix file, and
+    // a revert of the gate (back to the unconditional instruction) removes it.
+    code: { file: "src/planner/digest.ts", marker: "mission_id did not parse this tick" },
+    anchors: [/mission_id did not parse/i, /wait for a replan/i, /does not render/i],
+  },
+  // No paired seam for the reward-field zod .catch() fix (#931/#1051
+  // follow-up, client.ts's ActiveMissionRewardsSchema): same exemption class
+  // as #291's own array-safeParse degradation above (client.ts,
+  // getActiveMissions) -- neither has a seam, because both are internal
+  // parsing-robustness fixes with no improv-mode behavioral analog. An
+  // improv-mode agent reads the raw API response directly; it has no zod
+  // array-level parse step to degrade, so nothing in section 4 changes.
+  {
     guard: "mission-priority ranking rule (#592: the digest's completion-priority line ranks active " +
       "missions by what each reward does for the operator's Goals, with the clock only as a tiebreak -- " +
       "it no longer calls an auto-assigned distress mission 'accepted' (missions.md:11,70) and no " +

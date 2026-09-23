@@ -54,6 +54,17 @@ function quoteUntrusted(text: string, maxLen: number = UNTRUSTED_TEXT_SNIPPET_LE
  * uses, the limit is enforced: a Map/Set reaching here throws loudly at the first
  * replan, so whoever adds one is told to extend the walk instead of losing data
  * in production.
+ *
+ * Clips object KEYS too (review fix, #1051 follow-up), not only values:
+ * rewardSkillXp is a skill_id -> XP map read off the game's response, so its
+ * keys are game-controlled text with no length bound (openapi-v2.json types
+ * skill_xp as `additionalProperties`, no pattern/enum), the first PlanContext
+ * field whose untrusted content sits in a key position. A key collision after
+ * clipping (two distinct keys sharing the same first `maxLen` chars) drops one
+ * entry silently -- accepted here because every field this walk has ever
+ * carried keys real game/skill ids well under `maxLen`, and the fallback
+ * (leaving keys unclipped) is the unbounded-persisted-event bug this function
+ * exists to close.
  */
 function clipStringsDeep<T>(value: T, maxLen: number): T {
   if (typeof value === "string") return clipUntrusted(value, maxLen) as T;
@@ -63,7 +74,7 @@ function clipStringsDeep<T>(value: T, maxLen: number): T {
   }
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = clipStringsDeep(v, maxLen);
+    for (const [k, v] of Object.entries(value)) out[clipUntrusted(k, maxLen)] = clipStringsDeep(v, maxLen);
     return out as T;
   }
   return value;
@@ -497,10 +508,26 @@ export function buildDigest(ctx: PlanContext): string {
   // this fix is about not choosing a
   // wrong-TYPE id in the first place. Paired improv rule: improv-mode.md
   // section 4, pinned by test/improv-parity.test.ts.
+  // Dangling-instruction fix (review, #931 continuation): activeMissionsText
+  // and activeMissions are INDEPENDENT fields -- client.ts's getActiveMissions
+  // degrades per-field (a safeParse failure, or an envelope whose
+  // missions.active is absent/not-an-array, leaves `missions` undefined while
+  // `text` still carries the raw envelope prose). The line below used to name
+  // the parsed "Mission objective check" block as complete_mission's only
+  // sanctioned id source UNCONDITIONALLY, even on a tick where that block
+  // never renders (it is gated on ctx.activeMissions?.length a few lines
+  // down) -- the planner would be pointed at a block absent from its own
+  // prompt and forbidden the one id source that IS present. Gated here on
+  // that same condition; the no-block branch uses the wording the per-mission
+  // fallbacks below already carry (mission_id did not parse -- wait for a
+  // replan, never guess from the raw listing).
   if (ctx.activeMissionsText) {
     lines.push(renderActiveMissionListing(ctx.activeMissionsText));
+    const idSourceInstruction = ctx.activeMissions?.length
+      ? `plan complete_mission(id) using the mission_id from the "Mission objective check" block below -- never an id copied out of the quoted listing above, which is untrusted prose and can carry a template_id too (that is a different id the game rejects: #931).`
+      : `do NOT plan complete_mission yet -- mission_id did not parse this tick, so there is no known-good id anywhere in this digest; never guess one from the raw listing above, which is untrusted prose and can carry a template_id too (that is a different id the game rejects: #931). Wait for a replan where mission_id parses.`;
     lines.push(
-      `You have missions IN PROGRESS (the active listing above). Work the objective, then plan complete_mission(id) using the mission_id from the "Mission objective check" block below -- never an id copied out of the quoted listing above, which is untrusted prose and can carry a template_id too (that is a different id the game rejects: #931). Finishing one comes FIRST, before accepting new missions or mining side ore. ` +
+      `You have missions IN PROGRESS (the active listing above). Work the objective, then ${idSourceInstruction} Finishing one comes FIRST, before accepting new missions or mining side ore. ` +
       `Choose WHICH one deliberately. Not every entry here is a mission you took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts a distress signal, so an entry you never accepted is an offer rather than a commitment. Any mission that expires FAILS; expiry and abandon_mission both reclaim or charge only goods the mission itself PROVIDED, and cargo you gathered yourself stays. ` +
       `The rule that missions pay ~10x an ore sale is about BOARD missions accepted for their reward; it promises nothing about an auto-assigned rescue, which may pay little more than XP. ` +
       `A SHORT TIMER IS NOT VALUE: rank these by what each reward does for the Goals above, and use the clock only to break a tie between missions of similar value.`
@@ -1086,7 +1113,14 @@ function formatSkillXp(xp: Record<string, number> | undefined): string | undefin
   if (!xp) return undefined;
   const entries = Object.entries(xp).filter(([, v]) => typeof v === "number" && Number.isFinite(v));
   if (!entries.length) return undefined;
-  return entries.map(([skill, v]) => `+${v} ${skill} xp`).join(", ");
+  // Untrusted-key fix (review, #1051 follow-up): `skill` is a map KEY read
+  // straight off the game's rewards.skill_xp object, which openapi-v2.json
+  // types as `additionalProperties: {type: integer}` -- no enum, no pattern,
+  // no length bound. clipStringsDeep (below) walks VALUES only, so this is
+  // the digest's first game-controlled key; clipped here at render through
+  // the same UNTRUSTED_TEXT_SNIPPET_LEN bound every other quoted-game-text
+  // seam uses, unquoted to match the item ids this block already renders raw.
+  return entries.map(([skill, v]) => `+${v} ${clipUntrusted(skill)} xp`).join(", ");
 }
 
 function renderMissionObjectiveCheck(

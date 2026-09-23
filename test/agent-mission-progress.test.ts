@@ -448,6 +448,25 @@ describe("mission reward rendering (#1051)", () => {
     expect(xpLine).toContain("(+12 combat xp):");
     expect(xpLine).not.toContain("reward");
   });
+
+  // Untrusted-key fix (review round, #1051 follow-up): rewardSkillXp's KEYS
+  // are read straight off the game's response -- openapi-v2.json types
+  // skill_xp as `additionalProperties: {type: integer}`, no pattern, no
+  // enum, no length bound -- and formatSkillXp used to interpolate the raw
+  // key into the digest unclipped, the digest's first game-controlled key
+  // position (every other untrusted seam is a value). Ablation: reverting
+  // the `clipUntrusted(skill)` call in formatSkillXp back to bare `skill`
+  // makes the second assertion fail (the oversized key survives whole).
+  test("clips an oversized skill_xp key at render -- game-controlled text, no length bound in the spec", () => {
+    const fatKey = "s".repeat(500);
+    const digest = buildDigest({
+      ...baseCtx,
+      activeMissions: [{ missionId: "m-1", rewardSkillXp: { [fatKey]: 40 }, objectives: [titaniumObjective] }],
+    });
+    const line = missionLineOf(digest, "m-1")!;
+    expect(line).toContain("…");
+    expect(line).not.toContain(fatKey);
+  });
 });
 
 // Shortfall phrasing by objective type (issue #571). The old code hardcoded
