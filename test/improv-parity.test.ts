@@ -638,6 +638,22 @@ const SEAMS: Seam[] = [
       /deliberately undocumented/,
     ],
   },
+  {
+    guard: "fleet-rescue distress briefing (#1114, the #703 gift path's read half: a distress fact " +
+      "for a fleet-mate whose credits sit below the refuel floor, so a solvent pilot can think of a " +
+      "rescue without a human steer)",
+    // Pins the selection call site: the gather runs, and it is keyed on the
+    // same condition the briefing above describes (credits below the refuel
+    // floor -- round-2 PR #142 review dropped a bare zero-fuel reading as a
+    // second trigger, since a credits gift can't fix it).
+    code: {
+      file: "src/agent/agent.ts",
+      marker: /payload\.credits < FLEET_REFUEL_FLOOR_CR/,
+    },
+    // Each anchor was absent from §4 before this bullet was added (checked
+    // against origin/main, not assumed).
+    anchors: ["FLEET DISTRESS", /refuel floor/i, /MAYDAY/i],
+  },
 ];
 
 describe.skipIf(!docsPresent)("improv-briefing parity (issue #163)", () => {

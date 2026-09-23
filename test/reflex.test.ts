@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { evaluateReflex, fuelUrgent, reflexGaveUpAt } from "../src/agent/reflex";
+import { evaluateReflex, fuelUrgent, reflexGaveUpAt, classifyReflexFailureCause, AFFORDABILITY_CAUSE } from "../src/agent/reflex";
 import type { StatusSnapshot } from "../src/client/client";
 
 function status(overrides: Partial<StatusSnapshot>): StatusSnapshot {
@@ -149,5 +149,116 @@ describe("reflexGaveUpAt", () => {
       [null, undefined, { action: "refuel" }],
       "station_a", "refuel",
     )).toBe(false);
+  });
+
+  // Issue #1115: an affordability give-up must clear once credits have
+  // genuinely risen past the balance that failed -- the invariant this issue
+  // exists to fix. All of the cases below share one terminal, affordability-
+  // classified record (creditsAtFailure: 5) and vary only currentCredits, to
+  // isolate exactly the comparison reflexGaveUpAt makes.
+  describe("affordability invalidation (#1115)", () => {
+    const affordabilityRecord = {
+      action: "refuel" as const, stationKey: "station_a", terminal: true,
+      cause: AFFORDABILITY_CAUSE, creditsAtFailure: 5,
+    };
+
+    test("clears once currentCredits exceeds the recorded creditsAtFailure", () => {
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel", 1505)).toBe(false);
+    });
+
+    test("still gives up when currentCredits equals creditsAtFailure -- no rise, no evidence", () => {
+      // Killing mutation: `<` instead of `<=`/`>` would flip this exact boundary.
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel", 5)).toBe(true);
+    });
+
+    test("still gives up when currentCredits is below creditsAtFailure (e.g. spent elsewhere)", () => {
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel", 2)).toBe(true);
+    });
+
+    test("still gives up when currentCredits is unknown (undefined) -- no positive evidence to invalidate on", () => {
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel")).toBe(true);
+    });
+
+    // #672 regression guard: a dry-station (non-affordability) terminal give-up
+    // must NEVER clear on a rising balance -- the station's tank being empty
+    // has nothing to do with the pilot's wallet, and #672's whole point was
+    // stopping a doomed retry against exactly that condition. `creditsAtFailure`
+    // is set here (review finding, PR #140 round 1): fireReflex (agent.ts)
+    // records it on EVERY failure, station_fuel_empty included, so a dry-station
+    // row with a recorded balance is the real shape this test must guard --
+    // without `creditsAtFailure` set, this test still passed with the cause
+    // check deleted entirely (the balance-missing branch caught it instead),
+    // so it was pinning the wrong condition.
+    test("a dry-station give-up (no cause) is unaffected by a rising balance, even once creditsAtFailure is recorded", () => {
+      const dryStation = {
+        action: "refuel" as const, stationKey: "station_a", terminal: true, creditsAtFailure: 5,
+      };
+      expect(reflexGaveUpAt([dryStation], "station_a", "refuel", 999_999)).toBe(true);
+    });
+
+    test("a legacy row (terminal but no cause/creditsAtFailure/message) is unaffected by a rising balance", () => {
+      const legacy = { action: "refuel" as const, stationKey: "station_a", terminal: true };
+      expect(reflexGaveUpAt([legacy], "station_a", "refuel", 999_999)).toBe(true);
+    });
+
+    test("an affordability cause with no recorded creditsAtFailure never clears, regardless of currentCredits", () => {
+      const noBalance = {
+        action: "refuel" as const, stationKey: "station_a", terminal: true, cause: AFFORDABILITY_CAUSE,
+      };
+      expect(reflexGaveUpAt([noBalance], "station_a", "refuel", 999_999)).toBe(true);
+    });
+  });
+
+  // Issue #1115 round 2 (review finding, PR #140): a row written BEFORE this
+  // fix shipped has no `cause` field at all -- only the raw `message`
+  // fireReflex has always recorded. The corsair `iron_reach_mining_colony`
+  // row from the live incident is shaped exactly like these: action, reason,
+  // message, stationKey, terminal, key -- no cause, no creditsAtFailure.
+  // Without a fallback, that row (and every pre-#1115 row like it) latches
+  // for good: only a reflex retry can ever replace it, and the latch is what
+  // blocks the retry.
+  describe("legacy (pre-#1115) affordability rows classify from message (#1115 round 2)", () => {
+    const legacyAffordability = {
+      action: "refuel" as const, reason: "no_fuel_source",
+      message: "No fuel cells in cargo and insufficient credits for station refueling.",
+      stationKey: "iron_reach_mining_colony", terminal: true, key: "iron_reach_mining_colony:refuel",
+    };
+
+    test("gets one retry (not a give-up) once current credits are known", () => {
+      // Killing mutation: dropping the message-classification fallback, or
+      // requiring `cause` to already be set, leaves this true (latched).
+      expect(reflexGaveUpAt([legacyAffordability], "iron_reach_mining_colony", "refuel", 1505)).toBe(false);
+    });
+
+    test("still latches when current credits are unknown -- no positive evidence, no retry", () => {
+      expect(reflexGaveUpAt([legacyAffordability], "iron_reach_mining_colony", "refuel")).toBe(true);
+    });
+
+    test("a legacy dry-station row (message names no affordability cause) still latches forever", () => {
+      const legacyDry = {
+        action: "refuel" as const, reason: "station_fuel_empty", message: "station_fuel_empty",
+        stationKey: "station_a", terminal: true, key: "station_a:refuel",
+      };
+      expect(reflexGaveUpAt([legacyDry], "station_a", "refuel", 999_999)).toBe(true);
+    });
+  });
+});
+
+describe("classifyReflexFailureCause", () => {
+  test("classifies the live #1115 capture's exact message as an affordability cause", () => {
+    expect(classifyReflexFailureCause("No fuel cells in cargo and insufficient credits for station refueling."))
+      .toBe(AFFORDABILITY_CAUSE);
+  });
+
+  test("is case-insensitive", () => {
+    expect(classifyReflexFailureCause("INSUFFICIENT CREDITS for station refueling")).toBe(AFFORDABILITY_CAUSE);
+  });
+
+  test("a dry-station message (#672) classifies as no cause", () => {
+    expect(classifyReflexFailureCause("station_fuel_empty")).toBeUndefined();
+  });
+
+  test("an unrelated blocked message classifies as no cause", () => {
+    expect(classifyReflexFailureCause("cargo full")).toBeUndefined();
   });
 });

@@ -114,6 +114,24 @@ export interface ChatMessage {
   text: string;
 }
 
+// Fleet-rescue briefing (issue #1114, the #703 gift path's read half). Built
+// by Agent.fleetDistress (agent.ts) from OTHER pilots' status_snapshot events
+// off the SAME shared Store every agent in this harness writes to (see
+// src/main.ts) -- not a live game query, so it costs nothing extra.
+//
+// SECURITY (renders one agent's data into another agent's prompt, the exact
+// seam #681/#1116 are about): every field here is a number off a typed
+// StatusSnapshot, or a username already vetted safe to render -- the same
+// fleet-roster string the credit-gift guard itself echoes (executor.ts's
+// fleetUsernames message). Nothing here is another agent's free text (plan,
+// chat, strategy); digest.ts's render names the remedy in prose only, never
+// as a filled-in action call.
+export interface FleetDistress {
+  username: string;
+  fuel: number;
+  credits: number;
+}
+
 export interface PlanContext {
   persona: string;
   goals: string[];
@@ -364,6 +382,13 @@ export interface PlanContext {
   // (ABSENCE IS NOT A VERDICT, #94: an empty memory is "we have not confirmed
   // one", never "there are no stations").
   knownStations?: StationSighting[];
+  // Fleet-rescue briefing (issue #1114): fleet-mates Agent.fleetDistress
+  // selected as credits below FLEET_REFUEL_FLOOR_CR (digest.ts).
+  // Undefined/empty covers three cases the digest must not tell
+  // apart with a rendered claim -- no fleet roster configured, no fleet-mate
+  // has emitted a status_snapshot yet, and every fleet-mate is fine -- so no
+  // section renders from any of them (#94: absence is never a verdict).
+  fleetDistress?: FleetDistress[];
 }
 
 // Station geography (issue #517): one confirmed station system.
