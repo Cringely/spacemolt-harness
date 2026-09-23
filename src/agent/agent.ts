@@ -3310,6 +3310,10 @@ export class Agent {
       expiresInTicks: m.expiresInTicks,
       percentComplete: m.percentComplete,
       zeroProgressHours,
+      // Reward parsing (issue #1051): straight passthrough, same footing as
+      // expiresInTicks above -- both are client-parsed numbers, not derived.
+      rewardCredits: m.rewardCredits,
+      rewardSkillXp: m.rewardSkillXp,
       objectives: m.objectives,
     };
   }

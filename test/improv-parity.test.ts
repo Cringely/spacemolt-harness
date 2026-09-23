@@ -211,6 +211,42 @@ const SEAMS: Seam[] = [
     anchors: ["get_active_missions", "complete_mission", /before accepting/i],
   },
   {
+    guard: "mission_id-vs-template_id id-source fix (#931: complete_mission/abandon_mission took " +
+      "43 fleet-wide mission_not_found refusals because the digest's own completion-priority line " +
+      "sent the planner back to the raw, unparsed active-listing prose for an id -- the one place a " +
+      "template_id can sit beside the real mission_id, unlabelled; the parser was never the bug, " +
+      "the instruction was)",
+    // The exact phrase the fix repoints the id-sourcing instruction at; it
+    // appears nowhere in the pre-fix file, so a revert of the instruction (or
+    // of the matching raw-listing header) removes this marker.
+    code: { file: "src/planner/digest.ts", marker: 'mission_id from the "Mission objective check"' },
+    // The game's error text straddles the spec's ~100-char line wrap (the
+    // #148/#161 pattern this file's own comments warn about), so it needs a
+    // regex whose \s bridges the wrap rather than a literal-space string.
+    anchors: ["mission_id", "template_id",
+      /Use the mission_id from get_active_missions\s*\(not\s+template_id\)/,
+      /field name, not the position/i],
+  },
+  {
+    guard: "mission_id id-source fallback when the parse degrades (#931 continuation: activeMissionsText " +
+      "and activeMissions are independent fields in client.ts's getActiveMissions -- a safeParse failure, " +
+      "or an envelope whose missions.active is absent/not-an-array, leaves activeMissions undefined while " +
+      "activeMissionsText still carries the raw envelope prose; the completion-priority line above used to " +
+      "name the parsed block as the only sanctioned id source even on that tick, when the block never " +
+      "renders)",
+    // The fallback phrase itself; it appears nowhere in the pre-fix file, and
+    // a revert of the gate (back to the unconditional instruction) removes it.
+    code: { file: "src/planner/digest.ts", marker: "mission_id did not parse this tick" },
+    anchors: [/mission_id did not parse/i, /wait for a replan/i, /does not render/i],
+  },
+  // No paired seam for the reward-field zod .catch() fix (#931/#1051
+  // follow-up, client.ts's ActiveMissionRewardsSchema): same exemption class
+  // as #291's own array-safeParse degradation above (client.ts,
+  // getActiveMissions) -- neither has a seam, because both are internal
+  // parsing-robustness fixes with no improv-mode behavioral analog. An
+  // improv-mode agent reads the raw API response directly; it has no zod
+  // array-level parse step to degrade, so nothing in section 4 changes.
+  {
     guard: "mission-priority ranking rule (#592: the digest's completion-priority line ranks active " +
       "missions by what each reward does for the operator's Goals, with the clock only as a tiebreak -- " +
       "it no longer calls an auto-assigned distress mission 'accepted' (missions.md:11,70) and no " +
@@ -230,6 +266,19 @@ const SEAMS: Seam[] = [
       // review rounds found the claim wrong in three different directions with
       // nothing on either side of the seam able to fail.
       /reclaim or charge\s+only goods the mission itself PROVIDED/],
+  },
+  {
+    guard: "mission reward rendering (#1051, split out of #592: the digest's parsed Mission objective " +
+      "check now renders rewards.credits and rewards.skill_xp beside the expiry fuse -- #592's ranking " +
+      "rule had no reward datum to rank by until this; reference-backed against openapi-v2.json, not " +
+      "yet confirmed by a live capture)",
+    // The gate that gives the render its #94 absence contract (undefined ->
+    // no line, never a false 0). Reverting this branch (or the reward fields
+    // it reads) removes the marker.
+    code: { file: "src/planner/digest.ts", marker: "m.rewardCredits !== undefined" },
+    anchors: ["rewards.credits", "rewards.skill_xp",
+      /V2GameState\.missions\.active\.rewards/,
+      /renders no reward line, never a false 0/i],
   },
   {
     guard: "mission objective check + deposit cross-ref (#291: objective item vs current POI's deposit resource ids)",

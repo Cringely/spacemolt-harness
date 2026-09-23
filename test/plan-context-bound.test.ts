@@ -95,6 +95,29 @@ describe("plan_context is bounded by construction", () => {
     const c = harvestCases(dbPath, "a1")[0]!;
     expect(c.ctx.purchaseEstimates?.[0]?.itemId).toContain("deep_core_extractor");
   });
+
+  // Untrusted-key fix (review round, #1051 follow-up): activeMissions[].
+  // rewardSkillXp is a skill_id -> XP map read off the game's response
+  // (openapi-v2.json types skill_xp as `additionalProperties`, no length
+  // bound) -- the first PlanContext field whose untrusted content sits in a
+  // KEY position, not a value. clipStringsDeep walked values only before
+  // this fix (`out[k] = clipStringsDeep(v, maxLen)`), so an oversized key
+  // reached the persisted event whole even though every value leaf above was
+  // already bounded by the walk this same test file's first test pins.
+  // Ablation: reverting the key clip back to bare `out[k]` makes the last
+  // assertion fail (the fat key survives whole in Object.keys).
+  test("clips an oversized activeMissions[].rewardSkillXp KEY, not only its value", () => {
+    const fatKey = "s".repeat(20_000);
+    const ctx: PlanContext = {
+      persona: "p", goals: [], wake: { reason: "heartbeat" }, statusSummary: "s", recentEvents: [],
+      activeMissions: [{ missionId: "m-1", rewardSkillXp: { [fatKey]: 40 }, objectives: [] }],
+    };
+    const persisted = clipPlanContext(ctx);
+    const keys = Object.keys(persisted.activeMissions![0]!.rewardSkillXp!);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]!.length).toBeLessThanOrEqual(LEAF_CAP);
+    expect(keys[0]).not.toBe(fatKey);
+  });
 });
 
 // The blanket cap above is a CEILING, not the invariant. The invariant #263's

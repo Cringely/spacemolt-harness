@@ -26,6 +26,17 @@ export interface ActiveMissionStatus {
   expiresInTicks?: number;
   percentComplete?: number;
   zeroProgressHours?: number;
+  // Reward parsing (issue #1051): carried through from ActiveMissionInfo
+  // (client.ts) unchanged -- the ONE numeric per-mission value signal, parsed
+  // from openapi-v2.json's V2GameState.missions.active[].rewards
+  // (reference-backed, no live capture of a non-empty envelope exists yet).
+  // buildDigest DOES render these (unlike title above): they are numbers, not
+  // untrusted prose, and #592's ranking rule ("rank by what each reward does
+  // for the Goals") had nothing to rank by until this field existed. Both
+  // undefined -- never a fabricated 0 -- when the mission carries no rewards
+  // object (#94: absence is not a verdict).
+  rewardCredits?: number;
+  rewardSkillXp?: Record<string, number>;
   objectives: ActiveMissionObjective[];
 }
 

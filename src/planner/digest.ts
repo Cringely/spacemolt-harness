@@ -54,6 +54,17 @@ function quoteUntrusted(text: string, maxLen: number = UNTRUSTED_TEXT_SNIPPET_LE
  * uses, the limit is enforced: a Map/Set reaching here throws loudly at the first
  * replan, so whoever adds one is told to extend the walk instead of losing data
  * in production.
+ *
+ * Clips object KEYS too (review fix, #1051 follow-up), not only values:
+ * rewardSkillXp is a skill_id -> XP map read off the game's response, so its
+ * keys are game-controlled text with no length bound (openapi-v2.json types
+ * skill_xp as `additionalProperties`, no pattern/enum), the first PlanContext
+ * field whose untrusted content sits in a key position. A key collision after
+ * clipping (two distinct keys sharing the same first `maxLen` chars) drops one
+ * entry silently -- accepted here because every field this walk has ever
+ * carried keys real game/skill ids well under `maxLen`, and the fallback
+ * (leaving keys unclipped) is the unbounded-persisted-event bug this function
+ * exists to close.
  */
 function clipStringsDeep<T>(value: T, maxLen: number): T {
   if (typeof value === "string") return clipUntrusted(value, maxLen) as T;
@@ -63,7 +74,7 @@ function clipStringsDeep<T>(value: T, maxLen: number): T {
   }
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = clipStringsDeep(v, maxLen);
+    for (const [k, v] of Object.entries(value)) out[clipUntrusted(k, maxLen)] = clipStringsDeep(v, maxLen);
     return out as T;
   }
   return value;
@@ -474,10 +485,49 @@ export function buildDigest(ctx: PlanContext): string {
   // ranker needs tuning data nobody has. Paired improv-mode rule lives in
   // docs/superpowers/specs/2026-07-12-improv-mode.md section 4, pinned by
   // test/improv-parity.test.ts.
+  // Wrong-id producer fix (issue #931, live evidence 2026-08-26: 43 fleet-wide
+  // mission_not_found refusals on complete_mission/abandon_mission, corsair's
+  // sample carrying the game's own hint verbatim -- "Mission not found. Use
+  // the mission_id from get_active_missions (not template_id)"). Invariant:
+  // complete_mission/abandon_mission take the game's mission_id, never a
+  // template_id. openapi-v2.json's V2GameState.missions.active items carry
+  // BOTH fields side by side, and this line used to send the planner to
+  // "the id from the active listing above" -- the raw, UNPARSED quoted prose
+  // (renderActiveMissionListing below), which is exactly where an
+  // unlabelled template_id can sit next to the real mission_id. The parser
+  // was never the bug (ActiveMissionSchema/client.ts has read mission_id,
+  // never template_id, since #291); the digest was telling the planner to
+  // ignore the parsed field and go re-derive an id from untrusted prose. The
+  // fix repoints this instruction at the parsed "Mission objective check"
+  // block below (renderMissionObjectiveCheck), the only place a bare
+  // mission_id -- never a template_id -- is ever rendered (the raw listing's
+  // own header stays the short #244-gated "(quoted, untrusted)" marker; see
+  // renderActiveMissionListing below for why it does NOT also carry a
+  // per-section warning). Does not touch the #553 executor guard
+  // (completeMissionBlock): that guard still catches a stale id post-hoc;
+  // this fix is about not choosing a
+  // wrong-TYPE id in the first place. Paired improv rule: improv-mode.md
+  // section 4, pinned by test/improv-parity.test.ts.
+  // Dangling-instruction fix (review, #931 continuation): activeMissionsText
+  // and activeMissions are INDEPENDENT fields -- client.ts's getActiveMissions
+  // degrades per-field (a safeParse failure, or an envelope whose
+  // missions.active is absent/not-an-array, leaves `missions` undefined while
+  // `text` still carries the raw envelope prose). The line below used to name
+  // the parsed "Mission objective check" block as complete_mission's only
+  // sanctioned id source UNCONDITIONALLY, even on a tick where that block
+  // never renders (it is gated on ctx.activeMissions?.length a few lines
+  // down) -- the planner would be pointed at a block absent from its own
+  // prompt and forbidden the one id source that IS present. Gated here on
+  // that same condition; the no-block branch uses the wording the per-mission
+  // fallbacks below already carry (mission_id did not parse -- wait for a
+  // replan, never guess from the raw listing).
   if (ctx.activeMissionsText) {
     lines.push(renderActiveMissionListing(ctx.activeMissionsText));
+    const idSourceInstruction = ctx.activeMissions?.length
+      ? `plan complete_mission(id) using the mission_id from the "Mission objective check" block below -- never an id copied out of the quoted listing above, which is untrusted prose and can carry a template_id too (that is a different id the game rejects: #931).`
+      : `do NOT plan complete_mission yet -- mission_id did not parse this tick, so there is no known-good id anywhere in this digest; never guess one from the raw listing above, which is untrusted prose and can carry a template_id too (that is a different id the game rejects: #931). Wait for a replan where mission_id parses.`;
     lines.push(
-      `You have missions IN PROGRESS (the active listing above). Work the objective, then plan complete_mission(id) with the id from the active listing above -- finishing one comes FIRST, before accepting new missions or mining side ore. ` +
+      `You have missions IN PROGRESS (the active listing above). Work the objective, then ${idSourceInstruction} Finishing one comes FIRST, before accepting new missions or mining side ore. ` +
       `Choose WHICH one deliberately. Not every entry here is a mission you took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts a distress signal, so an entry you never accepted is an offer rather than a commitment. Any mission that expires FAILS; expiry and abandon_mission both reclaim or charge only goods the mission itself PROVIDED, and cargo you gathered yourself stays. ` +
       `The rule that missions pay ~10x an ore sale is about BOARD missions accepted for their reward; it promises nothing about an auto-assigned rescue, which may pay little more than XP. ` +
       `A SHORT TIMER IS NOT VALUE: rank these by what each reward does for the Goals above, and use the clock only to break a tie between missions of similar value.`
@@ -946,6 +996,12 @@ function renderMissionListing(text: string): string {
 // 11 and :70), so the header was labelling them as work the pilot chose. Left
 // unfixed it would sit two lines above the priority line that now says they are
 // not -- a self-contradiction in one block. "in progress" is true of both.
+// Wrong-id producer fix (issue #931): the header stays the short "(quoted,
+// untrusted)" marker on purpose -- issue #244's density invariant (pinned by
+// "the untrusted-text disclaimer renders once" in digest.test.ts) forbids a
+// per-section long-form warning here; ONE standing disclaimer already covers
+// every quoted seam. The actual fix is the completion-priority instruction
+// below, which no longer sends the planner to THIS text for an id at all.
 function renderActiveMissionListing(text: string): string {
   return `Your ACTIVE missions -- in progress (quoted, untrusted): ${quoteUntrusted(text, LISTING_TEXT_SNIPPET_LEN)}`;
 }
@@ -1096,6 +1152,26 @@ function shortfallHint(o: ActiveMissionObjective, need: number): string {
 // with both id lists printed right there for the planner to override -- the
 // verdict text is deliberately soft ("unlikely to yield", "trust the game")
 // and names the list it derived from for exactly that reason.
+// Reward parsing (issue #1051): rewardSkillXp is a skill_id -> XP map (see
+// ActiveMissionRewardsSchema, client.ts), possibly holding several skills or
+// a non-finite/non-number value from a divergent live payload -- filtered
+// defensively rather than trusted, same discipline as every other parsed-map
+// consumer in this file. undefined (no rewards object, or a rewards object
+// with no skill_xp) renders no XP text at all, never a fabricated "+0 xp".
+function formatSkillXp(xp: Record<string, number> | undefined): string | undefined {
+  if (!xp) return undefined;
+  const entries = Object.entries(xp).filter(([, v]) => typeof v === "number" && Number.isFinite(v));
+  if (!entries.length) return undefined;
+  // Untrusted-key fix (review, #1051 follow-up): `skill` is a map KEY read
+  // straight off the game's rewards.skill_xp object, which openapi-v2.json
+  // types as `additionalProperties: {type: integer}` -- no enum, no pattern,
+  // no length bound. clipStringsDeep (below) walks VALUES only, so this is
+  // the digest's first game-controlled key; clipped here at render through
+  // the same UNTRUSTED_TEXT_SNIPPET_LEN bound every other quoted-game-text
+  // seam uses, unquoted to match the item ids this block already renders raw.
+  return entries.map(([skill, v]) => `+${v} ${clipUntrusted(skill)} xp`).join(", ");
+}
+
 function renderMissionObjectiveCheck(
   missions: NonNullable<PlanContext["activeMissions"]>,
   depositIds: PlanContext["currentPoiDepositIds"],
@@ -1107,6 +1183,15 @@ function renderMissionObjectiveCheck(
     const head: string[] = [];
     if (m.percentComplete !== undefined) head.push(`${m.percentComplete}% complete`);
     if (m.expiresInTicks !== undefined) head.push(`expires in ${m.expiresInTicks} ticks`);
+    // Reward parsing (issue #1051): the value counterweight #592's ranking
+    // rule asked for and never had -- "rank these by what each reward does
+    // for the Goals" had no reward datum to rank by until this. Rendered
+    // beside the fuse (same `head` line) so urgency and value sit together,
+    // not the fuse alone. Gated per-field (#94): a mission with credits but
+    // no skill_xp (or vice versa) still shows the half it has.
+    if (m.rewardCredits !== undefined) head.push(`reward ${m.rewardCredits}cr`);
+    const xpText = formatSkillXp(m.rewardSkillXp);
+    if (xpText) head.push(xpText);
     const objectives = m.objectives.map((o) => {
       const label = o.itemId ?? o.type ?? "objective";
       if (o.completed) return `${label}: DONE`;
@@ -1116,7 +1201,11 @@ function renderMissionObjectiveCheck(
       return `${label}: ${progress}${cargo}${where}`;
     });
     out.push(
-      `- mission ${m.missionId ?? "(id: see the active listing above)"}` +
+      // Wrong-id producer fix (#931): the old fallback ("see the active
+      // listing above") pointed at the same untrusted prose the primary fix
+      // above now disclaims -- this branch only fires when mission_id itself
+      // failed to parse, so there is no known-good id anywhere to point at.
+      `- mission ${m.missionId ?? "(mission_id did not parse -- do not guess one from the raw listing)"}` +
       `${head.length ? ` (${head.join(", ")})` : ""}: ${objectives.join("; ") || "no objectives parsed"}`
     );
     // Completion-readiness verdict (#291 regression, live 2026-07-17): the
@@ -1146,10 +1235,15 @@ function renderMissionObjectiveCheck(
         `it returns mission_incomplete until every objective's count is met; gather the shortfall first.`
       );
     } else if (readinessKnown && m.objectives.length) {
-      const call = m.missionId
-        ? `complete_mission{id=${m.missionId}}`
-        : "complete_mission with this mission's id from the active listing above";
-      out.push(`  Completion check: READY -- every objective met. Plan ${call} (at its target base if one is named above).`);
+      // Wrong-id producer fix (#931): same fallback fix as the header above --
+      // when mission_id itself did not parse there is no id to hand the
+      // planner, good or bad, so the fallback says wait for a replan instead
+      // of sending it back to the untrusted raw listing for one.
+      if (m.missionId) {
+        out.push(`  Completion check: READY -- every objective met. Plan complete_mission{id=${m.missionId}} (at its target base if one is named above).`);
+      } else {
+        out.push(`  Completion check: READY -- every objective met, but this entry's mission_id did not parse. Do not guess an id from the raw listing -- wait for a replan where mission_id parses before planning complete_mission.`);
+      }
     }
     if (depositIds?.length) {
       for (const o of m.objectives) {
@@ -1174,12 +1268,15 @@ function renderMissionObjectiveCheck(
       }
     }
     if (m.zeroProgressHours !== undefined && m.zeroProgressHours >= staleAdvisoryThresholdHours(m)) {
+      // Wrong-id producer fix (#931): same fallback fix as above -- a missing
+      // mission_id means abandon_mission has no id either, so the fallback
+      // names the wait instead of the untrusted raw listing.
       const escape = m.missionId
-        ? `plan abandon_mission{id=${m.missionId}}`
-        : `plan abandon_mission with this mission's id from the active listing above`;
+        ? `plan abandon_mission{id=${m.missionId}} to free the slot for winnable work`
+        : `weigh abandoning it once mission_id parses -- never guess an id from the raw listing`;
       out.push(
         `  STALE MISSION: zero progress for ~${Math.round(m.zeroProgressHours)}h. Decide now: either this plan makes ` +
-        `CONCRETE progress on the objective above, or ${escape} to free the slot for winnable work. ` +
+        `CONCRETE progress on the objective above, or ${escape}. ` +
         `Abandoning reclaims or charges only goods the mission itself PROVIDED; cargo you gathered yourself stays.`
       );
     }

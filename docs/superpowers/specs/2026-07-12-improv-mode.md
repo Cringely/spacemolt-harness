@@ -444,6 +444,20 @@ Vocabulary / data shapes:
   like the available listing — and embeds the raw text in the digest above the available listing,
   with a completion-priority briefing line gated on it; the planner still never plans the query.
   Under improv you call get_active_missions yourself.)
+- `complete_mission(id)` and `abandon_mission(id)` need the mission's `mission_id` field — never its
+  `template_id`. Each active-mission entry carries BOTH (openapi-v2.json's V2GameState.missions.
+  active items), and the game distinguishes them at the wire: submitting a template_id returns
+  `mission_not_found: Mission not found. Use the mission_id from get_active_missions (not
+  template_id)` (live, 2026-08-26, #931: 43 fleet-wide refusals across three pilots in one 72h
+  window). If a listing shows an id-looking token next to a mission's title, do not assume it is
+  the mission_id — read the field name, not the position. (Also a §5-adjacent deterministic
+  producer in plan-then-execute: the digest's parsed "Mission objective check" block renders the
+  real mission_id explicitly for each mission, and the completion-priority line above now points
+  there instead of at the raw listing text. Review fix, #931 continuation: that pointer is now
+  GATED on the parsed block actually existing that tick — a shape divergence or a parse failure
+  can leave the raw listing rendering while the parsed block does not render at all, and on that
+  tick the line says mission_id did not parse and to wait for a replan, rather than naming a block
+  the digest never showed. Under improv you read the mission_id field yourself either way, #931.)
 - WHICH active mission to work is a value question, never a deadline one. Two things make the
   active list misleading if you read it as a to-do list. First, not every entry is a mission you
   took: the game AUTO-ASSIGNS a rescue mission to ships in the system whenever a pilot broadcasts
@@ -460,7 +474,14 @@ Vocabulary / data shapes:
   milestone took zero steps and a stalled mission went from 20.6h to 22.0h of no progress).
   (Also a §5-adjacent deterministic producer in plan-then-execute: the digest's
   completion-priority line carries this same ranking rule, gated on having an active listing,
-  and its section header no longer calls an auto-assigned mission "accepted".)
+  and its section header no longer calls an auto-assigned mission "accepted". Reward parsing
+  fix, #1051: for two months that ranking rule had no reward datum to rank by -- the digest's
+  parsed "Mission objective check" block now renders each mission's `rewards.credits` and
+  `rewards.skill_xp` beside the expiry fuse, reference-backed from openapi-v2.json's
+  V2GameState.missions.active.rewards, not yet confirmed by a live capture of a non-empty
+  envelope. A mission with no rewards object renders no reward line, never a false 0. Under
+  improv you already see the full rewards object in the raw API response -- read `rewards.credits`
+  and `rewards.skill_xp` directly rather than guessing value from the mission's title or type.)
 - A mining objective advances ONLY at a deposit that actually CONTAINS the objective item. Before
   committing to mine for a mission, run `get_poi` at your location and read its resources list —
   if the objective's item_id is NOT among the deposit's resource ids, mining there can never yield
