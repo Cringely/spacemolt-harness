@@ -87,8 +87,8 @@ reading lists, the same way the human-made report already treats them.
 ## Matching
 
 The ceremony reuses the primitives `filing.ts` already exports (`entityAnchors`, `keySegments`,
-`isNearDuplicate`, `normalizeDedupKey`) rather than writing a second matcher beside the first,
-with one seam those primitives don't cover: they tokenize a kebab-case dedup key, and an issue
+`isNearDuplicate`) rather than writing a second matcher beside the first, with one seam those
+primitives don't cover: they tokenize a kebab-case dedup key, and an issue
 title is prose. Closing that seam needs a title-to-key adapter, `titleToSegments()`, named here
 because leaving that seam unnamed is exactly where a second matcher gets born: lowercase, strip
 punctuation, split on whitespace, drop the same severity and staleness words `keySegments`
@@ -101,33 +101,73 @@ the ceremony skips it unless a new candidate merges into it.
 
 The second pass is deterministic and calls no model. It runs each issue's title through
 `titleToSegments()` and scores it against every other title's segments the way `isNearDuplicate`
-scores two keys, except for the anchor gate. `isNearDuplicate` treats entity-anchor equality as
-absolute: two keys with different `pr`/`issue`/`gh` anchors never match at any similarity score,
-and that absolute gate is what keeps PR #40's report from merging into PR #83's. This pass reuses
-that gate unwidened: `entityAnchors`/`ENTITY_ANCHOR_RE` run exactly as `filing.ts` defines them,
-still absolute, still the numbered-entity separation.
+scores two keys, except the anchor gate cannot be `isNearDuplicate`'s gate unchanged.
+`ENTITY_ANCHOR_RE` requires the entity word and its digits joined by at most one hyphen,
+underscore, or dot (the slug form the filer mints), and it returns an empty set on prose. Measured
+directly against this backlog's real titles: `PR #83 red CI blocking merge (doc-size + test, 9h)`
+(#707) and `Batch-two PRs #107/#108 conflicted, awaiting fix loop` (#1084) both extract zero
+anchors under `ENTITY_ANCHOR_RE`. Over an absolute equality gate, empty equals empty, so the two
+clusters would pass the gate vacuously and merge on ordinary word overlap alone (both share
+"blocking", the "red"/"conflicted" state wording, and "fix loop"). That is the exact failure the
+gate exists to prevent.
+
+This pass computes its anchors from a different string, with a function of its own:
+`titleEntityAnchors()`, living beside `titleToSegments()` in this ceremony's own module, not
+`filing.ts`. `entityAnchors`/`ENTITY_ANCHOR_RE` stay exactly as `filing.ts` defines them, reused
+unchanged for `filing.ts`'s own job of comparing two minted keys. `titleEntityAnchors()` matches
+`pr`, `prs`, `issue`, `issues`, `gh`, or `ghs` (case-insensitive), followed by up to three
+characters drawn from whitespace, `#`, `:`, or `-`, followed by one to four digits, and returns one
+anchor per match as `<word><digits>`. Run against real titles, #707 returns `{pr83}`, #1084
+returns `{pr107}`, and #713 (`Doc PR cluster stalled: PR #83 red CI, PR #81 unreviewed`) returns
+`{pr83, pr81}`, because the match is global and each qualifying entity-word occurrence contributes
+its own anchor.
+
+The gate built on top of it also has to change, because exact set equality is the wrong test over
+prose. `isNearDuplicate`'s gate passes two empty sets as equal, correctly, for a minted key, where
+an empty set means "this finding names no entity" on purpose. Over titles an empty set usually
+means the extraction missed, not that the title names no entity, so an equality gate would block a
+title with a stray anchor from every title whose extraction came back empty. That reading is
+backwards. Checked against the Corsair cluster, this spec's own regression fixture: 19 of its 20
+members return `{}` from `titleEntityAnchors()` (including the canonical, #819), and the
+twentieth, #871 (`... same trap class as issue 867, new location`), returns `{issue867}`, a
+cross-reference to a fellow cluster member, not a competing PR. An equality gate would strand #871
+from the other 19 over that one mention.
+
+So the gate this pass uses is disjointness, not equality. It blocks a match only when both titles
+carry a non-empty anchor set and those sets share no anchor. `{pr83}` against `{pr107}` (both
+non-empty, disjoint) blocks, recovering the PR-83/PR-107 separation the equality gate could not
+reach on prose. `{pr83, pr81}` against `{pr83}` (both non-empty, overlapping) does not block.
+`{}` against anything does not block, and falls through to segment scoring, same as before.
+`{issue867}` against `{}` does not block, so #871 stays reachable from the rest of its cluster.
+This is a new predicate, `titleAnchorsConflict()`, not `isNearDuplicate`'s gate reused as is.
+It tests disjointness over prose anchors rather than equality over slug anchors, because a slug
+either carries its anchor or the caller left it out on purpose, while a title's anchor is present
+only when the extraction happened to fire on that wording.
 
 Pilot names and action or mechanic names pulled from `docs/game-reference/commands.md` are not
-folded into that gate. Checked directly against this spec's own regression fixture: the Corsair
-cluster's canonical, #819 ("Unarmed pilot trapped in battle: retreat/get_battle_status
+folded into `titleAnchorsConflict()`. Checked directly against this spec's own regression fixture:
+the Corsair cluster's canonical, #819 ("Unarmed pilot trapped in battle: retreat/get_battle_status
 unregistered, only self_destruct escapes"), and at least two other members of that 20-issue
-cluster never use the word "corsair" at all. An equality gate over a widened anchor set would
-make each of them unreachable from the seventeen-plus members that do use it: stricter, not
-broader, the opposite of what this pass needs. So pilot and action vocabulary scores as ordinary
-segments in the Jaccard overlap instead, weighted like any other `titleToSegments()` output: two
-titles sharing "corsair" and "battle" score higher, but neither word is required for a match.
-This mirrors the split `filing.ts` already draws between its two gates, anchors absolute and
-everything else a similarity score, applied to the vocabulary this pass adds.
+cluster never use the word "corsair" at all. A conflict gate over a widened anchor set (pilot and
+action names folded in as anchors) would make each of them unreachable from the seventeen-plus
+members that do use it: stricter, not broader, the opposite of what this pass needs. So pilot and
+action vocabulary scores as ordinary segments in the Jaccard overlap instead, weighted like any
+other `titleToSegments()` output: two titles sharing "corsair" and "battle" score higher, but
+neither word is required for a match. This mirrors the split `filing.ts` already draws between an
+absolute gate and a similarity score, applied to the vocabulary this pass adds.
 
-Named plainly: this pass extends `filing.ts`'s matcher rather than purely reusing it.
-`entityAnchors` stays the one place the numbered-entity-separation property is defined, reused
-here unchanged. `titleToSegments()` and the widened vocabulary are new, because `filing.ts`'s
-primitives compare two minted keys and this pass ranks many prose titles against each other, a
-job no existing primitive does. `filing.ts` remains the sole definition of whether a freshly
-filed finding matches an already-open issue at mint time. This ceremony owns the separate
-question of clustering already-filed prose after the fact. One property, defined once. One new
-adapter for a job `filing.ts` was never asked to do. Not two competing definitions of "these two
-things are probably the same."
+Named plainly: this pass does not reuse `filing.ts`'s anchor gate for titles, because that gate
+cannot fire on titles at all, measured above. `entityAnchors`/`ENTITY_ANCHOR_RE` stay the one
+place the numbered-entity-separation property is defined for minted keys, reused unchanged at
+`filing.ts`'s own mint-time gate. `titleEntityAnchors()`, `titleAnchorsConflict()`, and
+`titleToSegments()` are this ceremony's own adapters for a job `filing.ts` was never asked to do:
+ranking many prose titles against each other rather than comparing two minted keys. `filing.ts`
+remains the sole definition of whether a freshly filed finding matches an already-open issue at
+mint time. This ceremony owns the separate question of separating and clustering already-filed
+prose after the fact, with its own anchor extraction and its own, narrower, conflict rule, both
+named here rather than left implicit. Each definition of "these two things are probably the same"
+is scoped to one layer, mint-time key comparison or after-the-fact title comparison, and each is
+stated for what it actually reads.
 
 The third pass runs on Sonnet, and only on what the second pass leaves unresolved: issues that
 stayed singletons or scored below the match floor. It compares title and body meaning directly.
@@ -188,9 +228,19 @@ reads the target member issue's existing comments. If a marker naming this same 
 already present, it does nothing. Because the marker carries no member count, a cluster gaining
 or losing members never touches the issues already marked. Corsair gaining a 21st report
 proposes one new pairing for that new issue alone, not twenty repeat comments on the nineteen
-already marked. A member that gets re-clustered under a different canonical is a real change
-in the ceremony's conclusion, not churn, and correctly earns one fresh comment naming the new
-pairing.
+already marked. A member that gets re-clustered under a different canonical is usually a real
+change in the ceremony's conclusion, not churn, and correctly earns one fresh comment naming the
+new pairing.
+
+A re-cluster caused by the old canonical closing is carved out and does not earn a fresh
+comment. A closed canonical is the good outcome, the underlying defect got fixed, and re-pointing
+every remaining member to a freshly chosen canonical would spend a whole run's proposal budget
+restating a group that just got resolved, at the cost of clusters nobody has proposed yet. A
+member whose existing marker names a canonical that is now closed keeps that marker rather than
+earning a repost: a marker pointing at a closed issue already tells a reader "this was resolved
+via #NNN" without the ceremony saying it again. Re-clustering for any other reason (a
+better cause-naming member surfaces, or a new member changes the ranking) still earns the fresh
+comment, unchanged from above.
 
 Cold start against today's 83 clusters (389 members, 249 of them in the 43 high-confidence
 clusters, the rest in the 40 medium- and low-confidence ones) proposes at the same 20-per-run
@@ -198,11 +248,18 @@ budget "Cadence and cost" sets, largest cluster first. The high-confidence set a
 roughly 13 weekly runs to fully propose, and the full 83 clusters roughly 20. The delta gate
 described in "Cadence and cost" does not apply during this drain. A run always spends its budget
 against the not-yet-proposed set first, regardless of how many issues opened since the last run,
-so a quiet week cannot stall a cold start that has not yet finished. The not-yet-proposed set and
-the high-water mark the delta gate reads once drain completes both live in the ceremony's own
-standing report issue, the one "Done-when" already requires, as a machine-readable marker in its
-body: the newest issue number scanned, and the count of clusters still carrying an unmarked
-member. Every piece of the ceremony's state stays tracker-resident this way, the same posture the
+so a quiet week cannot stall a cold start that has not yet finished.
+
+The not-yet-proposed set is never stored as a set. The second pass is deterministic and calls no
+model (see "Matching"), so re-deriving all 83 clusters from a fresh fetch costs nothing: every run
+re-fetches the open backlog and rebuilds the clusters from scratch. "Not yet proposed" is then this
+run's freshly rebuilt clusters minus whatever members already carry a matching
+`sm-dupe-cluster:` marker, recoverable every run from the tracker's own markers plus a free
+recomputation, never from a stored membership list that could drift from the backlog it describes.
+Only the delta gate's own input has to persist between runs: the newest issue number scanned, so
+the next run knows how many issues are new. That one number lives in the ceremony's standing
+report issue, the one "Done-when" already requires, as the report's machine-readable high-water
+mark. Every piece of the ceremony's state stays tracker-resident this way, the same posture the
 per-member marker above takes, and it survives a redeployed container or a wiped state directory
 exactly as that marker does.
 
@@ -275,8 +332,8 @@ change.
 
 The root cause, established above, is that `fileFinding()`'s matcher only ever sees a slug an
 agent invented, never the finding itself. The producer-side fix, #1133, is to make the filer see
-defects instead of key wording: have `fileFinding()` run this same widened-anchor or semantic
-check against the open backlog before minting a key, so most of the 389 duplicates in today's
+defects instead of key wording: have `fileFinding()` run this ceremony's own title-matching check
+against the open backlog before minting a key, so most of the 389 duplicates in today's
 report never get filed in the first place, instead of getting filed and cleaned up after. That is
 the fix that actually stops the leak. A ceremony only mops the floor under it.
 
