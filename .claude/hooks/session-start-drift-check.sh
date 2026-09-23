@@ -1,20 +1,31 @@
 #!/bin/sh
 # SessionStart drift-check hook (advisory: prints at most one line, never blocks).
 # It has no deny path at all: nothing it emits can refuse a tool call, and it runs where no
-# tool call is pending. CONTRIBUTING.md:47 asks anything under core/claude/hooks/ for a test with
-# "a boundary-crossing input asserted to DENY", and there is no denial here for a test to assert,
-# so the file beside it (test/session-start-drift-check.test.ts) pins output shape instead and
-# says so at the top.
-# Issue #87 is the open question about that rule's scope.
+# tool call is pending. CONTRIBUTING.md:47-49 binds a refusal test to hooks that can refuse and
+# lets an advisory hook satisfy the rule when its "own header says plainly that it never blocks"
+# and its test pins that claim, so the file beside it (test/session-start-drift-check.test.ts)
+# pins output shape instead of a denial and says so at the top. Issue #87 asked for exactly
+# that scoping.
 #
-# What it does: read .claude/.harness-manifest.json, resolve the core checkout the layer
-# was installed from, run that checkout's audit against this project, and print one
+# What it does: read .claude/.harness-manifest.local.json, resolve the core checkout the
+# layer was installed from, run that checkout's audit against this project, and print one
 # summary line when files need attention. Silent when nothing does.
 #
-# Every failure degrades to silence and exit 0 — no manifest, no coreRepo, a coreRepo that
-# is not a core checkout (an unmounted NAS is the ordinary case here), no pwsh, an audit
-# that throws. A drift check that breaks a session start is worse than no drift check, so
-# there is no path here that reports its own failure.
+# coreRepo lives in the sidecar (.harness-manifest.local.json), not the committed manifest
+# (.harness-manifest.json): it is an absolute path, which is machine-specific and does not
+# belong in a file a target repo commits (issue #137). A project that installed an earlier
+# version of this layer has coreRepo embedded in the committed manifest instead; this hook
+# does not fall back to reading it from there, so the comparison below stays unavailable
+# until the next install/-Accept/-Unaccept/-Prune run splits it out into the sidecar. That
+# gap prints, not silence: the missing-sidecar check just below covers exactly this case.
+# The migration itself is the same shape as every other one in this repo (Install-Harness.ps1's
+# own doc comment on ConvertTo-ManifestV2): the installer repairs the shape on its next touch
+# rather than every reader carrying a permanent fallback for a shape only the installer produces.
+#
+# Every OTHER failure degrades to silence and exit 0: no coreRepo, a coreRepo that is not a
+# core checkout (an unmounted NAS is the ordinary case here), no pwsh, an audit that throws.
+# A drift check that breaks a session start is worse than no drift check, so none of those
+# report their own failure. A missing sidecar is the one exception: see the block below.
 #
 # SECURITY: coreRepo comes out of a project-local JSON file. It is untrusted input naming a
 # directory this hook is about to run a script from, so before anything executes it must
@@ -46,9 +57,22 @@ if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi
 # failing). One general mechanism beats two overlapping ones.
 
 root="${CLAUDE_PROJECT_DIR:-.}"
+sidecar="$root/.claude/.harness-manifest.local.json"
 manifest="$root/.claude/.harness-manifest.json"
 
-[ -f "$manifest" ] || exit 0
+# Never installed: silent, same as every other "nothing to check" degradation below. Installed
+# (the committed manifest exists) but the sidecar is missing: the installer refused to write it
+# (issue #137's live-probe follow-up -- .claude/.gitignore does not yet confirm-cover it), and
+# every machine-specific comparison this hook and -Audit run against the sidecar is skipped
+# until that is fixed. One line rather than silence, so the skip is visible instead of reading
+# identical to "nothing to report." Still exit 0 either way: advisory only, nothing here can
+# refuse a tool call.
+if [ ! -f "$sidecar" ]; then
+    if [ -f "$manifest" ]; then
+        printf '%s\n' "harness: sidecar unavailable, machine-specific checks skipped (see -Audit)"
+    fi
+    exit 0
+fi
 
 # coreRepo by sed rather than by a JSON parser: jq is not a dependency of this repo and is
 # not bundled with Git for Windows (checked: `command -v jq` misses in its shell), and pwsh,
@@ -56,12 +80,12 @@ manifest="$root/.claude/.harness-manifest.json"
 # validated. Anchored on the key, first match wins, `q` stops the stream there. The value
 # pattern walks escape pairs (\" \\ \/) so it cannot end early on an escaped quote. A
 # malformed or absent key yields the empty string and exits silent below. A trailing CR from
-# a CRLF manifest falls outside the capture: it sits after the closing quote, which the
+# a CRLF sidecar falls outside the capture: it sits after the closing quote, which the
 # trailing `.*` consumes.
-# The `2>/dev/null || exit 0` is not belt-and-braces over the [ -f ] above: a manifest that
+# The `2>/dev/null || exit 0` is not belt-and-braces over the [ -f ] above: a sidecar that
 # exists and cannot be read (mode, ACL, a dangling symlink) makes sed write to stderr and exit
 # non-zero, and under `set -e` that aborts the hook with its complaint in the session start.
-core_repo=$(sed -n '/"coreRepo"[[:space:]]*:/{s/.*"coreRepo"[[:space:]]*:[[:space:]]*"\([^"\\]*\(\\.[^"\\]*\)*\)".*/\1/p;q;}' "$manifest" 2>/dev/null) || exit 0
+core_repo=$(sed -n '/"coreRepo"[[:space:]]*:/{s/.*"coreRepo"[[:space:]]*:[[:space:]]*"\([^"\\]*\(\\.[^"\\]*\)*\)".*/\1/p;q;}' "$sidecar" 2>/dev/null) || exit 0
 [ -n "$core_repo" ] || exit 0
 
 # JSON escapes back to a real path. A Windows coreRepo is written with doubled separators
@@ -73,12 +97,16 @@ core_repo=$(printf '%s\n' "$core_repo" | sed 's|\\\\|\\|g; s|\\/|/|g' 2>/dev/nul
 
 # coreRepo must not name a directory inside the project being audited. Without this the check
 # below is only a name-shape test: any directory holding install/Install-Harness.ps1 gets run,
-# so a PR touching one JSON string value in .harness-manifest.json plus an
-# install/Install-Harness.ps1 anywhere in the tree buys arbitrary PowerShell at every session
-# start on every equipped machine. That is a real escalation over editing the hook, which is
-# visible in review and prompted by Claude Code. A core checkout is by definition not part of
-# a consumer project, so nothing legitimate is refused.
-#   cd+pwd rather than a string compare on the raw values: the manifest holds a native path
+# so a PR that gets an attacker-chosen coreRepo into the sidecar, plus that install script
+# anywhere in the tree, buys arbitrary PowerShell at every session start on every equipped
+# machine. Two routes reach the sidecar: a force-added .harness-manifest.local.json
+# (.gitignore keeps it out of a normal add, not out of one that overrides it), and a plain
+# commit setting a top-level coreRepo in the tracked .harness-manifest.json, which the
+# installer's legacy carry-forward copies into the sidecar on the next run, no force-add
+# needed. That is a real escalation over editing the hook, which is visible in review and
+# prompted by Claude Code. A core checkout is by definition not part of a consumer project, so
+# nothing legitimate is refused.
+#   cd+pwd rather than a string compare on the raw values: the sidecar holds a native path
 # written by PowerShell and $root arrives in whatever form the harness set it, so the two are
 # only comparable once both have been through the same normalization. CDPATH= because a
 # relative coreRepo would otherwise resolve against it, and `--` because one starting with a

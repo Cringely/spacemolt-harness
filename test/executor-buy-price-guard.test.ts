@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { executeTick, BUY_PRICE_SANITY_MULTIPLIER } from "../src/agent/executor";
 import { UNTRUSTED_TEXT_SNIPPET_LEN } from "../src/planner/digest";
-import type { GameApi, PurchaseCostEstimate, StatusSnapshot } from "../src/client/client";
+import type { CurrentPoiInfo, GameApi, PurchaseCostEstimate, StatusSnapshot, SystemInfo } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
 import type { Plan } from "../src/registry/plan";
 
@@ -28,6 +28,15 @@ type Overrides = {
   unfilled?: number;
   estimateThrows?: boolean;
   omitEstimateApi?: boolean;
+  // Fuel_cell refuel-steer overrides (issue #1116). currentPoi feeds
+  // getSystem()'s response; omitGetSystemApi/getSystemThrows exercise the
+  // guard's fail-open paths the same way estimateThrows/omitEstimateApi do
+  // above. docked defaults true (BASE), same as every other test in this
+  // file -- only the undocked test overrides it.
+  currentPoi?: CurrentPoiInfo;
+  omitGetSystemApi?: boolean;
+  getSystemThrows?: boolean;
+  docked?: boolean;
 };
 
 const BASE: StatusSnapshot = {
@@ -38,13 +47,14 @@ const BASE: StatusSnapshot = {
 function stubApi(o: Overrides = {}) {
   const calls: Array<{ name: string; params?: Record<string, unknown> }> = [];
   let estimateLookups = 0;
+  let getSystemLookups = 0;
   const api: GameApi = {
     async action(name, params): Promise<V2Result> {
       calls.push({ name, params });
       return { result: "ok" };
     },
     async status() {
-      return { ...BASE };
+      return { ...BASE, docked: o.docked ?? BASE.docked };
     },
     async notifications() { return []; },
     ...(o.omitEstimateApi ? {} : {
@@ -57,8 +67,19 @@ function stubApi(o: Overrides = {}) {
         return { quantityRequested: o.quantityRequested, totalCost: o.totalCost, unfilled: o.unfilled };
       },
     }),
+    ...(o.omitGetSystemApi ? {} : {
+      async getSystem(): Promise<SystemInfo> {
+        getSystemLookups++;
+        if (o.getSystemThrows) throw new Error("system unreadable");
+        return { id: "sys1", name: "System", connections: [], pois: [], currentPoi: o.currentPoi };
+      },
+    }),
   };
-  return { api, calls, lookups: () => estimateLookups };
+  return {
+    api, calls,
+    lookups: () => estimateLookups,
+    getSystemCalls: () => getSystemLookups,
+  };
 }
 
 const buy = (id: string, quantity: number): Plan =>
@@ -73,7 +94,7 @@ describe("buy price-sanity guard: the incidents it exists to stop", () => {
     expect(r.kind).toBe("blocked");
     expect(r.kind === "blocked" && r.guard).toBe(true); // OUR refusal, not the game's
     expect(r.kind === "blocked" && r.reason).toContain("over 8x catalog value 25cr");
-    expect(r.kind === "blocked" && r.reason).toContain("create_buy_order{item_id=titanium_ore, quantity=12");
+    expect(r.kind === "blocked" && r.reason).toContain("create_buy_order for titanium_ore");
     expect(calls.length).toBe(0); // the buy itself never reached the game
     expect(lookups()).toBe(1); // one free query, not a retry loop
   });
@@ -212,8 +233,146 @@ describe("buy price-sanity guard: the refusal text the planner actually reads", 
     expect(r.kind).toBe("blocked");
     const reason = r.kind === "blocked" ? r.reason : "";
     expect(reason.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN);
-    // Both halves must survive: the refusal number and the remedy command.
+    // Both halves must survive: the refusal number and the remedy.
     expect(reason).toContain("over 8x catalog value");
-    expect(reason).toContain(`create_buy_order{item_id=${longest}, quantity=999999, price_each=<price>}`);
+    expect(reason).toContain(`create_buy_order for ${longest}`);
+  });
+
+  // Issue #1116: the remedy used to render as
+  // `create_buy_order{item_id=<id>, quantity=<qty>, price_each=<price>}` -- a
+  // filled-in, action-name-followed-by-brace command the planner could copy
+  // and send verbatim. That is the exact shape issue #681 already burned this
+  // project for (the GAME's own item_not_available error shipped a filled
+  // create_buy_order template and it was obeyed six times, locking ~21,800cr).
+  // This asserts the refusal never renders ANY action{param=...} template
+  // form, regardless of which item or branch produced it -- a regex, not a
+  // substring, so it also catches a future guard reintroducing the shape
+  // under a different action name. Ablated: reverting buyPriceGuard's reason
+  // strings to the pre-#1116 `create_buy_order{item_id=...}` text fails this
+  // test (checked against the old text above before it was rewritten).
+  test("the refusal never renders an action-name-followed-by-brace template", async () => {
+    const { api } = stubApi({ quantityRequested: 12, totalCost: 120_600 });
+    const r = await executeTick(api, buy("titanium_ore", 12), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).not.toMatch(/[a-z_]+\{[a-z_]+\s*=/i);
+  });
+});
+
+describe("buy price-sanity guard: the fuel_cell refuel steer (issue #1116)", () => {
+  // Docked, and get_system's current POI reports a positive fuel_reserve --
+  // the station tank actually has fuel to sell (client.ts's CurrentPoiInfo
+  // comment). has_base is set here too, matching a real station shape
+  // (poi-deposits-probe-2026-07-16.json's gold_run_extraction_hub entry:
+  // fuel_reserve 199942 of a 200000 capacity), but has_base plays no part in
+  // the guard's decision -- see the dry-station case below, where has_base is
+  // true and the guard still refuses to steer. The refusal steers to refuel
+  // instead of a buy order: refuel spends straight from the wallet, a buy
+  // order escrows the bid until a seller fills it, and a pilot rescued with
+  // just enough credits to refuel could lock that balance in a dead bid and
+  // strand itself again (#703 x #681).
+  test("docked with a positive station tank reading steers to refuel, not create_buy_order", async () => {
+    const { api } = stubApi({
+      quantityRequested: 49, totalCost: 220_108,
+      currentPoi: { id: "poi1", name: "Gold Run Extraction Hub", type: "station", hasBase: true, fuelReserve: 199_942 },
+    });
+    const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).toContain("Refuel here instead");
+    expect(reason).not.toContain("create_buy_order");
+  });
+
+  // Same signal, a smaller reading -- fuel_reserve alone decides, has_base
+  // absent entirely.
+  test("docked with any positive fuel_reserve at the current POI also steers to refuel", async () => {
+    const { api } = stubApi({
+      quantityRequested: 49, totalCost: 220_108,
+      currentPoi: { id: "poi1", name: "Station", type: "station", fuelReserve: 40 },
+    });
+    const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).toContain("Refuel here instead");
+  });
+
+  // Docked at a real base (has_base true, since dock() only ever reaches a
+  // base -- commands.md:59) whose tank reads exactly zero: a KNOWN-dry
+  // station, shaped like the live capture above with fuel_reserve zeroed
+  // out. has_base alone used to make this case wrongly steer to refuel. The
+  // guard now falls back to the generic create_buy_order remedy instead of
+  // steering somewhere that will fail (fuel.md:20, "empty stations can't
+  // sell you fuel").
+  test("docked at a dry station falls back to the generic remedy", async () => {
+    const { api } = stubApi({
+      quantityRequested: 49, totalCost: 220_108,
+      currentPoi: { id: "poi1", name: "Gold Run Extraction Hub", type: "station", hasBase: true, fuelReserve: 0 },
+    });
+    const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).toContain("create_buy_order for fuel_cell");
+    expect(reason).not.toContain("Refuel here instead");
+  });
+
+  // Fail-open, the direction that matters most (#94): no getSystem capability
+  // at all means the guard cannot ask the question, so it must not claim an
+  // answer either way -- it names BOTH remedies in prose rather than
+  // asserting refuel will work.
+  test("no getSystem capability names both remedies rather than asserting either", async () => {
+    const { api } = stubApi({
+      quantityRequested: 49, totalCost: 220_108, omitGetSystemApi: true,
+    });
+    const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).toContain("refuel");
+    expect(reason).toContain("create_buy_order for fuel_cell");
+  });
+
+  // Fail-open twin: a getSystem query that throws is UNKNOWN, not "no base
+  // here" -- same convention as every other guard's query failure.
+  test("a getSystem query that throws names both remedies rather than assuming no base", async () => {
+    const { api } = stubApi({
+      quantityRequested: 49, totalCost: 220_108, getSystemThrows: true,
+    });
+    const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).toContain("refuel");
+    expect(reason).toContain("create_buy_order for fuel_cell");
+  });
+
+  // Undocked: refuel is never offered as a remedy for a ship that is not at
+  // a station at all -- falls back to the generic create_buy_order remedy,
+  // and the guard must not spend a getSystem query to find out (docked is
+  // decidable for free from the snapshot already in hand).
+  test("undocked never steers to refuel, and spends no getSystem query", async () => {
+    const { api, getSystemCalls } = stubApi({
+      quantityRequested: 49, totalCost: 220_108,
+      currentPoi: { id: "poi1", name: "Station", type: "station", hasBase: true },
+      docked: false,
+    });
+    const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).toContain("create_buy_order for fuel_cell");
+    expect(reason).not.toContain("Refuel here instead");
+    expect(getSystemCalls()).toBe(0);
+  });
+
+  // A non-fuel_cell item never gets the refuel steer, confirmed base or not
+  // -- the steer is scoped to fuel specifically (issue #1116's own scope),
+  // and no getSystem query is spent finding that out.
+  test("a non-fuel_cell item never steers to refuel, and spends no getSystem query", async () => {
+    const { api, getSystemCalls } = stubApi({
+      quantityRequested: 12, totalCost: 120_600,
+      currentPoi: { id: "poi1", name: "Station", type: "station", hasBase: true },
+    });
+    const r = await executeTick(api, buy("titanium_ore", 12), { step: 0, iteration: 0 });
+    expect(r.kind).toBe("blocked");
+    const reason = r.kind === "blocked" ? r.reason : "";
+    expect(reason).not.toContain("refuel");
+    expect(getSystemCalls()).toBe(0);
   });
 });
