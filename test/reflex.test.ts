@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { evaluateReflex, fuelUrgent, reflexGaveUpAt } from "../src/agent/reflex";
+import { evaluateReflex, fuelUrgent, reflexGaveUpAt, classifyReflexFailureCause, AFFORDABILITY_CAUSE } from "../src/agent/reflex";
 import type { StatusSnapshot } from "../src/client/client";
 
 function status(overrides: Partial<StatusSnapshot>): StatusSnapshot {
@@ -149,5 +149,74 @@ describe("reflexGaveUpAt", () => {
       [null, undefined, { action: "refuel" }],
       "station_a", "refuel",
     )).toBe(false);
+  });
+
+  // Issue #1115: an affordability give-up must clear once credits have
+  // genuinely risen past the balance that failed -- the invariant this issue
+  // exists to fix. All of the cases below share one terminal, affordability-
+  // classified record (creditsAtFailure: 5) and vary only currentCredits, to
+  // isolate exactly the comparison reflexGaveUpAt makes.
+  describe("affordability invalidation (#1115)", () => {
+    const affordabilityRecord = {
+      action: "refuel" as const, stationKey: "station_a", terminal: true,
+      cause: AFFORDABILITY_CAUSE, creditsAtFailure: 5,
+    };
+
+    test("clears once currentCredits exceeds the recorded creditsAtFailure", () => {
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel", 1505)).toBe(false);
+    });
+
+    test("still gives up when currentCredits equals creditsAtFailure -- no rise, no evidence", () => {
+      // Killing mutation: `<` instead of `<=`/`>` would flip this exact boundary.
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel", 5)).toBe(true);
+    });
+
+    test("still gives up when currentCredits is below creditsAtFailure (e.g. spent elsewhere)", () => {
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel", 2)).toBe(true);
+    });
+
+    test("still gives up when currentCredits is unknown (undefined) -- no positive evidence to invalidate on", () => {
+      expect(reflexGaveUpAt([affordabilityRecord], "station_a", "refuel")).toBe(true);
+    });
+
+    // #672 regression guard: a dry-station (non-affordability) terminal give-up
+    // must NEVER clear on a rising balance -- the station's tank being empty
+    // has nothing to do with the pilot's wallet, and #672's whole point was
+    // stopping a doomed retry against exactly that condition.
+    test("a dry-station give-up (no cause) is unaffected by a rising balance", () => {
+      const dryStation = { action: "refuel" as const, stationKey: "station_a", terminal: true };
+      expect(reflexGaveUpAt([dryStation], "station_a", "refuel", 999_999)).toBe(true);
+    });
+
+    test("a legacy row (terminal but no cause/creditsAtFailure) is unaffected by a rising balance", () => {
+      const legacy = { action: "refuel" as const, stationKey: "station_a", terminal: true };
+      expect(reflexGaveUpAt([legacy], "station_a", "refuel", 999_999)).toBe(true);
+    });
+
+    test("an affordability cause with no recorded creditsAtFailure never clears, regardless of currentCredits", () => {
+      const noBalance = {
+        action: "refuel" as const, stationKey: "station_a", terminal: true, cause: AFFORDABILITY_CAUSE,
+      };
+      expect(reflexGaveUpAt([noBalance], "station_a", "refuel", 999_999)).toBe(true);
+    });
+  });
+});
+
+describe("classifyReflexFailureCause", () => {
+  test("classifies the live #1115 capture's exact message as an affordability cause", () => {
+    expect(classifyReflexFailureCause("No fuel cells in cargo and insufficient credits for station refueling."))
+      .toBe(AFFORDABILITY_CAUSE);
+  });
+
+  test("is case-insensitive", () => {
+    expect(classifyReflexFailureCause("INSUFFICIENT CREDITS for station refueling")).toBe(AFFORDABILITY_CAUSE);
+  });
+
+  test("a dry-station message (#672) classifies as no cause", () => {
+    expect(classifyReflexFailureCause("station_fuel_empty")).toBeUndefined();
+  });
+
+  test("an unrelated blocked message classifies as no cause", () => {
+    expect(classifyReflexFailureCause("cargo full")).toBeUndefined();
   });
 });

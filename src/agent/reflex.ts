@@ -129,6 +129,35 @@ export interface ReflexFailureRecord {
   action?: string;
   stationKey?: string | null;
   terminal?: boolean;
+  // Issue #1115: the failure's classified cause (see classifyReflexFailureCause
+  // below) and the credits balance this ship held AT the failed attempt.
+  // Both optional and both required together for reflexGaveUpAt's
+  // invalidation below to apply -- a pre-#1115 row carries neither, and reads
+  // exactly like a non-affordability failure (the #672 dry-station give-up,
+  // unchanged): persisted-state tolerance (AGENTS.md), no migration needed.
+  cause?: string;
+  creditsAtFailure?: number;
+}
+
+// Issue #1115: the one failure class reflexGaveUpAt below treats as
+// invalidated by a later, observable state change. A dry station (#672's
+// station_fuel_empty) has no such signal reachable from a StatusSnapshot --
+// the station's tank refilling isn't something this ship can see without a
+// live query -- so it keeps latching permanently, unchanged from #672. An
+// affordability refusal is different: the ship's own credits balance IS the
+// signal, already read every tick for the fingerprint (stall-monitor.ts's
+// progressFingerprint) and the reflex's own urgency check.
+export const AFFORDABILITY_CAUSE = "insufficient_credits";
+
+// Classifies a reflex failure's cause from the game's own error text -- the
+// same substring-match convention classifyGameError already uses for
+// transient-vs-terminal (executor.ts's TRANSIENT_BLOCK_MARKERS): no stable
+// error CODE separates an affordability refusal from a dry-station one at
+// this seam, only the message text does (see classifyGameError's comment).
+// Case-insensitive: the live capture that named this bug (#1115) carried
+// "insufficient credits" verbatim, but the game's casing is not a contract.
+export function classifyReflexFailureCause(message: string): string | undefined {
+  return message.toLowerCase().includes("insufficient credits") ? AFFORDABILITY_CAUSE : undefined;
 }
 
 /**
@@ -145,10 +174,32 @@ export interface ReflexFailureRecord {
  * elsewhere) is a different key entirely, and a vital that recovers above its
  * threshold by other means simply stops evaluateReflex's own condition from
  * firing regardless of this latch.
+ *
+ * Issue #1115. The latch above is otherwise permanent: a terminal record
+ * keeps matching forever, even once the condition that earned it has
+ * provably changed. `currentCredits` is this tick's known balance (pass
+ * `undefined` when unknown, e.g. a failed status fetch), and a matching
+ * record is skipped -- NOT counted as a give-up -- when it was classified as
+ * an affordability refusal AND credits have since risen past what failed.
+ * Both the cause and the recorded balance must be present on the row, and
+ * `currentCredits` must be known: any one missing (a legacy row predating
+ * this fix, a #672 dry-station cause, or an unknown current balance) falls
+ * through to the unconditional give-up below, same "never invalidate a
+ * block on a guess" rule the #94 fitment guards use for missing data. A
+ * retry that still can't afford it writes a FRESH terminal row at the new,
+ * higher balance, so the latch self-corrects without ever needing the exact
+ * refused price.
  */
 export function reflexGaveUpAt(
   records: ReadonlyArray<ReflexFailureRecord | null | undefined>,
   stationKey: string, action: "refuel" | "repair",
+  currentCredits?: number,
 ): boolean {
-  return records.some((r) => !!r && r.terminal === true && r.action === action && r.stationKey === stationKey);
+  return records.some((r) => {
+    if (!r || r.terminal !== true || r.action !== action || r.stationKey !== stationKey) return false;
+    if (r.cause === AFFORDABILITY_CAUSE && r.creditsAtFailure !== undefined && currentCredits !== undefined) {
+      return currentCredits <= r.creditsAtFailure; // still gives up unless credits genuinely rose
+    }
+    return true;
+  });
 }
