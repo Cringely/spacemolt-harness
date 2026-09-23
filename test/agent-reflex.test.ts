@@ -332,6 +332,159 @@ describe("Agent reflex integration", () => {
     expect(calls).toEqual([]); // give-up still armed despite the flood elsewhere
   });
 
+  // Issue #1115 fix, end-to-end through the real Agent/Store wiring (not just
+  // reflex.test.ts's pure reflexGaveUpAt unit tests). Ground truth (live
+  // capture, 2026-09-20, corsair at iron_reach_mining_colony): repeated
+  // `no_fuel_source: No fuel cells in cargo and insufficient credits for
+  // station refueling.` at 5cr latched a terminal give-up; a fleet-mate
+  // miner's 1,500cr gift (5 -> 1,505cr) left the pilot solvent, docked, and
+  // idle for about 15 minutes, because the latch that recorded "can't afford
+  // it" never checked whether that was still true. Three ticks: the give-up
+  // arms and records cause + creditsAtFailure, holds while credits are
+  // unchanged, then clears and the reflex actually retries -- and succeeds --
+  // once credits rise past the refused balance, without any operator steer.
+  test("terminal affordability failure: latches while credits are unchanged, clears and refuels once credits rise (#1115)", async () => {
+    const dockedStation: StatusSnapshot = {
+      ...lowFuelDocked, dockedAt: "iron_reach_mining_colony", credits: 5, creditsKnown: true,
+    };
+    let credits = 5;
+    const calls: string[] = [];
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        calls.push(name);
+        if (name === "refuel") {
+          if (credits < 1000) {
+            throw new SpacemoltError(
+              "no_fuel_source",
+              "No fuel cells in cargo and insufficient credits for station refueling.",
+            );
+          }
+          return { result: "ok" }; // affordable now -- the retry the latch was blocking
+        }
+        return { result: "ok" };
+      },
+      async status() { return { ...dockedStation, credits }; },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    store.savePlan("a1", { goal: "mine ore", steps: [{ action: "mine", params: {}, repeat: 5 }] }, []);
+    const planner = new MockPlanner([
+      { goal: "p1", steps: [{ action: "undock", params: {} }] },
+      { goal: "p2", steps: [{ action: "undock", params: {} }] },
+    ]);
+    let now = 1;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => now });
+
+    await agent.runOnce(); // tick 1: reflex fires, fails terminal, records cause + creditsAtFailure: 5
+    expect(calls).toEqual(["refuel"]);
+    const failures = store.recentEvents("a1", 20).filter((e) => e.type === "reflex_failed");
+    expect(failures.length).toBe(1);
+    expect(failures[0]!.payload).toMatchObject({ cause: "insufficient_credits", creditsAtFailure: 5 });
+
+    now = 2;
+    calls.length = 0;
+    await agent.runOnce(); // tick 2: credits unchanged -- give-up still armed, no second doomed refuel
+    expect(calls).toEqual([]);
+
+    now = 3;
+    credits = 1505; // the miner's gift, live capture: 5cr -> 1,505cr
+    calls.length = 0;
+    await agent.runOnce(); // tick 3: credits rose past the refused balance -- give-up clears
+    expect(calls).toEqual(["refuel"]); // the retry the latch was blocking, now actually attempted -- and it succeeds
+    const reflexEvents = store.recentEvents("a1", 20).filter((e) => e.type === "reflex");
+    expect(reflexEvents.length).toBe(1); // a genuine success event, not another reflex_failed
+    expect(store.recentEvents("a1", 20).filter((e) => e.type === "reflex_failed").length).toBe(1); // still just the one from tick 1
+  });
+
+  // Issue #1115 round 1 (review finding, PR #140): a dry-station terminal
+  // give-up must stay latched even once fireReflex has recorded a balance on
+  // the row -- after this PR, EVERY reflex failure (not just affordability
+  // ones) carries `creditsAtFailure`, so a dry-station row now has one too.
+  // reflex.test.ts pins the pure function directly with the same shape; this
+  // proves the guarantee end-to-end through the real fireReflex path (the
+  // review's "ideally"): tick 1 latches on `station_fuel_empty` at 5cr, tick
+  // 2 raises credits to 1,505 -- the SAME rise that clears an affordability
+  // latch in the test above -- and the give-up must still hold, because the
+  // station's tank being empty has nothing to do with the pilot's wallet.
+  test("dry-station give-up stays latched through fireReflex even as credits rise (#1115 round 1)", async () => {
+    const dockedStation: StatusSnapshot = {
+      ...lowFuelDocked, dockedAt: "iron_reach_mining_colony", credits: 5, creditsKnown: true,
+    };
+    let credits = 5;
+    const calls: string[] = [];
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        calls.push(name);
+        if (name === "refuel") throw new SpacemoltError("command_error", "station_fuel_empty");
+        return { result: "ok" };
+      },
+      async status() { return { ...dockedStation, credits }; },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    store.savePlan("a1", { goal: "mine ore", steps: [{ action: "mine", params: {}, repeat: 5 }] }, []);
+    const planner = new MockPlanner([
+      { goal: "p1", steps: [{ action: "undock", params: {} }] },
+      { goal: "p2", steps: [{ action: "undock", params: {} }] },
+    ]);
+    let now = 1;
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => now });
+
+    await agent.runOnce(); // tick 1: reflex fires, fails terminal, records creditsAtFailure: 5, no cause
+    expect(calls).toEqual(["refuel"]);
+    const failures = store.recentEvents("a1", 20).filter((e) => e.type === "reflex_failed");
+    expect(failures.length).toBe(1);
+    expect(failures[0]!.payload).toMatchObject({ creditsAtFailure: 5 });
+    expect((failures[0]!.payload as Record<string, unknown>).cause).toBeUndefined();
+
+    now = 2;
+    credits = 1505; // same rise that clears an AFFORDABILITY latch in the test above
+    calls.length = 0;
+    await agent.runOnce(); // tick 2: dry-station give-up must still hold
+    expect(calls).toEqual([]); // no retry -- the tank being empty didn't depend on the wallet
+  });
+
+  // Issue #1115 round 2 (review finding, PR #140): the incident's own latch
+  // was already on disk before any code existed that could clear it -- a
+  // pre-#1115 `reflex_failed` row shaped exactly like the corsair's real
+  // `iron_reach_mining_colony:refuel` row (action, reason, message,
+  // stationKey, terminal, key -- no `cause`, no `creditsAtFailure`, those
+  // fields didn't exist yet). Without classifying from the raw `message`,
+  // that row latches forever: only a reflex retry can replace it, and the
+  // latch is what blocks the retry. Seeded directly via appendEvent rather
+  // than produced through a failing fireReflex, because the point is that
+  // this exact row already exists on a real pilot's disk today.
+  test("a legacy (pre-#1115) affordability row gets a retry through the real Agent, not just the latch", async () => {
+    const dockedStation: StatusSnapshot = {
+      ...lowFuelDocked, dockedAt: "iron_reach_mining_colony", credits: 1505, creditsKnown: true,
+    };
+    const calls: string[] = [];
+    const api: GameApi = {
+      async action(name): Promise<V2Result> {
+        calls.push(name);
+        return { result: "ok" }; // affordable now -- the retry the legacy latch was blocking
+      },
+      async status() { return dockedStation; },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    store.appendEvent({
+      agentId: "a1", ts: 1, type: "reflex_failed",
+      payload: {
+        action: "refuel", reason: "no_fuel_source",
+        message: "No fuel cells in cargo and insufficient credits for station refueling.",
+        stationKey: "iron_reach_mining_colony", terminal: true, key: "iron_reach_mining_colony:refuel",
+      },
+    });
+    const planner = new MockPlanner([{ goal: "p1", steps: [{ action: "undock", params: {} }] }]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: baseConfig, now: () => 2 });
+
+    await agent.runOnce();
+    expect(calls).toEqual(["refuel"]); // the legacy latch no longer blocks the retry
+    expect(store.recentEvents("a1", 20).filter((e) => e.type === "reflex").length).toBe(1);
+    expect(planner.contexts.length).toBe(0); // succeeded: wake suppressed, planner never called
+  });
+
   // Issue #672's destination-aware remedy: a plan whose remaining steps
   // TRAVEL toward fuel (no refuel step yet -- the destination hasn't been
   // reached) was invisible to planRemediesFuel before this fix. The live
