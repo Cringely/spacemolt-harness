@@ -5,7 +5,7 @@ import { JETTISON_VALUE_FLOOR, SPARSE_LOCK_MULTIPLIER, canLockDeposit, totalMini
 import { failureClass } from "../server/failures";
 import { FUEL_PRICE_FLOOR_CR, LISTING_FEE_BPS } from "../agent/net-trip";
 import { catalog } from "../catalog/catalog";
-import type { PlanContext, ChatMessage } from "./types";
+import type { PlanContext, ChatMessage, ActiveMissionStatus } from "./types";
 import type { ActiveMissionObjective, FittedModule, LocationInfo, StatusSnapshot } from "../client/client";
 
 // Prompt-injection boundary (SECURITY, security-baseline.md's "LLM output is
@@ -704,6 +704,17 @@ export function buildDigest(ctx: PlanContext): string {
     // mineDepositBlock) and the Deposit check section above carries the exact
     // numbers whenever the pilot sits at a mineable POI.
     `Mining needs a mining laser module fitted (e.g. mining_laser_i) -- with none fitted a mine cannot succeed; acquire and fit one before planning mine. Match the laser to the deposit: a deposit has a supported_power, and if your total mining_power runs over ${SPARSE_LOCK_MULTIPLIER}x that you CANNOT lock the deposit -- a BIGGER laser makes depleted or sparse deposits WORSE, not better (when you are at a mineable POI, the Deposit check section above carries the exact numbers). When a deposit is too sparse or won't lock, move to a fresh richer vein rather than scraping the same one or fitting a bigger laser.`,
+    // Craft deposit-precondition fix (issue #1076, dupes #932/#997): the
+    // planner had NEVER been told this rule -- 98+24+35 identical cannot_craft
+    // failures across three separate 72h windows, zero prior mention of
+    // "craft" anywhere in this digest. REFERENCE-CHECKED: crafting.md:3,13,94
+    // ("Crafting draws from storage, never cargo") and the game's own refusal
+    // text names this exact fix. The executor's craftDepositBlock (issue
+    // #1076) is the deterministic backstop for the provable case (storage
+    // proven empty); this line covers the harder case that guard cannot --
+    // storage holding some items but not enough of what THIS recipe needs,
+    // since no producer here knows a recipe's required inputs.
+    `craft draws its recipe's inputs from STATION STORAGE, never your cargo hold -- mined or bought materials sitting in cargo do nothing for a craft until moved. Before planning craft{id=<recipe>}, deposit{item_id=<material>, quantity=<n>} each input the recipe needs into storage first. "Not enough materials in your station storage" means deposit first, not retry the same craft.`,
     // Remote-POI targeting fix (issue #176): scan's "pick right the first
     // time" nudge, paired with the executor's target-locality guard
     // (executor.ts). 16/16 lifetime scans were rejected with `invalid_target:
@@ -1008,6 +1019,44 @@ function renderActiveMissionListing(text: string): string {
 // timer would be a new destructive reflex, not a guardrail.
 export const MISSION_STALE_HOURS = 24;
 
+// Per-mission stale-advisory threshold (issue #700): MISSION_STALE_HOURS alone
+// assumes every mission's own clock runs long enough to accumulate a day of
+// zero progress. It doesn't. A distress-response mission expires on its own
+// in about 3 hours (docs/game-reference/upstream/docs/missions.md:70: "the
+// generated missions expire in 3 hours"; one tick is ~10s per
+// docs/game-reference/upstream/docs/connections.md:100), so it is gone long
+// before 24h of zero progress can accumulate -- the advisory was structurally
+// incapable of ever firing on the mission class the pilot holds most of (live
+// capture 2026-08-02: six distress missions at 0%, none flagged, #700).
+//
+// The fix derives a per-mission threshold instead of shrinking the global
+// constant -- lowering MISSION_STALE_HOURS itself was considered and rejected
+// for #592's missions and explicitly kept separate as this issue's own
+// producer (decisions.md, 2026-09-11 entry, option E). The threshold is
+// whichever is smaller: MISSION_STALE_HOURS, or the remaining hours the
+// mission's own expiresInTicks implies. That fires at the same elapsed-time
+// point as the earlier "half the elapsed+remaining budget" formula -- for any
+// elapsed value e and remaining value r, e >= min(24, (e+r)/2) holds exactly
+// when e >= min(24, r), so the halving (and the elapsed-hours input it
+// needed) was inert and is dropped. A distress mission still trips at roughly
+// its own halfway point (~1.5h into a ~3h life). The MISSION_STALE_HOURS cap
+// still keeps a mission with a day or more of remaining life at the #291-
+// tuned 24h -- but that guarantee holds only once remaining time reaches 24h,
+// not for "board contract" as a class: a board contract with less than a day
+// of life left now fires earlier than it did before this fix, the same as
+// any other short-lived mission. Falls back to the flat 24h when
+// expiresInTicks is missing OR not a genuine positive duration (zero or
+// negative -- the field is parsed as a bare optional number with no such
+// floor) -- a missing or nonsensical datum is never a reason to invent
+// urgency (#94), the same convention Agent.summarizeActiveMission already
+// applies to zeroProgressHours (agent.ts, `if (hours >= 0)`).
+const TICK_SECONDS = 10; // connections.md:100, "ticks of roughly 10 seconds"
+function staleAdvisoryThresholdHours(m: ActiveMissionStatus): number {
+  if (m.expiresInTicks === undefined || m.expiresInTicks <= 0) return MISSION_STALE_HOURS;
+  const remainingHours = (m.expiresInTicks * TICK_SECONDS) / 3600;
+  return Math.min(MISSION_STALE_HOURS, remainingHours);
+}
+
 // Objective types the deposit check must NOT fire on (issue #330). The deposit
 // membership verdict exists for MINING-fulfilled objectives -- "this belt does
 // not list your ore". A deliver_item objective carries an item_id too, but it
@@ -1218,7 +1267,7 @@ function renderMissionObjectiveCheck(
         }
       }
     }
-    if (m.zeroProgressHours !== undefined && m.zeroProgressHours >= MISSION_STALE_HOURS) {
+    if (m.zeroProgressHours !== undefined && m.zeroProgressHours >= staleAdvisoryThresholdHours(m)) {
       // Wrong-id producer fix (#931): same fallback fix as above -- a missing
       // mission_id means abandon_mission has no id either, so the fallback
       // names the wait instead of the untrusted raw listing.

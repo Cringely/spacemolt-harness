@@ -291,6 +291,20 @@ const SEAMS: Seam[] = [
     anchors: ["abandon_mission", /zero progress/i, /stale mission/i],
   },
   {
+    guard: "stale-mission threshold derives from the mission's own expiry (#700: a distress-response " +
+      "mission expires in ~3h -- under the flat MISSION_STALE_HOURS=24h, the advisory above was " +
+      "structurally incapable of ever firing on the mission class the pilot holds most of, since the " +
+      "mission is always gone before 24h of zero progress can accumulate)",
+    // Pins the derivation function itself, not just MISSION_STALE_HOURS (the
+    // seam above already pins that constant, and it survives unchanged as the
+    // long-mission fallback/cap -- so a regression that deletes ONLY the
+    // per-mission derivation and restores a flat MISSION_STALE_HOURS comparison
+    // must fail HERE, not there).
+    code: { file: "src/planner/digest.ts", marker: "function staleAdvisoryThresholdHours(" },
+    anchors: [/distress-response rescue expires/, /own HALFWAY point/, /whichever is smaller/,
+      /own expiry implies/],
+  },
+  {
     guard: "complete_mission objective guard (#291 regression: current<required -> blocked wake before the doomed tick)",
     code: { file: "src/agent/executor.ts", marker: "completeMissionBlock" },
     anchors: ["complete_mission", /mission_incomplete/i, /before completing/i],
@@ -533,6 +547,35 @@ const SEAMS: Seam[] = [
     anchors: ["220,108cr", "100,500cr", /8x the catalog base_value/],
   },
   {
+    guard: "item-id plan-admission guard (#982/#1003: a fabricated item id on buy/sell/jettison/" +
+      "withdraw/deposit/create_sell_order/create_buy_order -- 'wreck' (a salvage ENTITY, never a " +
+      "catalog item) and 'exotic_matter_sample' (no such id exists) -- is rejected before the step " +
+      "reaches the executor; the only prior backstop was executor.ts's post-hoc, buy-only " +
+      "nearestCatalogItemId correction, which never ran for the other six actions at all)",
+    // Repointed by the #982/#1003 fix round: normalizePlanItems moved inside
+    // normalize-plan.ts's admitPlan (folded with the location check, see
+    // that function's docblock), so the old marker -- a literal
+    // `normalizePlanItems(plan)` call in agent.ts -- no longer occurs in
+    // that file at all and would fail even with the guard fully intact.
+    // Repointed to the stronger invariant the fix round restores: the SAME
+    // admitPlan call runs BOTH before the retry AND on the retry-reparsed
+    // plan. The prior marker only pinned the first attempt, which is
+    // exactly the gap the fix round closed -- a retry-reparsed plan used to
+    // reach the executor with no re-validation at all. Verified by
+    // ablation: reverting to only the FIRST `admitted = admitPlan(...)`
+    // call (dropping the post-retry re-check, reproducing the fixed bug)
+    // fails this marker, since the regex requires the call site to occur
+    // twice with the second guarding a throw.
+    code: {
+      file: "src/agent/agent.ts",
+      marker: /admitted = admitPlan\(plan, surroundings\);[\s\S]*?admitted = admitPlan\(plan, surroundings\);\s*if \(!admitted\.ok\) \{\s*throw new Error/,
+    },
+    // Each anchor was absent from §4 before this bullet was added (checked,
+    // not assumed): 'wreck' and 'exotic_matter_sample' appear nowhere else in
+    // section 4, and "WORLD OBJECT" is this bullet's own coinage.
+    anchors: ["wreck", "exotic_matter_sample", "WORLD OBJECT", /plan-admission check rejects/],
+  },
+  {
     guard: "mine-objective buy-is-a-no-op teaching (#458: the digest's shortfall hint for a mine-type " +
       "objective now states that buying the item does not advance it -- a live capture on the same " +
       "issue bought 12 titanium_ore for 120,600cr and complete_mission was still blocked " +
@@ -543,6 +586,23 @@ const SEAMS: Seam[] = [
     // one string, so the string vanishing IS the lesson vanishing.
     code: { file: "src/planner/digest.ts", marker: "buying it does NOT advance this objective, only the mine action does" },
     anchors: ["titanium_ore 8/20 (mine 12 more)", /does NOT count toward a mine-type objective/i],
+  },
+  {
+    guard: "craft deposit-precondition guard (#1076, dupes #932/#997: a craft whose personal " +
+      "station storage provably holds NOTHING is refused before the tick -- 98+24+35 identical " +
+      "cannot_craft failures across three 72h windows, and neither briefing ever taught the " +
+      "planner that crafting reads storage, not cargo, before this fix)",
+    // Pins the CALL SITE, the same shape every other seam in this file uses
+    // (withdrawStorageBlock's comment explains why: the interior function
+    // existing proves nothing if nothing calls it).
+    code: { file: "src/agent/executor.ts", marker: /await craftDepositBlock\(api, step\)/ },
+    // Each anchor was absent from §4 before this bullet was added (checked
+    // against origin/main, not assumed).
+    anchors: [
+      "escrows its recipe's inputs from your STATION STORAGE",
+      "Not enough materials in your station storage",
+      /deliberately undocumented/,
+    ],
   },
 ];
 

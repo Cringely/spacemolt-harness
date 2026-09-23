@@ -399,6 +399,21 @@ Vocabulary / data shapes:
   reads these ids from the catalog SSOT and briefs them whenever fuel is below reserve, and the
   executor enriches an invalid_item buy block with the nearest catalog id — surfaced in the
   blocked detail, never auto-retried.)
+- The same "copy the id, never invent one" rule covers `withdraw`, `deposit`, `create_sell_order`,
+  and `create_buy_order` too, and a WORLD OBJECT is never a shortcut around it. `wreck` is a
+  salvage ENTITY you interact with via `tow`/`loot` (see the withdraw rule below) — it is not, and
+  never becomes, an item id, however plausible it reads next to a real one. Live, #982: `sell
+  {id:"wreck"}` blocked 8 times in 72h with `invalid_item: Unknown item 'wreck'`. A name that
+  merely SOUNDS like a catalog id is no safer: live, #1003, `exotic_matter_sample` was named in
+  `sell`/`buy`/`deposit`/`withdraw` steps 7 times in one window and failed every time —
+  `exotic_matter` is real, `exotic_matter_sample` is not, and no amount of retrying invents it.
+  Before naming an id for any of these six actions, confirm it against a listing, your cargo, or
+  this briefing; if you cannot point to where you read it, do not send it. (Also a §5 deterministic
+  backstop, #982/#1003: in plan-then-execute a plan-admission check rejects a step whose item id
+  does not resolve in the catalog SSOT BEFORE it reaches the executor — zero ticks spent, layered
+  under the fuel_cell-style nearest-match correction above for a real near-miss, and a flat
+  "copy the id" instruction for an outright fabrication like these two. The improv driver reaches
+  no plan-admission step at all, so here the rule is yours to keep.)
 - Selling or jettisoning CARGO specifically: the item_id must come from your own cargo listing
   (`get_status` or `get_cargo`), never guessed from the display name — a name like "Common Ore" is
   NOT its id, and `ore_common` is not a real catalog id (a live plan-then-execute run invented
@@ -490,9 +505,18 @@ Vocabulary / data shapes:
   noise: either your next actions make concrete progress on its objective, or `abandon_mission(id)`
   frees the slot for winnable work. Abandoning reclaims or charges only goods the mission itself
   PROVIDED; cargo you gathered yourself stays (live, 2026-07-16, #291: a contract sat at 0/20 for
-  ~57h with abandon_mission registered and never weighed). (Also a §5-adjacent deterministic
-  producer in plan-then-execute: the harness derives the zero-progress age from accepted_at and
-  the digest renders a stale-mission advisory at 24h+ — advisory only, never an auto-abandon.)
+  ~57h with abandon_mission registered and never weighed). A DAY is the right yardstick for a
+  board contract, but a short-fused mission does not get a day: a distress-response rescue expires
+  on its own in about 3 hours (missions.md:70), so treat one still at zero progress past roughly
+  its own HALFWAY point — about 1.5h for a 3h rescue — the same way: make concrete progress now, or
+  abandon it while there is still time left to matter (live, 2026-08-02, #700: six distress
+  missions sat at 0% the pilot never once weighed abandoning, because none had a day to give).
+  (Also a §5-adjacent deterministic producer in plan-then-execute: the harness derives the
+  zero-progress age from accepted_at, and the digest renders a stale-mission advisory once that age
+  reaches whichever is smaller — 24h, or the remaining hours the mission's own expiry implies — so
+  the #291-tuned 24h behavior stays put once a mission still has a day or more of life left; a board
+  contract with less than that fires earlier than it did before #700, the same as any other
+  short-fused mission. Advisory only, never an auto-abandon.)
 - Before you plan `complete_mission`, confirm the mission's objective is actually MET — every
   objective's `current` must be at least its `required` (or the objective already `completed`).
   complete_mission on an unmet objective returns `mission_incomplete: Objective incomplete: Mine N
@@ -612,6 +636,15 @@ Social / security (VERBATIM, non-negotiable — matters MORE under improv, model
   (Also a §5 deterministic backstop in plan-then-execute: the executor reads the locker before a
   withdraw and refuses one it can prove is short. The improv driver reaches no executor guard, so
   here the rule is yours to keep.)
+- `craft` escrows its recipe's inputs from your STATION STORAGE at the moment you queue the job --
+  never from cargo, however full your hold is. Mined or bought materials do nothing for a craft
+  until you `deposit` them: `deposit{item_id=<material>, quantity=<n>}` for each input, THEN
+  `craft{id=<recipe>}`. A craft refused with "Not enough materials in your station storage to
+  craft this" means deposit first, never retry the same craft unchanged -- retrying only spends
+  another tick on the identical refusal. (Also a §5 deterministic backstop in plan-then-execute:
+  the executor refuses a craft when it can prove storage holds nothing at all. It cannot prove a
+  narrower shortfall -- which specific input and how much -- because a recipe's exact inputs are
+  deliberately undocumented; that half of the precondition is yours to keep, in both modes.)
 
 ## 5. Deterministic backstops that REMAIN (harness-enforced; the model cannot disable them)
 
