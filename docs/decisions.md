@@ -1259,7 +1259,7 @@ The accepted cost is blast radius. A stolen `store_bearer` used to buy event rea
 
 ## 2026-09-23 - Reflex give-up gets a cause and a credits check, not a TTL (#1115)
 
-**Context.** `reflexGaveUpAt` (#672) latches a terminal reflex failure per (station, action) permanently, with no record of WHY it failed. A give-up earned on insufficient credits never re-tests itself once credits change -- only a retry could overwrite the record, and the latch is exactly what blocks that retry. Live capture (corsair, 2026-09-20): latched at 5cr, gifted 1,500cr by the operator, then sat solvent and idle 9+ hours until an operator steer forced a replan.
+**Context.** `reflexGaveUpAt` (#672) latches a terminal reflex failure per (station, action) permanently, with no record of WHY it failed. A give-up earned on insufficient credits never re-tests itself once credits change -- only a retry could overwrite the record, and the latch is exactly what blocks that retry. Live capture (corsair, 2026-09-20): latched at 5cr, gifted 1,500cr by a fleet-mate miner, then sat solvent and idle for about 15 minutes until an operator steer forced a replan.
 
 **Options.**
 - *(A) Time-to-live on terminal records [rejected].* Reopens the #672 livelock: a truly dry station (`station_fuel_empty`) retries every TTL window forever, spending a tick on a call the game already refused.

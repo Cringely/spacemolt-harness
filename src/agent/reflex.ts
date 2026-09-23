@@ -130,13 +130,18 @@ export interface ReflexFailureRecord {
   stationKey?: string | null;
   terminal?: boolean;
   // Issue #1115: the failure's classified cause (see classifyReflexFailureCause
-  // below) and the credits balance this ship held AT the failed attempt.
-  // Both optional and both required together for reflexGaveUpAt's
-  // invalidation below to apply -- a pre-#1115 row carries neither, and reads
-  // exactly like a non-affordability failure (the #672 dry-station give-up,
-  // unchanged): persisted-state tolerance (AGENTS.md), no migration needed.
+  // below) and the credits balance this ship held AT the failed attempt. Both
+  // optional together for reflexGaveUpAt's balance-comparison invalidation
+  // below to apply -- when either is missing, that specific comparison falls
+  // through to the message-classified fallback (round 2) or, failing that,
+  // the unconditional give-up, same persisted-state tolerance (AGENTS.md).
   cause?: string;
   creditsAtFailure?: number;
+  // The raw error text agent.ts's fireReflex has always recorded here, even
+  // before #1115 added `cause`/`creditsAtFailure` -- so a row from BEFORE
+  // this fix still carries it. reflexGaveUpAt's round-2 fallback below
+  // reclassifies exactly this field when `cause` itself is absent.
+  message?: string;
 }
 
 // Issue #1115: the one failure class reflexGaveUpAt below treats as
@@ -182,13 +187,31 @@ export function classifyReflexFailureCause(message: string): string | undefined 
  * record is skipped -- NOT counted as a give-up -- when it was classified as
  * an affordability refusal AND credits have since risen past what failed.
  * Both the cause and the recorded balance must be present on the row, and
- * `currentCredits` must be known: any one missing (a legacy row predating
- * this fix, a #672 dry-station cause, or an unknown current balance) falls
- * through to the unconditional give-up below, same "never invalidate a
- * block on a guess" rule the #94 fitment guards use for missing data. A
- * retry that still can't afford it writes a FRESH terminal row at the new,
- * higher balance, so the latch self-corrects without ever needing the exact
- * refused price.
+ * `currentCredits` must be known: any one missing (a #672 dry-station cause,
+ * or an unknown current balance) falls through toward the unconditional
+ * give-up below, same "never invalidate a block on a guess" rule the #94
+ * fitment guards use for missing data. A retry that still can't afford it
+ * writes a FRESH terminal row at the new, higher balance, so the latch
+ * self-corrects without ever needing the exact refused price.
+ *
+ * Round 2 (review finding, PR #140): a row from BEFORE this fix shipped
+ * carries neither `cause` nor `creditsAtFailure` -- those fields didn't
+ * exist yet -- so it fell through to the unconditional give-up with no way
+ * to ever clear; a `reflex_failed` row is only ever replaced by a NEW reflex
+ * attempt, which the latch itself blocks. The corsair `iron_reach_mining_colony`
+ * row from the live incident is exactly this shape. When `cause` is absent
+ * but the row's raw `message` is present (always recorded, even pre-#1115),
+ * it is classified the same way a fresh failure would be
+ * (classifyReflexFailureCause). A row that classifies as affordability with
+ * no recorded balance gets exactly ONE retry once `currentCredits` is known
+ * -- not counted as a give-up this tick -- rather than latching forever with
+ * nothing to compare against. That retry is self-limiting: fireReflex
+ * (agent.ts) unconditionally records `cause` and `creditsAtFailure` on every
+ * failure, so this row is either replaced by a fully populated one (which
+ * then latches or clears by the balance comparison above) or the retry
+ * succeeds and the row stops mattering. A legacy row whose message names no
+ * affordability cause (a pre-#672-era dry-station failure) still latches
+ * forever, unchanged.
  */
 export function reflexGaveUpAt(
   records: ReadonlyArray<ReflexFailureRecord | null | undefined>,
@@ -199,6 +222,18 @@ export function reflexGaveUpAt(
     if (!r || r.terminal !== true || r.action !== action || r.stationKey !== stationKey) return false;
     if (r.cause === AFFORDABILITY_CAUSE && r.creditsAtFailure !== undefined && currentCredits !== undefined) {
       return currentCredits <= r.creditsAtFailure; // still gives up unless credits genuinely rose
+    }
+    // Round 2: a pre-#1115 row has no `cause` field to read at all -- only
+    // `message`, which fireReflex has always recorded. Reclassify from it so
+    // a legacy affordability row isn't stuck forever just because it predates
+    // the field that names its own cause. A row whose `cause` is explicitly
+    // set to something else (or explicitly absent with no message either)
+    // does not enter this branch and keeps the unconditional give-up below.
+    if (r.cause === undefined && r.message !== undefined) {
+      const inferredCause = classifyReflexFailureCause(r.message);
+      if (inferredCause === AFFORDABILITY_CAUSE && r.creditsAtFailure === undefined && currentCredits !== undefined) {
+        return false; // one retry, not a give-up: fireReflex will overwrite this row either way
+      }
     }
     return true;
   });
