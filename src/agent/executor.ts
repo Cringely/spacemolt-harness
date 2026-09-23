@@ -947,12 +947,46 @@ async function craftDepositBlock(api: GameApi, step: PlanStep): Promise<StepResu
 // withdrawStorageBlock's comment explains: digest.ts clips a blocked wake's
 // detail at UNTRUSTED_TEXT_SNIPPET_LEN (200) on the NEXT replan, and a reason
 // that loses its remedy half to that clip teaches nothing. The item id
-// appears ONCE (inside the command, for the same reason withdraw's comment
-// gives), and the whole reason is asserted under 200 chars at the real
-// catalog's longest id (test/executor-buy-price-guard.test.ts).
+// appears ONCE (inside the remedy sentence, for the same reason withdraw's
+// comment gives), and the whole reason is asserted under 200 chars at the
+// real catalog's longest id (test/executor-buy-price-guard.test.ts).
+//
+// PROSE REMEDY, NOT A TEMPLATE (issue #1116). This guard used to render its
+// remedy as `create_buy_order{item_id=<id>, quantity=<qty>, price_each=<price>}`
+// -- a filled-in, action-name-followed-by-brace command the planner can copy
+// and send as-is. That is the exact shape issue #681 already burned this
+// project for: the GAME's own item_not_available error shipped a filled
+// create_buy_order template, the planner obeyed it six times, and ~21,800cr
+// sat locked in duplicate escrow ([[external-text-as-instruction]],
+// engineering-lessons -- tool output cannot be told apart from instruction).
+// #1116 is the same failure with the HARNESS as the producer instead of the
+// game. The fix is the same for both: name the remedy action in prose, never
+// as a fillable call, so it reads as advice rather than a next step.
+//
+// FUEL_CELL STEER, ONLY WHEN DOCKED AND REFUEL IS KNOWN TO WORK HERE. A
+// buy order for fuel is worse than an ordinary one: create_buy_order ESCROWS
+// the whole bid up front (markets.md:31) while `refuel` spends straight from
+// the wallet on the spot, so a pilot rescued with just enough credits to
+// refuel can lock that same balance in a dead bid and strand itself again --
+// #703 composed with #681. Docked does NOT by itself prove refuel will
+// work: /api/v2/spacemolt/refuel documents two docked modes, "(3) station
+// refueling" and "(4) otherwise -> fuel cells from cargo" (stations.ts's
+// STATION_SERVICE_BY_ACTION comment, PR #18 review F2), both of which
+// SUCCEED while docked, which is exactly why that table deliberately never
+// tags a station `refuel` as a proven service. The one signal this harness
+// already trusts for "the docked reflex can refuel here" is get_system's
+// current-POI `has_base`/`fuel_reserve` (client.ts's CurrentPoiInfo comment,
+// agent.ts's stall-watcher `currentPoiHasBase`), so this guard asks the same
+// live question the same way rather than assume from `docked` alone. No
+// getSystem, a thrown query, or a current POI with neither signal set all
+// fall through to naming BOTH remedies in prose -- fail open, same
+// convention as every guard in this file (#94): never claim refuel works
+// on data we cannot read.
 export const BUY_PRICE_SANITY_MULTIPLIER = 8;
 
-async function buyPriceGuard(api: GameApi, step: PlanStep): Promise<StepResult | null> {
+async function buyPriceGuard(
+  api: GameApi, step: PlanStep, preStatus: StatusSnapshot | null,
+): Promise<StepResult | null> {
   const p = step.params as { id?: unknown; quantity?: unknown };
   if (typeof p.id !== "string" || !p.id) return null;
   if (typeof p.quantity !== "number" || p.quantity <= 0) return null;
@@ -986,10 +1020,39 @@ async function buyPriceGuard(api: GameApi, step: PlanStep): Promise<StepResult |
   const ceiling = baseValue * BUY_PRICE_SANITY_MULTIPLIER;
   if (perUnit <= ceiling) return null;
 
-  const reason =
-    `buy refused: ${Math.round(perUnit)}cr/unit over ${BUY_PRICE_SANITY_MULTIPLIER}x catalog value ${baseValue}cr. ` +
-    `Deliberate? create_buy_order{item_id=${p.id}, quantity=${p.quantity}, price_each=<price>} instead.`;
-  return guardBlock(reason);
+  const priceLine =
+    `buy refused: ${Math.round(perUnit)}cr/unit over ${BUY_PRICE_SANITY_MULTIPLIER}x catalog value ${baseValue}cr.`;
+
+  if (p.id === "fuel_cell" && preStatus?.docked === true) {
+    // UNKNOWN (not false) when there is no getSystem capability at all, the
+    // same fail-open-per-field discipline every other rung in this file
+    // uses: absence of a capability to consult is not proof there is no
+    // station pump here, so it takes the "name both remedies" branch below,
+    // never the generic-only one.
+    let canRefuelHere: boolean | undefined;
+    try {
+      const cp = api.getSystem ? (await api.getSystem()).currentPoi : undefined;
+      if (cp) canRefuelHere = !!(cp.hasBase || (cp.fuelReserve ?? 0) > 0);
+    } catch {
+      canRefuelHere = undefined; // query threw -> UNKNOWN -> name both remedies
+    }
+    if (canRefuelHere === true) {
+      return guardBlock(
+        `${priceLine} Refuel here instead -- it spends from your wallet, not an escrowed order.`,
+      );
+    }
+    if (canRefuelHere === undefined) {
+      return guardBlock(
+        `${priceLine} Try refuel here, or create_buy_order for fuel_cell -- either beats this price.`,
+      );
+    }
+    // canRefuelHere === false: no station pump here -> fall through to the
+    // generic remedy below, same as any other overpriced item.
+  }
+
+  return guardBlock(
+    `${priceLine} Deliberate? create_buy_order for ${p.id} beats a spot buy at this price.`,
+  );
 }
 
 // refuel target precondition guard (issue #595): target selects ship-to-ship
@@ -1783,7 +1846,7 @@ export async function executeTick(
   // iteration buys deeper in the book at a fresh price the game hasn't
   // reported a problem with, so only a per-iteration check catches it.
   if (step.action === "buy") {
-    const block = await buyPriceGuard(api, step);
+    const block = await buyPriceGuard(api, step, preStatus);
     if (block) return block;
   }
 

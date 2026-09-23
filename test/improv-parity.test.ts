@@ -538,13 +538,40 @@ const SEAMS: Seam[] = [
     // explains: the interior function existing proves nothing if nothing
     // calls it. A REGEX (with its arguments) for the same reason that entry
     // gives -- a bare `toContain("buyPriceGuard")` survives a rename to
-    // `buyPriceGuardXX` as a substring of the new name.
-    code: { file: "src/agent/executor.ts", marker: /await buyPriceGuard\(api, step\)/ },
+    // `buyPriceGuardXX` as a substring of the new name. Repointed by #1116,
+    // which added a third `preStatus` argument (needed for the fuel_cell
+    // refuel steer below) -- the old two-argument marker went stale the
+    // moment the signature changed, the same drift the #982/#1003 seam's
+    // comment warns about.
+    code: { file: "src/agent/executor.ts", marker: /await buyPriceGuard\(api, step, preStatus\)/ },
     // Each anchor was absent from §4 before this bullet was added (checked,
     // not assumed). "Mining Laser III" is deliberately NOT an anchor: the
     // install_mod section above already names it (issue #402), so it would
     // pass on a neighbour's vocabulary rather than on this bullet.
     anchors: ["220,108cr", "100,500cr", /8x the catalog base_value/],
+  },
+  {
+    guard: "buy price-sanity refusal: prose remedy, not a template, plus the fuel_cell refuel steer " +
+      "(#1116: the refusal used to render create_buy_order as a filled-in, action-name-followed-by-" +
+      "brace command the planner could copy verbatim -- the exact shape a GAME error already got " +
+      "obeyed six times and locked ~21,800cr in #681. Docked with fuel_cell specifically, a buy order " +
+      "ESCROWS the bid while refuel spends straight from the wallet, so this now steers to refuel " +
+      "when the current POI is confirmed to support it, and never claims that when it cannot tell)",
+    // Pins the fuel_cell branch's own condition, not just the call site --
+    // the call site marker above survives a rename or a deletion of the
+    // fuel_cell steer entirely (buyPriceGuard would still be called), so a
+    // seam meant to hold THIS behaviour honest has to pin the behaviour
+    // itself, the same distinction the withdrawStorageBlock comment draws
+    // between wiring and existence.
+    code: {
+      file: "src/agent/executor.ts",
+      marker: /p\.id === "fuel_cell" && preStatus\?\.docked === true/,
+    },
+    // Each anchor was absent from §4 before this bullet was added (checked,
+    // not assumed, including against the pre-existing #458 bullet this one
+    // extends).
+    anchors: [/weigh `refuel` FIRST/, /ESCROWS the bid until a seller/, /crossed with #681/,
+      /obeyed verbatim and locked ~21,800cr/],
   },
   {
     guard: "item-id plan-admission guard (#982/#1003: a fabricated item id on buy/sell/jettison/" +
