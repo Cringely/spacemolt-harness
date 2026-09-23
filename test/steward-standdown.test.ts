@@ -9,7 +9,10 @@ import { STEWARD_PR_REPO, STEWARD_STANDDOWN_WINDOW_MS, stewardPrInFlight } from 
 const NOW = Date.UTC(2026, 8, 23, 12, 0);
 const HOUR = 3_600_000;
 
-function rowsGh(rows: Array<{ headRefName: string; createdAt: string }>, expectRepo = STEWARD_PR_REPO): GhRunner {
+function rowsGh(
+  rows: Array<{ headRefName: string; createdAt: string; isCrossRepository?: boolean }>,
+  expectRepo = STEWARD_PR_REPO,
+): GhRunner {
   return (args) => {
     expect(args).toContain("--repo");
     expect(args).toContain(expectRepo);
@@ -98,6 +101,24 @@ describe("stewardPrInFlight (#1136)", () => {
       { headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000) },
       { headRefName: "fix/unrelated-2", createdAt: ago(10 * 60_000) },
     ]);
+    expect(stewardPrInFlight(gh, NOW)).toBe(true);
+  });
+
+  // Catches (#1136 fix-round): `gh pr list` on a public repo returns PRs
+  // opened from forks too, and headRefName is the FORK's own branch name --
+  // an outsider could otherwise open a `docs/steward-*` fork PR and stand
+  // this ceremony down for a day. A fresh, correctly-named branch that is
+  // cross-repository must still read as false.
+  test("a fresh docs/steward-* PR from a fork ⇒ false", () => {
+    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000), isCrossRepository: true }]);
+    expect(stewardPrInFlight(gh, NOW)).toBe(false);
+  });
+
+  // Same fresh branch, same-repo (isCrossRepository omitted, matching every
+  // other test above): must still count as in-flight -- pins that the new
+  // filter is additive, not a silent narrowing of the existing case.
+  test("a fresh docs/steward-* PR from the repo itself ⇒ true", () => {
+    const gh = rowsGh([{ headRefName: "docs/steward-2026-09-23", createdAt: ago(10 * 60_000) }]);
     expect(stewardPrInFlight(gh, NOW)).toBe(true);
   });
 });

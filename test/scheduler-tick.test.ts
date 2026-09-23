@@ -1,7 +1,7 @@
 // Batch D / Task D-Tick (#114): tick orchestration + entry script. Offline:
 // injected clock/gitRunner/spawner, temp dirs, zero live spawns, zero git
 // network, zero tokens. The scenario walk runs against the REAL JOBS table so
-// the mandated cadences (2h @ :07, 6h @ :27, daily 06:19, merge+20min settle)
+// the mandated cadences (2h @ :07, 6h @ :27, daily 06:19, merge+60min settle)
 // are what is under test, not a fixture's idea of them.
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -150,8 +150,9 @@ describe("tick orchestration (D-Tick)", () => {
     await tick(deps(T + 2 * HOUR + 10 * MIN));
     expect(calls.map(jobOf)).toEqual(["strategy"]);
 
-    // Merge lands at 12:32; tick at 12:45 sits inside the 20-min settle
-    // window ⇒ no steward (and no grid job is due) — zero spawns.
+    // Merge lands at 12:32; tick at 12:45 (13 min later) sits inside the
+    // #1136-fix-round 60-min settle ⇒ no steward (and no grid job is due) —
+    // zero spawns.
     repo.sha = "bbb";
     repo.commitAtMs = T + 2 * HOUR + 12 * MIN;
     repo.subjects = ["feat(agent): real change (#390)"];
@@ -160,20 +161,21 @@ describe("tick orchestration (D-Tick)", () => {
     expect(calls.length).toBe(0);
     expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("aaa"); // anchor NOT advanced mid-settle
 
-    // 12:55 — settle passed (23 min) ⇒ steward fires, alone; sha advances.
+    // 13:35 — settle passed (63 min) ⇒ steward fires, alone; sha advances.
     calls.length = 0;
-    r = await tick(deps(T + 2 * HOUR + 35 * MIN));
+    r = await tick(deps(T + 3 * HOUR + 15 * MIN));
     expect(calls.map(jobOf)).toEqual(["steward"]);
     expect(r.fired).toEqual([{ jobId: "steward", result: "ok" }]);
     expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("bbb");
 
     // The steward's own merged PR (all-new-subjects docs(steward)) must be
-    // absorbed, never fired — the L-3 self-trigger loop.
+    // absorbed, never fired — the L-3 self-trigger loop. Absorption never
+    // checks settle time, so the tick doesn't need to sit close to commitAtMs.
     repo.sha = "ccc";
-    repo.commitAtMs = T + 2 * HOUR + 40 * MIN;
+    repo.commitAtMs = T + 3 * HOUR + 25 * MIN;
     repo.subjects = ["docs(steward): reconcile cluster (#391)"];
     calls.length = 0;
-    r = await tick(deps(T + 3 * HOUR + 5 * MIN));
+    r = await tick(deps(T + 3 * HOUR + 40 * MIN)); // still short of standup's next grid point (14:07)
     expect(calls.length).toBe(0);
     expect(r.absorbed).toEqual(["steward"]);
     expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("ccc");
@@ -192,7 +194,7 @@ describe("tick orchestration (D-Tick)", () => {
   // proves divergence is actually impossible, not just unrestored.
   test("steward fires ⇒ runs in its own ephemeral worktree, never the shared checkout", async () => {
     const dirs = makeDirs();
-    // Steward-due state: a merge landed + settled (>20min old, new subjects,
+    // Steward-due state: a merge landed + settled (>60min old, new subjects,
     // sha ahead of the anchor); grids quiesced so the steward fires alone.
     const anchors: Record<JobId, JobAnchor> = {
       standup: { ...defaultAnchor(), lastAttemptAt: T },
@@ -201,7 +203,7 @@ describe("tick orchestration (D-Tick)", () => {
       steward: { ...defaultAnchor(), stewardAnchorSha: "old" },
     };
     saveAnchors(dirs.stateDir, anchors);
-    const repo = { sha: "new", commitAtMs: T - 30 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
+    const repo = { sha: "new", commitAtMs: T - 90 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
     const base = fakeGit(repo, dirs.checkoutDir);
     const gitCalls: string[][] = [];
     const recordingGit: GitRunner = (args) => {
@@ -237,7 +239,7 @@ describe("tick orchestration (D-Tick)", () => {
       steward: { ...defaultAnchor(), stewardAnchorSha: "old" },
     };
     saveAnchors(dirs.stateDir, quiesced);
-    const repo = { sha: "new", commitAtMs: T - 30 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
+    const repo = { sha: "new", commitAtMs: T - 90 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
     const ghCalls: string[][] = [];
     const ghRunner: GhRunner = (args) => {
       ghCalls.push(args);

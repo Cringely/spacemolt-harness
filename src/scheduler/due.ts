@@ -56,12 +56,23 @@ export function dueJobs(
         absorb.push({ jobId: job.id, sha: main.headSha });
       } else if (main.headSha !== anchor.stewardAnchorSha) {
         const subjects = main.newSubjectsSinceAnchor;
-        if (subjects.length > 0 && subjects.every((s) => STEWARD_SELF_SUBJECT.test(s))) {
-          // Entire delta is the steward's own merged PR: absorb, never fire.
-          // An EMPTY subject list with a sha delta (rebase/force-push, git
-          // hiccup) is not proof of a self-merge, so it falls through and
-          // fires — a spare steward pass is cheap; a silently skipped one
-          // advances the anchor past a real merge forever.
+        // subjects[0] is the NEWEST commit (git log's default order): when it
+        // is the steward's own merge, that PR was authored against a main
+        // that already included everything else in this delta, so it covers
+        // the whole stretch even when older, non-steward subjects sit behind
+        // it (#1136 fix-round: #135's "docs(steward)" merge was the newest
+        // commit over a delta that also held #132's "spec: ..." subject.
+        // The old subjects.every(...) check refused to absorb because not
+        // EVERY subject matched, so the ceremony misfired into that cluster
+        // a second time as #134). A steward subject sitting BEHIND a newer
+        // real one is the opposite case and still falls through to fire
+        // below: that real merge is provably unreconciled by any pass on
+        // record.
+        // An EMPTY subject list with a sha delta (rebase/force-push, git
+        // hiccup) is not proof of a self-merge, so it falls through and
+        // fires — a spare steward pass is cheap; a silently skipped one
+        // advances the anchor past a real merge forever.
+        if (subjects.length > 0 && STEWARD_SELF_SUBJECT.test(subjects[0]!)) {
           absorb.push({ jobId: job.id, sha: main.headSha });
         } else if (now - main.headCommitAt >= settleMs) {
           // Settle window: one steward per merge CLUSTER, not one per PR.

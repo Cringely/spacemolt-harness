@@ -169,7 +169,17 @@ export const JOBS: JobDef[] = [
   },
   {
     id: "steward",
-    schedule: { kind: "main-merge", settleMs: 20 * MIN }, // origin/main sha change + settle
+    // #1136 fix-round: 20 min was shorter than the QUIET GAPS a real merge
+    // cluster leaves between its own merges -- replaying the recorded
+    // cluster timestamps found gaps of 46, 35 and 26 minutes where nothing
+    // merged mid-cluster, each one long enough to cross a 20-min settle and
+    // fire the ceremony BEFORE the cluster was actually done (the #106/#125/
+    // #130 first-firing races). 60 min clears all three with margin while
+    // staying far inside the issue's week-long done-when horizon. It also
+    // means the stewardPrInFlight probe (steward-standdown.ts) now runs
+    // after the PM's own dispatched-pass turnaround (observed at 2-17 min
+    // post-cluster), not before the PM PR exists to be probed for.
+    schedule: { kind: "main-merge", settleMs: 60 * MIN }, // origin/main sha change + settle
     charterPath: "docs/charters/doc-steward.md",
     model: "haiku",
     patSecret: "gh_pat_steward", // the one contents:write PAT (spec §Security residual)
