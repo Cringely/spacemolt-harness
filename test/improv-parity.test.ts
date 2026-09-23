@@ -538,13 +538,47 @@ const SEAMS: Seam[] = [
     // explains: the interior function existing proves nothing if nothing
     // calls it. A REGEX (with its arguments) for the same reason that entry
     // gives -- a bare `toContain("buyPriceGuard")` survives a rename to
-    // `buyPriceGuardXX` as a substring of the new name.
-    code: { file: "src/agent/executor.ts", marker: /await buyPriceGuard\(api, step\)/ },
+    // `buyPriceGuardXX` as a substring of the new name. Repointed by #1116,
+    // which added a third `preStatus` argument (needed for the fuel_cell
+    // refuel steer below) -- the old two-argument marker went stale the
+    // moment the signature changed, the same drift the #982/#1003 seam's
+    // comment warns about.
+    code: { file: "src/agent/executor.ts", marker: /await buyPriceGuard\(api, step, preStatus\)/ },
     // Each anchor was absent from §4 before this bullet was added (checked,
     // not assumed). "Mining Laser III" is deliberately NOT an anchor: the
     // install_mod section above already names it (issue #402), so it would
     // pass on a neighbour's vocabulary rather than on this bullet.
     anchors: ["220,108cr", "100,500cr", /8x the catalog base_value/],
+  },
+  {
+    guard: "buy price-sanity refusal: prose remedy, not a template, plus the fuel_cell refuel steer " +
+      "(#1116: the refusal used to render create_buy_order as a filled-in, action-name-followed-by-" +
+      "brace command the planner could copy verbatim -- the exact shape a GAME error already got " +
+      "obeyed six times and locked ~21,800cr in #681. Docked with fuel_cell specifically, a buy order " +
+      "ESCROWS the bid while refuel spends straight from the wallet, so this now steers to refuel " +
+      "only when the current POI's station tank reads above zero, never on has_base alone (dock() " +
+      "only ever reaches a base, so has_base is true at every docked POI), and never claims refuel " +
+      "works when the reading is unknown -- fix round, #1116)",
+    // Pins the fuel_cell branch's own condition, not just the call site --
+    // the call site marker above survives a rename or a deletion of the
+    // fuel_cell steer entirely (buyPriceGuard would still be called), so a
+    // seam meant to hold THIS behaviour honest has to pin the behaviour
+    // itself, the same distinction the withdrawStorageBlock comment draws
+    // between wiring and existence.
+    code: {
+      file: "src/agent/executor.ts",
+      marker: /p\.id === "fuel_cell" && preStatus\?\.docked === true/,
+    },
+    // Each anchor was absent from §4 before this bullet was added (checked,
+    // not assumed, including against the pre-existing #458 bullet this one
+    // extends). /station tank reading is above/ is the fix-round addition
+    // (#1116 review): the ORIGINAL sentence said refuel steers "when the
+    // current POI is confirmed to support it", true at every docked POI
+    // since has_base cannot distinguish a stocked station from a dry one --
+    // this anchor pins the corrected, tank-dependent wording so a revert
+    // back to that vague phrasing fails here.
+    anchors: [/weigh `refuel` FIRST/, /ESCROWS the bid until a seller/, /crossed with #681/,
+      /obeyed verbatim and locked ~21,800cr/, /station tank reading is above/],
   },
   {
     guard: "item-id plan-admission guard (#982/#1003: a fabricated item id on buy/sell/jettison/" +

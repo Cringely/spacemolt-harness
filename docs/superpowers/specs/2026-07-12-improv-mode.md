@@ -385,9 +385,17 @@ Vocabulary / data shapes:
   base was a legitimate purchase the same night -- so the line is roughly an order of magnitude over base,
   not any premium at all. If a price looks absurd (tens or hundreds of times base), do not spot-buy it:
   post `create_buy_order` naming your OWN price_each instead, a deliberate, cancelable bid rather than an
-  unreviewed spend. (Also a §5 deterministic backstop: in plan-then-execute the executor refuses a spot
-  `buy` whose estimate_purchase quote prices it over 8x the catalog base_value, on every iteration of
-  a repeat/until buy, and steers the same create_buy_order remedy -- issue #458.)
+  unreviewed spend. Docked and the overpriced item is `fuel_cell` specifically, weigh `refuel` FIRST --
+  it draws straight from your wallet on the spot, while `create_buy_order` ESCROWS the bid until a seller
+  fills it, and a pilot down to just enough credits for fuel can lock that same balance in a dead bid and
+  strand itself again (issue #703 crossed with #681). (Also a §5 deterministic backstop: in
+  plan-then-execute the executor refuses a spot `buy` whose estimate_purchase quote prices it over
+  8x the catalog base_value, on every iteration of a repeat/until buy, and names `create_buy_order`
+  as the remedy in PROSE rather than a fillable template -- the same drafted call, action name and
+  braces, that a game error got obeyed verbatim and locked ~21,800cr in #681. Docked with `fuel_cell`
+  specifically, it steers to `refuel` only when the current POI's station tank reading is above
+  zero, never on has_base alone (dock() only ever reaches a base, so has_base cannot tell a stocked
+  station from a dry one). Issue #1116, on top of #458.)
 - Item ids for buy/sell/jettison are exact snake_case CATALOG ids — copy them from listings or
   the catalog, never derive them from prose. Game prose pluralizes and paraphrases: refuel's own
   error says "Buy fuel cells" but the item id is `fuel_cell`, SINGULAR — 86/86 lifetime buy
