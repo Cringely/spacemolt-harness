@@ -158,6 +158,36 @@ describe("due evaluation (A2)", () => {
     expect(r.absorb).toEqual([]);
   });
 
+  // Catches (#1136): the ceremony firing a competing PR while a dispatched
+  // steward pass is already open for this cluster -- the four-PRs-in-four-
+  // days duplicate. stewardPrInFlight gates the fire; unset/false must
+  // behave exactly as every test above (default firing), and true must
+  // neither fire NOR absorb -- the anchor stays put so a later tick, once
+  // the in-flight PR ages out of the standdown window, re-evaluates fresh.
+  test("stewardPrInFlight: true suppresses firing without advancing the anchor", () => {
+    const anchors = freshAnchors();
+    anchors.steward.stewardAnchorSha = "old";
+    const mergedAt = utc(18, 9, 0);
+    const covered: MainStatus = {
+      headSha: "new",
+      headCommitAt: mergedAt,
+      newSubjectsSinceAnchor: ["feat(agent): thing (#380)"],
+      stewardPrInFlight: true,
+    };
+    // Past the settle window, but a steward PR already covers it: neither
+    // fired nor absorbed.
+    let r = dueJobs(JOBS, anchors, mergedAt + 30 * MIN, covered);
+    expect(firedIds(r)).not.toContain("steward");
+    expect(r.absorb).toEqual([]);
+    expect(anchors.steward.stewardAnchorSha).toBe("old"); // untouched
+
+    // Same delta, flag false: fires exactly as the un-gated test above does
+    // -- proves the new field is additive, not a silent behavior change.
+    const uncovered: MainStatus = { ...covered, stewardPrInFlight: false };
+    r = dueJobs(JOBS, anchors, mergedAt + 30 * MIN, uncovered);
+    expect(firedIds(r)).toContain("steward");
+  });
+
   // Catches: a failing job re-spawning every 10-min tick (L-3, token burn) —
   // due-ness keys on lastAttemptAt regardless of result; a fail retries at the
   // NEXT grid point, never hot-loops.

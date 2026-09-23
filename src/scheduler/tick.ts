@@ -17,6 +17,7 @@ import type { GhRunner } from "./filing";
 import type { GitResult, GitRunner } from "./git";
 import { JOBS } from "./jobs";
 import { runJob, type Spawner } from "./spawn";
+import { stewardPrInFlight } from "./steward-standdown";
 import { acquireLock, loadAnchors, releaseLock, saveAnchors, stopRequested, type JobId } from "./state";
 import { pollUsage, USAGE_POLL_SKIPPED, type UsageFetcher, type UsagePollResult } from "./usage-poll";
 import { reapStaleWorktrees } from "./worktree";
@@ -82,7 +83,12 @@ export const PRUNE_MAX_AGE_MS = 14 * 24 * 3_600_000;
 // time + subjects since the steward anchor. Any unreadable piece ⇒ null and
 // the steward is simply not evaluated this tick (grid jobs never need git) —
 // a network-down tick must not poison the anchor with a bogus sha.
-function readMainStatus(git: GitRunner, stewardAnchorSha: string | null): MainStatus | null {
+//
+// #1136: also probes for an already-open docs/steward-* PR, but only when
+// there is an anchor to compare against AND the head actually moved --
+// gated the same way the subjects read is, so a quiet tick (nothing new
+// since the steward last looked) issues zero extra gh calls.
+function readMainStatus(git: GitRunner, gh: GhRunner | undefined, now: number, stewardAnchorSha: string | null): MainStatus | null {
   git(["fetch", "origin", "main"]); // failure tolerated: evaluate the last-fetched ref
   const head = git(["rev-parse", "origin/main"]);
   const headSha = head.stdout.trim();
@@ -91,6 +97,7 @@ function readMainStatus(git: GitRunner, stewardAnchorSha: string | null): MainSt
   const headCommitSec = Number(at.stdout.trim());
   if (at.exitCode !== 0 || !Number.isFinite(headCommitSec)) return null;
   let subjects: string[] = [];
+  let inFlight = false;
   if (stewardAnchorSha !== null) {
     const log = git(["log", "--format=%s", `${stewardAnchorSha}..origin/main`]);
     // A failed range read (anchor gone after a force-push) degrades to [],
@@ -103,8 +110,9 @@ function readMainStatus(git: GitRunner, stewardAnchorSha: string | null): MainSt
             .map((s) => s.trim())
             .filter((s) => s !== "")
         : [];
+    if (headSha !== stewardAnchorSha) inFlight = stewardPrInFlight(gh, now);
   }
-  return { headSha, headCommitAt: headCommitSec * 1000, newSubjectsSinceAnchor: subjects };
+  return { headSha, headCommitAt: headCommitSec * 1000, newSubjectsSinceAnchor: subjects, stewardPrInFlight: inFlight };
 }
 
 // Steward anchor updates load anchors FRESH each time: runJob saves its own
@@ -223,7 +231,7 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
     }
 
     const anchors = loadAnchors(deps.stateDir);
-    const main = readMainStatus(deps.gitRunner, anchors.steward.stewardAnchorSha);
+    const main = readMainStatus(deps.gitRunner, deps.ghRunner, now, anchors.steward.stewardAnchorSha);
     if (main === null) {
       // Unreadable origin/main (expired PAT, DNS, corrupt checkout): the
       // steward is silently skipped below. Bump its failStreak so the

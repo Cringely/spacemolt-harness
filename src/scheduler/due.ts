@@ -7,6 +7,15 @@ export interface MainStatus {
   headSha: string;
   headCommitAt: number;
   newSubjectsSinceAnchor: string[];
+  /** #1136: true when a docs/steward-* PR is already open and fresh enough
+   *  (steward-standdown.ts's STEWARD_STANDDOWN_WINDOW_MS) to be an in-flight
+   *  reconciliation of this same stretch of main -- the PM's own dispatched
+   *  pass, or an earlier ceremony run nobody has merged or closed yet.
+   *  Undefined/false behaves exactly as before firing: a probe that never
+   *  ran (no ghRunner wired, or the call failed) must never make the
+   *  ceremony stand down on missing information -- same "a spare pass is
+   *  cheap" direction as the self-merge branch below. */
+  stewardPrInFlight?: boolean;
 }
 
 // The steward's own merged PRs are titled `docs(steward): ...`; a delta made
@@ -56,7 +65,13 @@ export function dueJobs(
           absorb.push({ jobId: job.id, sha: main.headSha });
         } else if (now - main.headCommitAt >= settleMs) {
           // Settle window: one steward per merge CLUSTER, not one per PR.
-          fire.push(job);
+          // #1136: an open docs/steward-* PR already covers this stretch of
+          // main -- firing here would just be the ceremony-vs-dispatched-pass
+          // duplicate the issue named. Leave the anchor alone, same as
+          // "still settling" below, so the NEXT tick re-checks fresh; the
+          // probe's own recency window is what stops this deferring forever
+          // once that PR goes stale (steward-standdown.ts).
+          if (!main.stewardPrInFlight) fire.push(job);
         }
         // else: still settling — leave the anchor alone; a later tick fires.
       }
