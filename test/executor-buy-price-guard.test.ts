@@ -260,17 +260,21 @@ describe("buy price-sanity guard: the refusal text the planner actually reads", 
 });
 
 describe("buy price-sanity guard: the fuel_cell refuel steer (issue #1116)", () => {
-  // Docked, and get_system's current POI reports a base -- the harness's own
-  // established "the docked reflex can refuel here" signal (client.ts's
-  // CurrentPoiInfo comment, agent.ts's stall-watcher currentPoiHasBase). The
-  // refusal steers to refuel instead of a buy order: refuel spends straight
-  // from the wallet, a buy order escrows the bid until a seller fills it, and
-  // a pilot rescued with just enough credits to refuel could lock that
-  // balance in a dead bid and strand itself again (#703 x #681).
-  test("docked with a confirmed station base steers to refuel, not create_buy_order", async () => {
+  // Docked, and get_system's current POI reports a positive fuel_reserve --
+  // the station tank actually has fuel to sell (client.ts's CurrentPoiInfo
+  // comment). has_base is set here too, matching a real station shape
+  // (poi-deposits-probe-2026-07-16.json's gold_run_extraction_hub entry:
+  // fuel_reserve 199942 of a 200000 capacity), but has_base plays no part in
+  // the guard's decision -- see the dry-station case below, where has_base is
+  // true and the guard still refuses to steer. The refusal steers to refuel
+  // instead of a buy order: refuel spends straight from the wallet, a buy
+  // order escrows the bid until a seller fills it, and a pilot rescued with
+  // just enough credits to refuel could lock that balance in a dead bid and
+  // strand itself again (#703 x #681).
+  test("docked with a positive station tank reading steers to refuel, not create_buy_order", async () => {
     const { api } = stubApi({
       quantityRequested: 49, totalCost: 220_108,
-      currentPoi: { id: "poi1", name: "Station", type: "station", hasBase: true },
+      currentPoi: { id: "poi1", name: "Gold Run Extraction Hub", type: "station", hasBase: true, fuelReserve: 199_942 },
     });
     const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
     expect(r.kind).toBe("blocked");
@@ -279,10 +283,9 @@ describe("buy price-sanity guard: the fuel_cell refuel steer (issue #1116)", () 
     expect(reason).not.toContain("create_buy_order");
   });
 
-  // Same signal, the fuel_reserve half: no has_base, but a positive
-  // fuel_reserve at the current POI is the same trusted "can refuel" proof
-  // (client.ts's CurrentPoiInfo comment).
-  test("docked with a positive fuel_reserve at the current POI also steers to refuel", async () => {
+  // Same signal, a smaller reading -- fuel_reserve alone decides, has_base
+  // absent entirely.
+  test("docked with any positive fuel_reserve at the current POI also steers to refuel", async () => {
     const { api } = stubApi({
       quantityRequested: 49, totalCost: 220_108,
       currentPoi: { id: "poi1", name: "Station", type: "station", fuelReserve: 40 },
@@ -293,14 +296,17 @@ describe("buy price-sanity guard: the fuel_cell refuel steer (issue #1116)", () 
     expect(reason).toContain("Refuel here instead");
   });
 
-  // Docked, but get_system reports neither has_base nor a positive
-  // fuel_reserve at the current POI -- the harness's own signal says NO
-  // station pump here, so the refusal falls back to the generic
-  // create_buy_order remedy rather than steering somewhere that will fail.
-  test("docked with no confirmed base falls back to the generic remedy", async () => {
+  // Docked at a real base (has_base true, since dock() only ever reaches a
+  // base -- commands.md:59) whose tank reads exactly zero: a KNOWN-dry
+  // station, shaped like the live capture above with fuel_reserve zeroed
+  // out. has_base alone used to make this case wrongly steer to refuel. The
+  // guard now falls back to the generic create_buy_order remedy instead of
+  // steering somewhere that will fail (fuel.md:20, "empty stations can't
+  // sell you fuel").
+  test("docked at a dry station falls back to the generic remedy", async () => {
     const { api } = stubApi({
       quantityRequested: 49, totalCost: 220_108,
-      currentPoi: { id: "poi1", name: "Belt", type: "belt", hasBase: false, fuelReserve: 0 },
+      currentPoi: { id: "poi1", name: "Gold Run Extraction Hub", type: "station", hasBase: true, fuelReserve: 0 },
     });
     const r = await executeTick(api, buy("fuel_cell", 49), { step: 0, iteration: 0 });
     expect(r.kind).toBe("blocked");

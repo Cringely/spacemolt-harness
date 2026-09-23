@@ -556,7 +556,9 @@ const SEAMS: Seam[] = [
       "brace command the planner could copy verbatim -- the exact shape a GAME error already got " +
       "obeyed six times and locked ~21,800cr in #681. Docked with fuel_cell specifically, a buy order " +
       "ESCROWS the bid while refuel spends straight from the wallet, so this now steers to refuel " +
-      "when the current POI is confirmed to support it, and never claims that when it cannot tell)",
+      "only when the current POI's station tank reads above zero, never on has_base alone (dock() " +
+      "only ever reaches a base, so has_base is true at every docked POI), and never claims refuel " +
+      "works when the reading is unknown -- fix round, #1116)",
     // Pins the fuel_cell branch's own condition, not just the call site --
     // the call site marker above survives a rename or a deletion of the
     // fuel_cell steer entirely (buyPriceGuard would still be called), so a
@@ -569,9 +571,14 @@ const SEAMS: Seam[] = [
     },
     // Each anchor was absent from §4 before this bullet was added (checked,
     // not assumed, including against the pre-existing #458 bullet this one
-    // extends).
+    // extends). /station tank reading is above/ is the fix-round addition
+    // (#1116 review): the ORIGINAL sentence said refuel steers "when the
+    // current POI is confirmed to support it", true at every docked POI
+    // since has_base cannot distinguish a stocked station from a dry one --
+    // this anchor pins the corrected, tank-dependent wording so a revert
+    // back to that vague phrasing fails here.
     anchors: [/weigh `refuel` FIRST/, /ESCROWS the bid until a seller/, /crossed with #681/,
-      /obeyed verbatim and locked ~21,800cr/],
+      /obeyed verbatim and locked ~21,800cr/, /station tank reading is above/],
   },
   {
     guard: "item-id plan-admission guard (#982/#1003: a fabricated item id on buy/sell/jettison/" +

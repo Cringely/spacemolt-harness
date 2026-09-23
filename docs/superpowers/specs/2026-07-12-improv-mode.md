@@ -393,8 +393,9 @@ Vocabulary / data shapes:
   8x the catalog base_value, on every iteration of a repeat/until buy, and names `create_buy_order`
   as the remedy in PROSE rather than a fillable template -- the same drafted call, action name and
   braces, that a game error got obeyed verbatim and locked ~21,800cr in #681. Docked with `fuel_cell`
-  specifically, it steers to `refuel` instead when the current POI is confirmed to support it --
-  issue #1116, on top of #458.)
+  specifically, it steers to `refuel` only when the current POI's station tank reading is above
+  zero, never on has_base alone (dock() only ever reaches a base, so has_base cannot tell a stocked
+  station from a dry one). Issue #1116, on top of #458.)
 - Item ids for buy/sell/jettison are exact snake_case CATALOG ids — copy them from listings or
   the catalog, never derive them from prose. Game prose pluralizes and paraphrases: refuel's own
   error says "Buy fuel cells" but the item id is `fuel_cell`, SINGULAR — 86/86 lifetime buy
