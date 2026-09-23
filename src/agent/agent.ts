@@ -3,10 +3,11 @@ import type { Store, PlanCursor } from "../store/store";
 import { PlanSchema, type Plan } from "../registry/plan";
 import type {
   Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
+  FleetDistress,
 } from "../planner/types";
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
-import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE } from "../planner/digest";
+import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
 import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
@@ -2270,6 +2271,43 @@ export class Agent {
     return fuelBelowReserve(status, this.config.fuelReservePct ?? AGENT_DEFAULTS.fuelReservePct);
   }
 
+  // Fleet-rescue briefing (issue #1114): the read half of the #703 gift path
+  // -- every agent in this harness shares ONE Store (src/main.ts) and stamps
+  // its own status_snapshot on every wake (Layer 5 above), so a fleet-mate's
+  // last-known fuel/credits are already sitting in the shared events table
+  // under ITS agent id. This reads them back for every OTHER roster pilot and
+  // flags one on the sole trigger: credits below FLEET_REFUEL_FLOOR_CR
+  // (digest.ts). A bare zero-fuel reading is NOT its own trigger (round-2
+  // PR #142 review): the rendered remedy is a credits gift, and a fleet-mate
+  // at zero fuel with credits already at or above the floor is asked for
+  // nothing a gift would fix -- a stranded ship stays parked until fuel
+  // reaches it, and an empty station tank refuses refuel regardless of
+  // balance (upstream/guides/fuel.md:202, :136). The credits floor alone
+  // still catches the live incident (0 fuel, 5cr sits well under it).
+  // Returns bounded numeric + allowlisted-username data only -- see
+  // FleetDistress (planner/types.ts) for the security note on why nothing
+  // else rides this.
+  //
+  // Fails closed the #94 way and never throws: no roster configured, no
+  // snapshot yet for a pilot, or a snapshot whose credits/fuel aren't both
+  // numbers (an older build's payload shape, a partial write) all skip that
+  // pilot silently rather than rendering a fabricated distress line.
+  private fleetDistress(): FleetDistress[] {
+    const roster = this.config.fleetRoster;
+    if (!roster?.length) return [];
+    const out: FleetDistress[] = [];
+    for (const pilot of roster) {
+      if (pilot.id === this.id) continue; // your own state is already in Status above
+      const rows = this.store.recentEventsByType(pilot.id, "status_snapshot", 1);
+      const payload = rows[0]?.payload as { credits?: unknown; fuel?: unknown } | undefined;
+      if (!payload || typeof payload.credits !== "number" || typeof payload.fuel !== "number") continue;
+      if (payload.credits < FLEET_REFUEL_FLOOR_CR) {
+        out.push({ username: pilot.username, fuel: payload.fuel, credits: payload.credits });
+      }
+    }
+    return out;
+  }
+
   /**
    * The steward (stall-watcher v4). Returns true when it CONSUMES the tick (a
    * transient re-steer replan, or an opt-in self_destruct), so runOnce returns
@@ -2630,6 +2668,10 @@ export class Agent {
         // the status snapshot as the fallback for a replan whose get_system
         // failed.
         knownStations: knownStationSystems(this.stationSightings, surroundings?.systemId ?? statusSnap?.systemId),
+        // Fleet-rescue briefing (issue #1114): see Agent.fleetDistress for the
+        // selection and the security note on why only numbers + a vetted
+        // username ride this field.
+        fleetDistress: this.fleetDistress(),
       };
       const raw = await planner.plan(ctx);
       // Offline planner eval (issue #263, born from SM-9): record the exact

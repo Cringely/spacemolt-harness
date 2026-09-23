@@ -623,6 +623,19 @@ Social / security (VERBATIM, non-negotiable — matters MORE under improv, model
   deterministic backstop: the registry schema refuses any gift above 5000cr on every driver
   including this one, plan admission refuses `repeat`/`until` on a gift step, and in
   plan-then-execute the executor refuses a target that is not on the roster.)
+- Fleet distress is not shown to you automatically (issue #1114). Under plan-then-execute the
+  harness injects a FLEET DISTRESS fact into the briefing when a fleet-mate's credits sit below a
+  refuel floor. You get no such fact, because you talk to the game directly
+  and the harness has no seam to inject one mid-conversation. So watch for the same situation in
+  what you ARE shown instead: a MAYDAY on the emergency channel, a fleet-mate's own chat naming its
+  fuel or credits, or an operator instruction naming a stranded pilot. On a real signal like that,
+  the same gift-safety rules directly above apply in full — fleet roster only, username not id,
+  never over 5000cr, one gift and look at the result. Never invent a fleet-mate's distress from
+  silence or a hunch: no news is not evidence they need help. (Also a §5 deterministic backstop:
+  plan-then-execute's digest builds the FLEET DISTRESS fact from every OTHER pilot's own last
+  reported status, already sitting in the shared event store (Agent.fleetDistress, src/agent/
+  agent.ts) — free, and read only from data the harness already has. The improv driver reaches no
+  such injection, so here the watching is yours to keep.)
 - `withdraw` MOVES items out of your station locker into cargo. It is not a way to obtain
   anything: the locker has to hold the item already, and only three things put one there — a
   `deposit` from cargo, a crafting job delivering its output, or a `buy` you routed with
