@@ -4,11 +4,29 @@
 >
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
-**Last updated:** 2026-09-19, doc-steward pass reconciling wave-3 cluster PRs #119-#124 (tracker #1045/#1047/#1106/#1053 closed). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-23, doc-steward pass reconciling cluster PRs #127-#132 (five item-id, mission, and craft guards live). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-19 (third pass, wave-3 cluster #119-#124). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-09-23 (fourth pass, cluster #127-#132). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+
+**FIVE FUNCTIONAL PRs MERGED, ONE SPEC, PRODUCER GUARDS NOW LIVE.** #127 (`6fd39e0`, 2026-09-21 03:38Z) validates every item-bearing plan step (buy.id, sell.id, jettison.id, withdraw/deposit/order item_ids) against the catalog SSOT at plan admission, fixing live incidents `sell{id:"wreck"}` (8x/72h) and `exotic_matter_sample` (7x/72h across six actions). #128 (`326e428`, 2026-09-23 04:07Z) derives the stale-mission advisory's age threshold from each mission's own total time budget (expiry + zero-progress elapsed), fixing the structural gap where distress missions expiring in ~3 hours never reached the flat 24-hour threshold. #129 (`a9dbcd3`, 2026-09-23 04:12Z) blocks `craft` when personal station storage is provably empty, fixing the recurrent `cannot_craft: Not enough materials` incidents (98 + 24 + 35 = 157 occurrences across three separate 72h windows). #131 (`7ab54a3`, 2026-09-23 04:18Z) corrects mission-id sourcing in the digest (four sites pointing to template_id instead of mission_id, live evidence 43 fleet-wide `mission_not_found` refusals 2026-08-26) and adds reward value parsing (credits/skill_xp) so the digest can rank missions by contribution to goals. #132 (`c4afd5d`, 2026-09-23 04:43Z) is spec-only: `docs/superpowers/specs/2026-09-22-backlog-dedupe-ceremony.md` proposes a weekly dedup ceremony, measuring 521 open issues, 389 (three in four) clustering into 83 underlying conditions.
+
+**ITEM-ID VALIDATION REUSES AND CONSOLIDATES.** PR #127 moved edit-distance suggestion and per-action item-param lookup from two hand-maintained copies (eval/scorers.ts, executor.ts) into one shared SSOT in catalog.ts, closing the unregistered-action loop #152 left behind. The plan-admission gate catches what executor's post-hoc buy-only correction would have missed (sell/jettison/withdraw/deposit/order actions now validated uniformly).
+
+**MISSION DIGEST NOW SEES TWO REFUSAL ROUTES.** PR #131's four id-sourcing fixes target the digest's own Completion-priority instruction (all four lines pointed to an unlabelled template_id in the raw game prose instead of the parsed mission_id). The reward parsing adds nothing architecturally new — reward fields existed in the schema since #291, just never extracted into the digest's Mission objective for ranking. No new API calls or game mechanics.
+
+**DEPLOY STATE NOT KNOWN THIS CLUSTER.** Last confirmed state from prior pass: prod on `d7ab050` (2026-09-19 23:28Z). None of the five PRs in this cluster have been observed deployed; behavior claims above are offline-tested only. The auto-deploy cron will ship these within minutes of reaching main.
+
+**PR #130 STALE, NOT MERGED.** The steward PR reconciling #127 alone is still open and based on an old main. This pass supersedes it; if not closed by the PM, it will conflict.
+
+**BACKLOG:** see `docs/backlog.md`, regenerated this pass.
+
+**Next:** Watch the live signals once deployed: zero further `invalid_item` incidents for the two ids PR #127 closed (sell:wreck, exotic_matter_sample); stale-mission advisory firing on distress missions within their own budgets; zero `cannot_craft` on empty locker after PR #129; mission-refusal rate drop post-PR #131; the dedup ceremony's first run to measure whether high-confidence clusters stay stable (PR #132 spec).
+
+## Recent history, 2026-09-19
+
+Moved out of `## NOW` on 2026-09-23 to fit the 500-word cap; superseded only where the block above says so.
 
 **SIX PRs MERGED, FOUR TRACKER ISSUES CLOSED.** #119 (`018807d`) and #122 (`086a90d`, a same-day comment fast-follow) close #1047: an operator goal naming an exact item no longer loses its purchase slot to an earlier goal's multi-tier family match. #120 (`83a0fd6`) closes #1045: the undocked fuel-reserve floor now survives a measured jumps verdict instead of being silently dropped as a fallback argument; a retired cargo-mass fuel claim also came out of the improv briefing. #121 (`d89fecf`) and #123 (`d7ab050`, a same-day must-fix the first PR's squash-merge missed) close #1106: the #817 standing-instruction pin is now reachable from the dashboard, the digest stopped contradicting the retirement guard, and the Standing checkbox no longer survives an agent switch. #124 (`8a5140f`) closes #1053.
 
@@ -24,7 +42,7 @@ _Refreshed 2026-09-19 (third pass, wave-3 cluster #119-#124). Boot from this blo
 
 **Next:** confirm `8a5140f` deploys and stays clean; watch whether the #1053 charter fix changes filed-issue quality (a quoted error sentence, not a bare class). Fleet-flight F4 (3 pilots/24h/zero strands, steer confirmed) still open.
 
-## Recent history, 2026-09-19
+## Recent history, 2026-09-19 (prior pass)
 
 Moved out of `## NOW` on 2026-09-19 (second pass) to fit the 500-word cap; superseded only where the block above says so. Extracted from the prior `## NOW` block, verbatim except in the deploy-state paragraph, where the pointer to the `a892877` note flips from "below" to "above" now that the note sits higher up the file.
 
