@@ -5,11 +5,25 @@
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
 
-**Last updated:** 2026-09-22, doc-steward pass reconciling wave-4 cluster PRs #127-#132 (tracker #982/#1003/#700/#1076/#931/#1051 closed). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-23, doc-steward pass reconciling cluster PRs #137-#142 (tracker #1114/#1115/#1116 closed). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-22 (fourth pass, wave-4 cluster #127-#132). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-09-23 (fifth pass, cluster #137-#142). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+
+**FOUR PRs MERGED, THREE P1 TRACKER ISSUES CLOSED.** #137 (chore) syncs core-managed hooks. #140 (`1f666a3`) closes #1115: `reflexGaveUpAt` now records the failure cause (sufficient-credits vs. dry-station) and clears the latch when credits rise above a recorded affordability block, instead of holding indefinitely once armed. #142 (`af3e309`) closes #1114: the agent's `fleetDistress` reads every fleet-mate's latest `status_snapshot` off the shared Store, flags zero fuel or credits below `FLEET_REFUEL_FLOOR_CR` (20cr, the worst published station price), and renders a distress line in the digest naming the remedy in prose (a fleet gift via credits action), never as a filled template. #139 (`045d765`) closes #1116: the #458 buy guard's refusal now names the remedy in prose and steers to `refuel` when a docked station can refuel, with a live `get_system` call to confirm the POI `has_base`/`fuel_reserve`, falling back to the generic remedy when the check cannot be established. Each entry in decisions.md records the deferred alternatives and receipts (decisions.md 2026-09-23 entries, three cross-links).
+
+**THE THREE P1 ISSUES NAMED THE REAL F4 BLOCKER.** The 2026-09-20 corsair rescue (PM live capture, reported in the prior NOW block) surfaced #1115 (the latch) and #1116 (the template refusal). #1114 was discovered during the rescue: corsair stranded while the miner held 53,870cr two systems away, and no pilot could ask for a fleet rescue. These three fixes complete the prerequisites for an F4 attempt: three pilots, 24h continuous, zero strands, steer confirmed per pilot.
+
+**DEPLOY STATE, PM live capture (not verifiable from the repo).** Prod ran `7ab54a3` (PR #131's merge commit) from 2026-09-23T04:20:27Z through the cluster merges above, still healthy as of 2026-09-23T22:00Z, `RestartCount 0`. The new commits were #137 (chore, no new image) and #139/#140/#142 (code changes, pending deploy).
+
+**BACKLOG:** see `docs/backlog.md`, regenerated this pass.
+
+**Next:** F4 gate is unblocked. #1133/#1135 (backlog dedupe ceremony) are process debt. #1134 (two flaky scheduler tests, P2) remains unblocked.
+
+## Recent history, 2026-09-23
+
+Moved out of `## NOW` on 2026-09-23 (fifth pass) to fit the 500-word cap; superseded only where the block above says so. This section documents the wave-4 cluster (#127-#132) from the prior pass.
 
 **FIVE PRs MERGED, SIX TRACKER ISSUES CLOSED.** #127 (`6fd39e0`) closes #982 and #1003: every item-bearing plan step (buy/sell/jettison/withdraw/deposit/create_sell_order/create_buy_order) now validates its item id against the catalog SSOT at plan admission, replacing a buy-only post-hoc correction that never covered the other six actions. #128 (`326e428`) closes #700: the stale-mission advisory threshold now derives from each mission's own expiry instead of a flat 24h, so a ~3h distress mission can trip near its own halfway point. #129 (`a9dbcd3`) closes #1076 (dupes #932, #997): a narrow guard blocks `craft` only when station storage is provably empty, paired with a deposit-first briefing line. #131 (`7ab54a3`) closes #931 and #1051: the digest points the planner at the parsed `mission_id` instead of raw listing prose (#913/#614 closed as superseded by PR #107's guard, with #131 adding the id-choice half), and mission rewards (credits, skill_xp) are now parsed and rendered for ranking. #132 (`c4afd5d`) is docs-only: the backlog dedupe ceremony spec.
 
@@ -17,11 +31,11 @@ _Refreshed 2026-09-22 (fourth pass, wave-4 cluster #127-#132). Boot from this bl
 
 **THE CORSAIR RESCUE, 2026-09-20, PM live capture (not verifiable from the repo).** corsair sat docked at iron_reach, 0 fuel, 5 credits, repeating an unaffordable refuel. 07:30:49Z: the #534 escalation (PR #114) armed live for the first time in production, three arms on one fingerprint, six replans, planner calls zero for 9+ hours. #534 is now proven live, not just offline-tested. 16:50:13Z: a PM steer gifted 1,500 credits. Corsair still didn't move, the latch now filed as #1115 (a refuel give-up keyed on affordability never clears once credits arrive). 17:22Z: a second steer got it moving, but the #458 buy guard (PR #115) refused a fuel cell at 400cr/unit against a 43cr catalog value, twice, live-proving #458 in production. Corsair then refuelled at the station for 540cr and got underway. Filed #1114 (no pilot can request/offer a fleet rescue without a human) and #1116 (the buy guard's refusal hands the planner a filled-in `create_buy_order` template, the #681 pattern).
 
-**DEPLOY STATE, PM live capture (not verifiable from the repo).** Prod ran `7ab54a3` (PR #131's merge commit) from 2026-09-23T04:20:27Z, healthy at 04:45Z, `RestartCount 0`. `c4afd5d` (#132) is docs-only and builds no image, so `7ab54a3` is still the deployed code. Earlier: `ece3650` from 09-19T19:49Z and `d7ab050` from 09-19T23:28Z, both healthy. The corsair rescue above ran on `d7ab050`, before this wave's PRs existed.
+**DEPLOY STATE, PM live capture (not verifiable from the repo).** Prod ran `7ab54a3` (PR #131's merge commit) from 2026-09-23T04:20:27Z, healthy at 04:45Z, `RestartCount 0`. `c4afd5d` (#132) is docs-only and builds no image, so `7ab54a3` was still the deployed code at that capture time.
 
-**BACKLOG:** see `docs/backlog.md`, regenerated this pass.
+**BACKLOG:** see `docs/backlog.md`, regenerated in the prior pass.
 
-**Next:** the fleet-rescue path blocks F4 (3 pilots/24h/zero strands) more directly than anything else queued: #1114 and #1115 (both P1), with #1116 (P2) alongside them. #1133/#1135 (dedupe) are process debt. #1134 (two flaky scheduler tests, P2) is not blocking.
+**Next:** the fleet-rescue path blocks F4. The three P1 issues (#1114, #1115, #1116) have now closed in the current cluster.
 
 ## Recent history, 2026-09-22
 
