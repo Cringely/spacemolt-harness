@@ -1581,10 +1581,10 @@ function renderChatMessages(msgs: ChatMessage[]): string {
 // been shown one. Producer fix, same shape as FUEL_CELL_IDS_LINE below: give
 // the planner the id instead of relying on prose to say "don't guess".
 // Fleet-rescue briefing (issue #1114): the #703 gift path's read half. Each
-// entry is one fleet-mate Agent.fleetDistress (agent.ts) selected as fuel
-// === 0 or credits < FLEET_REFUEL_FLOOR_CR, off that pilot's own last
-// status_snapshot in the SHARED store (src/main.ts wires every agent to one
-// Store instance) -- never a live game query.
+// entry is one fleet-mate Agent.fleetDistress (agent.ts) selected as
+// credits < FLEET_REFUEL_FLOOR_CR, off that pilot's own last status_snapshot
+// in the SHARED store (src/main.ts wires every agent to one Store instance)
+// -- never a live game query.
 //
 // SECURITY: this renders ONE agent's data into ANOTHER agent's prompt, the
 // exact seam #681/#1116 are about (a filled-in game template, or another

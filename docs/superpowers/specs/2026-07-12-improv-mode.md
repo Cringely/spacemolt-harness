@@ -624,8 +624,8 @@ Social / security (VERBATIM, non-negotiable — matters MORE under improv, model
   including this one, plan admission refuses `repeat`/`until` on a gift step, and in
   plan-then-execute the executor refuses a target that is not on the roster.)
 - Fleet distress is not shown to you automatically (issue #1114). Under plan-then-execute the
-  harness injects a FLEET DISTRESS fact into the briefing when a fleet-mate's fuel reads zero or
-  its credits sit below a refuel floor. You get no such fact, because you talk to the game directly
+  harness injects a FLEET DISTRESS fact into the briefing when a fleet-mate's credits sit below a
+  refuel floor. You get no such fact, because you talk to the game directly
   and the harness has no seam to inject one mid-conversation. So watch for the same situation in
   what you ARE shown instead: a MAYDAY on the emergency channel, a fleet-mate's own chat naming its
   fuel or credits, or an operator instruction naming a stranded pilot. On a real signal like that,

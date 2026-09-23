@@ -80,12 +80,24 @@ describe("Agent.fleetDistress (issue #1114)", () => {
     expect(ctx.fleetDistress).toEqual([]);
   });
 
-  // The exact live incident: fuel is literally zero, well-funded or not.
-  test("flags a fleet-mate whose fuel is zero, regardless of its credits", async () => {
+  // The exact live incident: zero fuel AND credits (5) sit under the floor --
+  // the credits check alone still catches it.
+  test("flags a fleet-mate at zero fuel whose credits sit under the floor", async () => {
     const store = new Store(":memory:");
     seedSnapshot(store, "corsair", 500, { credits: 5, fuel: 0 });
     const ctx = await replanAsMiner(store);
     expect(ctx.fleetDistress).toEqual([{ username: CORSAIR, fuel: 0, credits: 5 }]);
+  });
+
+  // Round-2 PR #142 review: a bare zero-fuel reading is not its own trigger.
+  // The rendered remedy is a credits gift, and a fleet-mate already holding
+  // credits at or above the floor is asked for nothing a gift would fix --
+  // and #1115's gift-can't-spend latch means the ask would never stop.
+  test("does not flag a fleet-mate at zero fuel once credits clear the floor", async () => {
+    const store = new Store(":memory:");
+    seedSnapshot(store, "corsair", 500, { credits: 1505, fuel: 0 });
+    const ctx = await replanAsMiner(store);
+    expect(ctx.fleetDistress).toEqual([]);
   });
 
   test("flags a fleet-mate below the refuel floor even with nonzero fuel", async () => {

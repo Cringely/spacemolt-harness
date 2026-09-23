@@ -2247,10 +2247,17 @@ export class Agent {
   // its own status_snapshot on every wake (Layer 5 above), so a fleet-mate's
   // last-known fuel/credits are already sitting in the shared events table
   // under ITS agent id. This reads them back for every OTHER roster pilot and
-  // keeps the two issue #1114 names: fuel is literally zero, or credits are
-  // below FLEET_REFUEL_FLOOR_CR (digest.ts). Returns bounded numeric +
-  // allowlisted-username data only -- see FleetDistress (planner/types.ts)
-  // for the security note on why nothing else rides this.
+  // flags one on the sole trigger: credits below FLEET_REFUEL_FLOOR_CR
+  // (digest.ts). A bare zero-fuel reading is NOT its own trigger (round-2
+  // PR #142 review): the rendered remedy is a credits gift, and a fleet-mate
+  // at zero fuel with credits already at or above the floor is asked for
+  // nothing a gift would fix -- a stranded ship stays parked until fuel
+  // reaches it, and an empty station tank refuses refuel regardless of
+  // balance (upstream/guides/fuel.md:202, :136). The credits floor alone
+  // still catches the live incident (0 fuel, 5cr sits well under it).
+  // Returns bounded numeric + allowlisted-username data only -- see
+  // FleetDistress (planner/types.ts) for the security note on why nothing
+  // else rides this.
   //
   // Fails closed the #94 way and never throws: no roster configured, no
   // snapshot yet for a pilot, or a snapshot whose credits/fuel aren't both
@@ -2265,7 +2272,7 @@ export class Agent {
       const rows = this.store.recentEventsByType(pilot.id, "status_snapshot", 1);
       const payload = rows[0]?.payload as { credits?: unknown; fuel?: unknown } | undefined;
       if (!payload || typeof payload.credits !== "number" || typeof payload.fuel !== "number") continue;
-      if (payload.fuel === 0 || payload.credits < FLEET_REFUEL_FLOOR_CR) {
+      if (payload.credits < FLEET_REFUEL_FLOOR_CR) {
         out.push({ username: pilot.username, fuel: payload.fuel, credits: payload.credits });
       }
     }

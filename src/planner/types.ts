@@ -383,8 +383,8 @@ export interface PlanContext {
   // one", never "there are no stations").
   knownStations?: StationSighting[];
   // Fleet-rescue briefing (issue #1114): fleet-mates Agent.fleetDistress
-  // selected as fuel === 0 or credits below FLEET_REFUEL_FLOOR_CR
-  // (digest.ts). Undefined/empty covers three cases the digest must not tell
+  // selected as credits below FLEET_REFUEL_FLOOR_CR (digest.ts).
+  // Undefined/empty covers three cases the digest must not tell
   // apart with a rendered claim -- no fleet roster configured, no fleet-mate
   // has emitted a status_snapshot yet, and every fleet-mate is fine -- so no
   // section renders from any of them (#94: absence is never a verdict).
