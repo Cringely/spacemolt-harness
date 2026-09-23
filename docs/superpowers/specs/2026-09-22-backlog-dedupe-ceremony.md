@@ -87,9 +87,11 @@ reading lists, the same way the human-made report already treats them.
 ## Matching
 
 The ceremony reuses the primitives `filing.ts` already exports (`entityAnchors`, `keySegments`,
-`isNearDuplicate`) rather than writing a second matcher beside the first, with one seam those
-primitives don't cover: they tokenize a kebab-case dedup key, and an issue
-title is prose. Closing that seam needs a title-to-key adapter, `titleToSegments()`, named here
+`isNearDuplicate`) rather than writing a second matcher beside the first, with two seams those
+primitives don't cover, both stemming from the same fact: they tokenize a kebab-case dedup key, and
+an issue title is prose. The first seam is segmentation, closed by an adapter below. The second is
+the anchor gate, which cannot be reused as is and gets its own title-side extractor, argued in full
+further down this section. Closing that seam needs a title-to-key adapter, `titleToSegments()`, named here
 because leaving that seam unnamed is exactly where a second matcher gets born: lowercase, strip
 punctuation, split on whitespace, drop the same severity and staleness words `keySegments`
 already strips. `titleToSegments()` stays a pure adapter into the existing scoring math, never a
@@ -116,8 +118,13 @@ This pass computes its anchors from a different string, with a function of its o
 `filing.ts`. `entityAnchors`/`ENTITY_ANCHOR_RE` stay exactly as `filing.ts` defines them, reused
 unchanged for `filing.ts`'s own job of comparing two minted keys. `titleEntityAnchors()` matches
 `pr`, `prs`, `issue`, `issues`, `gh`, or `ghs` (case-insensitive), followed by up to three
-characters drawn from whitespace, `#`, `:`, or `-`, followed by one to four digits, and returns one
-anchor per match as `<word><digits>`. Run against real titles, #707 returns `{pr83}`, #1084
+characters drawn from whitespace, `#`, `:`, or `-`, followed by one to four digits. The matched
+entity word is normalized to its singular form BEFORE the anchor is built, so the extractor returns
+one anchor per match as `<singular word><digits>`. Without that step a plural title anchors
+differently from a singular one naming the same thing: measured on the snapshot, six issues write
+the #107 entity in plural form and two in singular, which would make #1099 and #1103 (one
+condition, near-identical wording) come out non-empty and disjoint, and the conflict predicate
+would split the very cluster this section uses as its example. Run against real titles, #707 returns `{pr83}`, #1084
 returns `{pr107}`, and #713 (`Doc PR cluster stalled: PR #83 red CI, PR #81 unreviewed`) returns
 `{pr83, pr81}`, because the match is global and each qualifying entity-word occurrence contributes
 its own anchor.
@@ -276,12 +283,13 @@ The ceremony runs weekly. Duplicate pressure accumulates slowly. This pass measu
 weeks of drift, so nothing is lost running less often than the 6-hour strategy review or the
 2-hour standup, and every run past the first is cheap: it gates the same way the
 strategy-reviewer charter gates its own step 0, by counting how many issues opened since the
-last run's high-water mark. A week with fewer than 10 new issues re-scans only the delta against
-the existing cluster set and never re-derives all 83 clusters from a cold start. That gate is on
-re-deriving clusters, not on proposing from clusters already known: a week under the threshold
-still spends its 20-proposal budget against the not-yet-proposed set from prior full derivations
-(see "Idempotence" for where that set lives), so a quiet week thins the backlog of un-proposed
-clusters instead of pausing on it.
+last run's high-water mark. A week with fewer than 10 new issues skips the SEMANTIC pass, which is
+the only part that costs a model call. The deterministic pass still re-derives every cluster on
+every run, because it is free, and that is what makes the not-yet-proposed set recoverable without
+storing it: a run rebuilds the clusters, reads each member's marker, and proposes from whatever is
+still unmarked. So a week under the threshold still spends its 20-proposal budget and thins the
+un-proposed backlog rather than pausing on it. Nothing anywhere stores a cluster membership list.
+See "Idempotence".
 
 The fetch is paginated and reports its own truncation, the same honesty `filing.ts`'s
 `findNearMatch` already builds in (`NearMatchFetch` is `"ok"`, `"truncated"`, or
@@ -371,6 +379,9 @@ the ceremony, #1133 tracks the filer fix.
   durable-scheduler spec's own verdict (b), unrelated to deduplication.
 - Rewriting `filing.ts`'s own matcher. Named above as the real fix and deliberately left for a
   separate spec.
-- A second, independent dedup build. The point of reusing `entityAnchors` and `keySegments` is
-  that there stays exactly one definition of "these two things are probably the same," not two
-  that can drift apart from each other.
+- A second matcher over minted keys. `filing.ts` keeps sole ownership of mint-time sameness, and
+  this ceremony does not touch it. The ceremony owns a separate, clearly scoped job: retrospective
+  clustering over title and body prose, which needs its own title-side extractor because the
+  filer's pattern reads slugs and returns nothing on prose. Two layers, two stated definitions, one
+  owner each. What is ruled out is a second matcher doing the SAME job as an existing one, which is
+  what drifts.
