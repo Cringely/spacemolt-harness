@@ -8,21 +8,15 @@
 
 ## NOW, live status
 
-_Refreshed 2026-09-19 (third pass, wave-3 cluster #119-#124). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-09-23 (steward pass reconciling PRs #127–#131). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
 
-**SIX PRs MERGED, FOUR TRACKER ISSUES CLOSED.** #119 (`018807d`) and #122 (`086a90d`, a same-day comment fast-follow) close #1047: an operator goal naming an exact item no longer loses its purchase slot to an earlier goal's multi-tier family match. #120 (`83a0fd6`) closes #1045: the undocked fuel-reserve floor now survives a measured jumps verdict instead of being silently dropped as a fallback argument; a retired cargo-mass fuel claim also came out of the improv briefing. #121 (`d89fecf`) and #123 (`d7ab050`, a same-day must-fix the first PR's squash-merge missed) close #1106: the #817 standing-instruction pin is now reachable from the dashboard, the digest stopped contradicting the retirement guard, and the Standing checkbox no longer survives an agent switch. #124 (`8a5140f`) closes #1053.
+**FOUR ADDITIONAL PRs MERGED, FIVE TRACKER ISSUES CLOSED.** Since the 2026-09-19 refresh, four more PRs landed on main. #127 (`6fd39e0`) closes #982: item ids are now validated against the catalog at plan admission, blocking invalid purchases before the game rejects them. #128 (`326e428`) closes #700: the stale-mission threshold is now derived from the mission's own expiry time rather than a hardcoded window, improving accuracy for variable-duration contracts. #129 (`a9dbcd3`) closes #1076: the executor now blocks `craft` when the target station's storage cannot guarantee the required inputs, fixing a livelock where the step would re-fail every tick. #131 (`7ab54a3`) closes #931 and #1051 together: the complete_mission action now reads its id from the game's own response instead of the planner's prior context, and parses the reward value from the response text, fixing a class where mission completions recorded zero credit gain.
 
-**#1053'S PREMISE WAS PARTLY REFUTED, DO NOT READ THIS AS "MESSAGE NOW REACHES THE FILER."** `failures.ts` never discarded the message half of a coded error; `FailureClassRow.sample` has carried the full raw result text since the repo's first public commit, and it already reached the strategy reviewer's dump. The live gap was narrower: `docs/charters/strategy-reviewer.md`'s Issue-bump evidence line named only window, counts, and class, so the filing agent quoted a bare class and inferred the rest (#706 is the receipt). PR #124 names `sample` in the charter, requires it quoted as data, and bounds it through the digest's existing 200-char untrusted-text clip.
-
-**PROCESS NOTE, dispatcher observation.** Five of the six PRs above were merged by the fix-round agents, not the PM: the briefs said "open a PR" and never named who merges, so the PM's merge-time checks ran after the fact. `gh` names one account as merger on all six, so the repo cannot separate agent from seat. What it does show: every merge commit is covered by a council or independent-verify ADVANCE (#122's sits on #119, #123's on #121), CI green on each, five merges inside 32 minutes. Nothing unsafe shipped. See L-57.
-
-**DEPLOY STATE, PM live capture 2026-09-19 (not verifiable from the repo).** Prod ran `ece3650` from 19:49:27Z (confirmed prior pass), then `d7ab050` from 23:28:26Z (auto-deploy cron); at 23:35Z healthy, `RestartCount 0`, zero crash-class log lines, all three pilots emitting `status_snapshot`. `8a5140f` (#124) had not yet been observed on the host at capture time.
-
-**LIVE SIGNAL for #1047, PM capture, a baseline not a proof.** On `ece3650`, 19:49:27Z-22:43Z: miner logged 18 `purchase_candidate_overflow`, scout and corsair zero, against 34 plans / 89 miner actions; fleet-wide zero `item_not_available`, zero `mission_not_found`, zero `insufficient_credits`.
+**PRIOR WAVE STATE STILL HOLDS.** The 2026-09-19 pass reported #119–#124 merged with #1047/#1045/#1106/#1053 closed; `8a5140f` (#124) had not yet deployed. The prod image deployed since then is not verified from the repo log.
 
 **BACKLOG:** see `docs/backlog.md`, regenerated this pass.
 
-**Next:** confirm `8a5140f` deploys and stays clean; watch whether the #1053 charter fix changes filed-issue quality (a quoted error sentence, not a bare class). Fleet-flight F4 (3 pilots/24h/zero strands, steer confirmed) still open.
+**Next:** verify the four new PRs (#127–#131) deploy cleanly; watch whether the stricter item-id validation (#982) and improved mission-expiry handling (#700) reduce plan failures. Fleet-flight F4 (3 pilots/24h/zero strands, steer confirmed) still open.
 
 ## Recent history, 2026-09-19
 
