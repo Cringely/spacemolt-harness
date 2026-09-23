@@ -11,7 +11,7 @@
 
 _Refreshed 2026-09-22 (fourth pass, wave-4 cluster #127-#132). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
 
-**FIVE PRs MERGED, SIX TRACKER ISSUES CLOSED.** #127 (`6fd39e0`) closes #982 and #1003: every item-bearing plan step (buy/sell/jettison/withdraw/deposit/create_sell_order/create_buy_order) now validates its item id against the catalog SSOT at plan admission, replacing a buy-only post-hoc correction that never covered the other six actions. #128 (`326e428`) closes #700: the stale-mission advisory threshold now derives from each mission's own expiry instead of a flat 24h, so a ~3h distress mission can trip near its own halfway point. #129 (`a9dbcd3`) closes #1076 (dupes #932, #997): a narrow guard blocks `craft` only when station storage is provably empty, paired with a deposit-first briefing line. #131 (`7ab54a3`) closes #931 and #1051: the digest points the planner at the parsed `mission_id` instead of raw listing prose (superseding the staleness theory in #913/#614, closed as superseded), and mission rewards (credits, skill_xp) are now parsed and rendered for ranking. #132 (`c4afd5d`) is docs-only: the backlog dedupe ceremony spec.
+**FIVE PRs MERGED, SIX TRACKER ISSUES CLOSED.** #127 (`6fd39e0`) closes #982 and #1003: every item-bearing plan step (buy/sell/jettison/withdraw/deposit/create_sell_order/create_buy_order) now validates its item id against the catalog SSOT at plan admission, replacing a buy-only post-hoc correction that never covered the other six actions. #128 (`326e428`) closes #700: the stale-mission advisory threshold now derives from each mission's own expiry instead of a flat 24h, so a ~3h distress mission can trip near its own halfway point. #129 (`a9dbcd3`) closes #1076 (dupes #932, #997): a narrow guard blocks `craft` only when station storage is provably empty, paired with a deposit-first briefing line. #131 (`7ab54a3`) closes #931 and #1051: the digest points the planner at the parsed `mission_id` instead of raw listing prose (#913/#614 closed as superseded by PR #107's guard, with #131 adding the id-choice half), and mission rewards (credits, skill_xp) are now parsed and rendered for ranking. #132 (`c4afd5d`) is docs-only: the backlog dedupe ceremony spec.
 
 **DEDUPE MEASUREMENT (from #132's own evidence, not yet a shipped ceremony).** 389 of 521 open issues cluster into 83 underlying conditions. 43 of those clusters (249 issues) are high-confidence, one fix closes every member. Filed as #1133 (fix the filer itself, P1) and #1135 (build the ceremony to the merged spec, P1). This is the backlog's real shape, not the open-issue count.
 
@@ -21,7 +21,7 @@ _Refreshed 2026-09-22 (fourth pass, wave-4 cluster #127-#132). Boot from this bl
 
 **BACKLOG:** see `docs/backlog.md`, regenerated this pass.
 
-**Next:** #1114/#1115/#1116 (fleet-rescue path, P1) block F4 (3 pilots/24h/zero strands) more directly than anything else queued. #1133/#1135 (dedupe) are process debt. #1134 (two flaky scheduler tests, P2) is not blocking.
+**Next:** the fleet-rescue path blocks F4 (3 pilots/24h/zero strands) more directly than anything else queued: #1114 and #1115 (both P1), with #1116 (P2) alongside them. #1133/#1135 (dedupe) are process debt. #1134 (two flaky scheduler tests, P2) is not blocking.
 
 ## Recent history, 2026-09-22
 
