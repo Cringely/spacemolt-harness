@@ -238,6 +238,7 @@ describe("tick orchestration (D-Tick)", () => {
       strategy: { ...defaultAnchor(), lastAttemptAt: T },
       council: { ...defaultAnchor(), lastAttemptAt: T },
       steward: { ...defaultAnchor(), stewardAnchorSha: "old" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, quiesced);
     const repo = { sha: "new", commitAtMs: T - 90 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
