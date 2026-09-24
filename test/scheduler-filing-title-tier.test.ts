@@ -13,10 +13,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { titleToSegments } from "../src/scheduler/dedupe";
+import { loadConfig } from "../src/config/config";
+import { isNearDuplicateTitle, titleToSegments } from "../src/scheduler/dedupe";
 import { fileFailureAlarm } from "../src/scheduler/failure-alarm";
 import {
   FILING_LOG_FILE,
+  FLEET_PILOT_IDS,
   SUPPRESSION_NOTICE_KEY,
   TITLE_BUMP_NOTE,
   fileFinding,
@@ -154,6 +156,55 @@ describe("title tier in fileFinding (#1133)", () => {
     expect(res.issue).not.toBe(707);
   });
 
+  // Catches: one defect on two pilots, two actions or two jobs merged into one
+  // issue. #1133 calls those related, not duplicates, and the ceremony's bar
+  // matches every such twin (replayed: 139 of 139 pilot swaps, 93 of 93
+  // action swaps, 98 of 98 job swaps over the snapshot). Open titles are real
+  // (#991, #1076, #765). Arrivals are CONSTRUCTED by swapping one word.
+  // Blind spot: "created" is also what a skipped or failed scan returns, and
+  // what a pair that never scored similar returns. So each case first asserts
+  // the ceremony DOES match the pair, and then that the scan ran ("ok").
+  // Ablation performed: dropped the titlesNameDifferentEntities call from
+  // findTitleMatch, and the pilot case bumped #991. Then removed each word
+  // list from TITLE_ENTITY_WORDS in turn (pilots, actions, jobs). Each removal
+  // went red at its own case, with every earlier case still passing.
+  test("a title naming a different pilot, action or job files fresh, however identical the wording", () => {
+    const cases: Array<[OpenIssue, string]> = [
+      [
+        { number: 991, title: "Miner: withdraw 100% broken (49/49 lifetime, 3/3 window) - no storage guard", body: marked("miner-withdraw-broken"), machine: true },
+        "Scout: withdraw 100% broken (49/49 lifetime, 3/3 window) - no storage guard",
+      ],
+      [
+        { number: 1076, title: "Miner: craft blocked 98x/72h -- planner attempts craft before depositing inputs", body: marked("miner-craft-blocked"), machine: true },
+        "Miner: recycle blocked 98x/72h -- planner attempts recycle before depositing inputs",
+      ],
+      [
+        { number: 765, title: "scheduler: council ceremony run failed", body: marked("scheduler-council-fail"), machine: true },
+        "scheduler: strategy ceremony run failed",
+      ],
+    ];
+    for (const [open, title] of cases) {
+      expect(isNearDuplicateTitle(open.title, title)).toBe(true);
+      const dir = tmp();
+      const { gh, calls } = backlogGh([open]);
+      const res = fileFinding(gh, dir, { ...CORSAIR_ARRIVAL, dedupKey: "twin-finding", title });
+      expect(res.outcome).toBe("created");
+      expect(calls.some((c) => c.args[1] === "comment")).toBe(false);
+      expect(logLines(dir)[0]!.titleMatch).toBe("ok");
+    }
+  });
+
+  // Catches: a pilot added to the fleet but not to FLEET_PILOT_IDS, whose
+  // findings would then merge into another pilot's issue. The scheduler never
+  // loads agents.yaml, so the committed example is the roster this can check.
+  // Sorted both sides: toEqual on arrays is order-sensitive, and order carries
+  // no meaning here.
+  // Ablation performed: removed "corsair" from FLEET_PILOT_IDS; this went red.
+  test("the pilot list the title tier vetoes on is the fleet agents.example.yaml defines", () => {
+    const roster = loadConfig(join(import.meta.dir, "..", "agents.example.yaml")).agents.map((a) => a.id);
+    expect([...FLEET_PILOT_IDS].sort() as string[]).toEqual([...roster].sort());
+  });
+
   // Catches: the suppression notice's contract ("created once and never
   // commented on again") broken through the new route. #1031 is the real
   // notice. The arriving title is CONSTRUCTED to match it.
@@ -212,12 +263,14 @@ describe("title tier in fileFinding (#1133)", () => {
     }
   });
 
-  // Catches: the measured false merge. Replayed over the 2026-09-22 snapshot,
-  // the "strategy" and "standup" alarms title-match the "council" alarm, since
-  // a job id is not an entity anchor. The failure alarm's contract is one issue
-  // per job, so it opts out of the title tier. #765 is the real council alarm.
-  // Ablation performed: removed skipTitleMatch from fileFailureAlarm; the
-  // strategy failure bumped #765.
+  // Catches: the failure alarm reaching the title tier at all. Its contract is
+  // one issue per job under a code-minted key, so the key tiers are its whole
+  // dedup. At the ceremony's bar the "strategy" and "standup" alarms title-
+  // match the "council" alarm (2026-09-22 snapshot). #765 is the real council
+  // alarm.
+  // Ablation performed: removed skipTitleMatch from fileFailureAlarm. Before
+  // the job-id veto the strategy failure bumped #765. With the veto it files
+  // fresh anyway, so the title-read assertion is the one that goes red.
   test("a strategy failure alarm files its own issue rather than landing on the council alarm", () => {
     const council: OpenIssue = { number: 765, title: "scheduler: council ceremony run failed", body: marked("scheduler-council-fail"), machine: true };
     const dir = tmp();

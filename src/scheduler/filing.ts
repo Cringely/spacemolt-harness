@@ -41,6 +41,10 @@ import { join } from "node:path";
 // neither module touches the other's exports at load time, only inside
 // functions. Keep it that way: a top-level use across this cycle is a TDZ crash.
 import { OPEN_FETCH_LIMIT, isNearDuplicateTitle } from "./dedupe";
+// Not in that cycle: both are plain data with no import back into this module,
+// so the top-level read in TITLE_ENTITY_WORDS below is safe.
+import { REGISTRY } from "../registry/actions";
+import { JOB_IDS } from "./state";
 
 export interface GhResult {
   stdout: string;
@@ -587,13 +591,20 @@ function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
 // - Runs last, only when every key tier missed: a minted-key home still wins.
 // - The entity rule is the ceremony's titleAnchorsConflict. Two titles naming
 //   different PR/issue numbers never match, the PR #40 into PR #83 incident.
+// - Plus one rule the ceremony does not have: titlesNameDifferentEntities
+//   below. A wrong match here silently swallows a finding, where a wrong
+//   ceremony proposal is a label someone strips, so the filer's matches are a
+//   subset of the ceremony's.
 // - The suppression notice is never a target, the same guard tier 3 carries.
 // - A backlog it cannot read falls through to today's create path, recorded
 //   as "unreadable", never to a thrown error that would drop the finding.
 //
-// Measured by replaying filing order over that snapshot: 31 of the 408
+// Measured by replaying filing order over that snapshot: 28 of the 408
 // CLI-filed arrivals would have bumped, each onto an issue the snapshot's
-// duplicate report puts in the same cluster. The largest clusters reword too
+// duplicate report puts in the same cluster. Without the entity veto it was
+// 31. The veto refuses four of those: one title adds the miner, one drops the
+// scout, and two gain a "JUMP" priority tag that reads as the jump action.
+// The largest clusters reword too
 // far for a title check (the Corsair pile collapses one of its 19 duplicates).
 // That gap is the ceremony's semantic pass, not something to lower this floor for.
 type TitleScan = "ok" | "truncated" | "unreadable";
@@ -605,6 +616,44 @@ export const TITLE_BUMP_NOTE =
 interface TitleMatchResult {
   issue?: number;
   fetch: TitleScan;
+}
+
+/**
+ * The fleet's pilot ids, the `id` of each agents.yaml entry. Kept here because
+ * the scheduler never loads agents.yaml (the roster is the pilot host's
+ * config). test/scheduler-filing-title-tier.test.ts pins this list to
+ * agents.example.yaml, so a pilot added there turns that test red.
+ */
+export const FLEET_PILOT_IDS = ["miner", "scout", "corsair"] as const;
+
+// Words that name WHICH pilot, game action or ceremony job a finding is about.
+// Action names come from the registry and job ids from state.ts, so neither
+// list can drift. The catalog action's empty name is not a word.
+const TITLE_ENTITY_WORDS: ReadonlySet<string> = new Set([
+  ...FLEET_PILOT_IDS,
+  ...REGISTRY.map((a) => a.name).filter(Boolean),
+  ...JOB_IDS,
+]);
+
+// Underscores stay inside a word, so `self_destruct` is one registry name and
+// not the two words `self` and `destruct`.
+const titleWords = (title: string): Set<string> => new Set(title.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean));
+
+/**
+ * True when a pilot, action or job word appears in exactly one of the two
+ * titles. #1133: the same defect on a different pilot, action or job is a
+ * related finding, not a duplicate. The ceremony scores these words as
+ * ordinary segments on purpose (its spec, "Matching"), so at its bar a title
+ * with its pilot swapped still matches. A word both titles carry never vetoes. A
+ * title naming the corsair never matches one naming no pilot at all, which
+ * costs a missed bump: the cheap direction, since the ceremony still sees both.
+ */
+function titlesNameDifferentEntities(a: string, b: string): boolean {
+  const wa = titleWords(a);
+  const wb = titleWords(b);
+  for (const w of wa) if (!wb.has(w) && TITLE_ENTITY_WORDS.has(w)) return true;
+  for (const w of wb) if (!wa.has(w) && TITLE_ENTITY_WORDS.has(w)) return true;
+  return false;
 }
 
 function findTitleMatch(gh: GhRunner, title: string): TitleMatchResult {
@@ -626,7 +675,8 @@ function findTitleMatch(gh: GhRunner, title: string): TitleMatchResult {
     if (!Number.isInteger(row?.number) || typeof row.title !== "string") continue;
     if (typeof row.body === "string" && readDedupKey(row.body) === SUPPRESSION_NOTICE_KEY) continue;
     const n = row.number as number;
-    if ((target === undefined || n < target) && isNearDuplicateTitle(title, row.title)) target = n;
+    if ((target === undefined || n < target) && isNearDuplicateTitle(title, row.title) && !titlesNameDifferentEntities(title, row.title))
+      target = n;
   }
   return target === undefined ? { fetch } : { issue: target, fetch };
 }
@@ -906,8 +956,7 @@ export function fileFinding(
   const keyTarget = match?.number ?? near?.issue;
   // #1133: every key tier missed, so check the finding's title against the
   // open backlog. The failure alarm opts out: its key is code-minted and one
-  // issue per job is its contract, and replayed over the 2026-09-22 snapshot
-  // its "strategy" and "standup" alarms title-match the "council" one.
+  // issue per job is its contract (reasons at its call site).
   const byTitle = keyTarget === undefined && !opts?.skipTitleMatch ? findTitleMatch(gh, title) : undefined;
   if (byTitle) titleMatch = byTitle.fetch;
   const bumpTarget = keyTarget ?? byTitle?.issue;

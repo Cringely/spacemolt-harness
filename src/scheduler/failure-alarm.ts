@@ -81,9 +81,11 @@ export function fileFailureAlarm(gh: GhRunner, stateDir: string, input: FailureA
     // code-minted here, stable per job id, never caller-supplied — so it
     // creates once and bumps thereafter regardless of the consumer gate.
     // skipTitleMatch (#1133): the same code-minted key makes the title tier
-    // wrong here. Every alarm title differs only in the job id, which is not
-    // an entity anchor, so a strategy failure would title-match the council
-    // alarm and land on the wrong job's issue.
+    // wrong here. Every alarm title differs only in the job id, so at the
+    // ceremony's bar a strategy failure title-matches the council alarm. The
+    // filer's job-id veto now refuses that pair too, but one issue per job is
+    // this key's contract, and a title tier can only move an alarm onto an
+    // issue it did not mint.
     { bypassConsumerGate: true, skipTitleMatch: true },
   );
 }
