@@ -5,11 +5,29 @@
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
 
-**Last updated:** 2026-09-22, doc-steward pass reconciling wave-4 cluster PRs #127-#132 (tracker #982/#1003/#700/#1076/#931/#1051 closed). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-24, doc-steward pass reconciling wave-5 cluster PRs #137-#147 (tracker #1115/#1114/#1116/#1135/#1136/#1133 closed). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-22 (fourth pass, wave-4 cluster #127-#132). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-09-24 (fifth pass, cluster #137-#147). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+
+**SEVEN PRs MERGED, SIX TRACKER ISSUES CLOSED.** #137 (`b53dffc`): four core-managed hooks synced, pilot code untouched. #140 (`1f666a3`) closes #1115: an affordability refuel give-up clears once credits rise above the balance recorded at the failure. A dry-station give-up still latches (#672 intact). Legacy rows classify from their stored message. #142 (`af3e309`) closes #1114: each briefing carries a bounded distress fact for any fleet-mate under a 20-credit refuel floor, naming a credits gift in prose, never a filled-in command (zero-fuel trigger dropped: a gift cannot fix credits-but-no-fuel). #139 (`045d765`) closes #1116: the buy-guard refusal names `create_buy_order` in prose, template removed. A docked pilot refused an overpriced `fuel_cell` is steered to `refuel` when the station reports reserve fuel. #143 (`b985d59`) closes #1135: the weekly backlog dedupe ceremony, built to the merged spec, shipped GATED OFF (`gates.json` `dedupePosting`, default off, fails closed). Review removed a file-finding grant that let a gated-off run write to the tracker. #141 (`fefe4d9`) closes #1136: the scheduled doc-steward ceremony stands down while a dispatched steward PR covers the same merges, 24-hour bound, fork PRs ignored. #147 (`3cfa929`) closes #1133: after every minted-key tier misses, `fileFinding` bumps an open issue whose title matches (the ceremony's `isNearDuplicateTitle`), with a filer-only veto on titles naming a different pilot, game action or scheduler job. An unreadable backlog falls back to create. Replay, 2026-09-22 snapshot: 28 of 306 duplicates bumped, zero cross-pilot, cross-action or cross-job. Ceremonies filed #1137, #1138 (titled P0, labelled P2: strategy-review ceremony crashes on a zod v4 mismatch, 7+ duplicate filings) and #1139. #1134 (flaky Windows scheduler tests, P2) open. See L-59.
+
+**DEDUPE DRY RUN (PM local, 2026-09-23, gate off, zero tracker writes, semantic pass not run).** 514 open issues, 27 clusters with 36 members, 20 proposals (the per-run budget, all high-tier), 16 deferred. PM spot check of 12: 11 the same defect, one pairing a council failure alarm onto a strategy failure alarm (two different jobs). Live posting needs the uncreated labels `dedupe:candidate` and `dedupe:confirmed`, and an operator decision.
+
+**LIVE PROOF: NONE YET.** Signals: a latched pilot refuelling itself once credits arrive (#1115), a solvent pilot gifting a rescue unprompted (#1114), zero guard-sourced buy orders (#1116), fewer new duplicate clusters per week (#1133), a week with at most one steward PR per merge cluster (#1136).
+
+**DEPLOY STATE, PM capture 2026-09-24T05:55Z (not verifiable from the repo).** Prod pilot container healthy on image `fefe4d9`, started 2026-09-24T00:06Z, carrying #137 through #141. #147 (`3cfa929`) merged after the capture, not yet auto-deployed. Scheduler code runs on the scheduler host, which pulls main on its own cadence. Nothing in the capture shows pilot behaviour.
+
+**SUPERSEDED by this pass:** five scheduler-ceremony steward PRs (#136, #138, #144, #145, #146) sat open at once, the #1136 defect reproducing live while its fix was in review.
+
+**BACKLOG:** `docs/backlog.md`, regenerated this pass.
+
+**Next:** #1138, the live signals above, the dedupe-posting call (labels first). F4 (3 pilots/24h/zero strands, steer confirmed) stays open.
+
+## Recent history, 2026-09-24
+
+Moved out of `## NOW` on 2026-09-24 (fifth pass) to fit the 500-word cap. Superseded only where the block above says so. Extracted verbatim from `origin/main`'s pre-09-24 `docs/STATE.md`.
 
 **FIVE PRs MERGED, SIX TRACKER ISSUES CLOSED.** #127 (`6fd39e0`) closes #982 and #1003: every item-bearing plan step (buy/sell/jettison/withdraw/deposit/create_sell_order/create_buy_order) now validates its item id against the catalog SSOT at plan admission, replacing a buy-only post-hoc correction that never covered the other six actions. #128 (`326e428`) closes #700: the stale-mission advisory threshold now derives from each mission's own expiry instead of a flat 24h, so a ~3h distress mission can trip near its own halfway point. #129 (`a9dbcd3`) closes #1076 (dupes #932, #997): a narrow guard blocks `craft` only when station storage is provably empty, paired with a deposit-first briefing line. #131 (`7ab54a3`) closes #931 and #1051: the digest points the planner at the parsed `mission_id` instead of raw listing prose (#913/#614 closed as superseded by PR #107's guard, with #131 adding the id-choice half), and mission rewards (credits, skill_xp) are now parsed and rendered for ranking. #132 (`c4afd5d`) is docs-only: the backlog dedupe ceremony spec.
 
@@ -123,7 +141,7 @@ Moved out of `## NOW` on 2026-08-11 to fit the 500-word handoff cap. Still the l
 
 Not part of the live-status refresh above; persists across waves until it changes. Not word-capped (`test/doc-size.test.ts` only gates the `## NOW` block).
 
-- **Scheduler.** #114 has stayed recovered since 2026-07-21; the dispatch gate is still OFF by design (human-gated). Strategy job works over the TLS store proxy. Healthy on the LXC (user `smsched`, cron every 10m).
+- **Scheduler.** #114 has stayed recovered since 2026-07-21; the dispatch gate is still OFF by design (human-gated). Strategy job works over the TLS store proxy. Healthy on the scheduler host (runs under a dedicated service account, cron every 10m).
 - **Production config (moved out of `## NOW` 2026-08-11, unchanged since 2026-08-02).** `max_plans_per_window: 12` in `agents.yaml`, against a schema default of 36. `keep_fuel_above_jumps: 8`, an estimate rather than a measurement (see the deploy-order warning below).
 - **Merge cluster 2026-07-22/23** (superseded as live status, kept as the record): #12 `SM_STORE_URL` through the strategy job; #13 tick bootstrap moved host-side; #14 finding-filer scoped to the private issues repo; #15 chained-gh-merge gate round 3; #16 per-job gh grants, bypass wildcard dropped. Milestone Artifact current through M-53.
 - **Model policy.** Fable = prose seats, Opus everything else, cheap tiers for bulk.

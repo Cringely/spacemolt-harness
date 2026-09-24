@@ -36,8 +36,6 @@ _Regenerated from 516 open issues._
 - #697 `M` — miner: bought and immediately stored an unused ship, abandoned an active distress mission, same plan
 - #698 `M` — Consecutive-thrash gate resets the repeat-break counting floor, suppressing the breaker it should trigger
 - #1033 `M` — Scout planner mints nonexistent POI sirius_observatory_station (30 occurrences, not 1,250; 93% share the cross-system plan shape)
-- #1115 `M` — A refuel give-up latched on affordability never clears when credits arrive, and it blocks the retry that would clear it
-- #1116 `S` — The #458 buy-guard refusal hands the planner a filled-in create_buy_order template, the exact pattern that locked 21.8k credits in #681
 
 ## Observability
 
@@ -99,7 +97,6 @@ _Regenerated from 516 open issues._
 - #232 — Player-to-player transfer & storage gifting — spacemolt_transfer + spacemolt_storage
 - #591 `L` — Epic: path to fleet flight, 3 pilots, measurably progressing
 - #703 `M` — corsair soft-locked: detained for a 27cr bounty it cannot pay, and the fleet has no way to send it credits
-- #1114 `M` — No pilot can request or offer a fleet rescue: the gift path from #703 has never been used without a human
 
 ## Process
 
@@ -536,11 +533,20 @@ _Regenerated from 516 open issues._
 - #1130 — P0: Council report 2026-09-22 not committed to docs/council/ — job PAT cannot push
 - #1131 — P1: read-latest-report.ts not in council job allowedTools (issue #717, 49 days unfixed)
 - #1132 — P0: strategy-review ceremony cycle breaks on zod v4/node_modules, 2026-09-22 report unexecutable
-- #1133 `L` — The filer dedupes on minted key wording, not on the defect: 389 of 521 open issues are duplicates
-- #1135 `L` — Build the weekly backlog dedupe ceremony to the merged spec
+- #1137 — Hygiene: 23 unmerged steward branches pending cleanup review
+- #1138 — P0: Strategy-review ceremony broken on zod v4 mismatch — 7+ duplicate filings
+- #1139 — Strategy-store gate/dump/mark crashes with instanceof TypeError (node_modules missing)
+- #1140 — BLOCKER: council ceremony cannot self-check (tooling + auth gaps)
+- #1141 — P1: read-latest-report.ts not in council job allowedTools (#1131)
 
 ## Recently done (closed)
 
+- ~~#1136 — The doc-steward ceremony duplicates the PM's steward pass: four PRs closed as superseded in four days~~
+- ~~#1135 — Build the weekly backlog dedupe ceremony to the merged spec~~
+- ~~#1133 — The filer dedupes on minted key wording, not on the defect: 389 of 521 open issues are duplicates~~
+- ~~#1116 — The #458 buy-guard refusal hands the planner a filled-in create_buy_order template, the exact pattern that locked 21.8k credits in #681~~
+- ~~#1115 — A refuel give-up latched on affordability never clears when credits arrive, and it blocks the retry that would clear it~~
+- ~~#1114 — No pilot can request or offer a fleet rescue: the gift path from #703 has never been used without a human~~
 - ~~#1106 — Standing-instruction follow-ups: no caller sends standing, digest contradicts the guard, improv spec drifted (#817)~~
 - ~~#1076 — Miner: craft blocked 98x/72h -- planner attempts craft before depositing inputs~~
 - ~~#1053 — failureClass discards the message half of every coded error, so filed issues lose the half that names the cause~~
@@ -555,9 +561,3 @@ _Regenerated from 516 open issues._
 - ~~#982 — Miner: sell attempts literal item id 'wreck' (8x/72h), not a resolvable item — invalid_item~~
 - ~~#932 — Miner: craft fails repeatedly, planner never deposits inputs into station storage first~~
 - ~~#931 — complete_mission/abandon_mission fail with mission_not_found: template_id used instead of mission_id~~
-- ~~#913 — complete_mission fails 100% in-window (23/23), 98.4% lifetime -- stale mission id~~
-- ~~#818 — Dispatch OFF: 4 green PRs blocked on review (#81, #86, #85, #84)~~
-- ~~#817 — A standing operator instruction is retired the moment the planner claims instruction_done~~
-- ~~#815 — Operator steer channel is inert during planner backoff: /instruct returns 204 and the instruction is never acted on~~
-- ~~#813 — normalize-plan.ts validates a travel POI against pre-travel_to surroundings, discarding valid cross-system plans~~
-- ~~#812 — goal-items.ts: one item's exact match starves every other item's family match, so scout never sees a scanner price~~

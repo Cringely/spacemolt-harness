@@ -1328,3 +1328,17 @@ The accepted cost is blast radius. A stolen `store_bearer` used to buy event rea
 - *(C) Drop the grant from `jobs.ts` and the how-to from its composed work order [CHOSEN].* The script is already the sole tracker writer for this job. The grant was surplus capability, never a used one.
 
 **Decision.** (C). `dedupe`'s `allowedTools` no longer includes the filer, and `workOrder()` composes without `FILING_HOWTO`/`OBSERVE_AND_FILE_ONLY` for that job, since naming a denied command would just teach a dead end. The report-marker check now requires the exact `REPORT_TITLE` and a body starting with the marker, both conditions together, since the ceremony only ever posts that pair as a unit. Ablated: `test/backlog-dedupe.test.ts` fails on the restored grant and on the restored substring-only report match. `test/scheduler-spawn.test.ts`'s three every-work-order filing tests fail on the restored `OBSERVE_AND_FILE_ONLY`/`FILING_HOWTO` inclusion.
+
+## 2026-09-24 - Filer dedupes on open-issue titles with the ceremony's predicate plus a filer-only veto (#1133)
+
+**Context.** `fileFinding()`, which every ceremony files through, compared only the dedup key the filing agent mints (a slug it invents for the defect). Differently worded findings mint different keys and operator-authored issues have none, so on 2026-09-22, 389 of 521 open issues were duplicates in 83 clusters (#1133). The dedupe ceremony (#1135) sweeps that pile afterwards. This is the producer fix, which the ceremony spec calls the one that stops the leak. A wrong filer match silently folds a new finding into the wrong issue, where a wrong ceremony proposal is only a label a person strips, so the filer needs a higher bar (#1133).
+
+**Options.**
+- *(A) Keep key-only matching [rejected].* Blind to wording and keyless issues, the measured cause.
+- *(B) A second, filer-specific matcher [rejected].* Two definitions of "duplicate" drift apart, and #1133 requires one owner.
+- *(C) Reuse the ceremony's `isNearDuplicateTitle` unchanged [rejected].* Its entity gate knows only PR and issue numbers, so identically worded findings about different pilots bumped each other (PR #147 synthesis).
+- *(D) Reuse the predicate plus a filer-only veto [CHOSEN].* One similarity definition, a stricter gate at mint time.
+- *(E) Make the filing agent justify NEW against the top matches [deferred].* Makes the filing CLI a two-step exchange with model judgment in the hot path. The spec wants its own review, and this tier gives it a baseline to beat (PR #147).
+- *(F) Require identical segment sets instead of a veto [rejected].* Keeps 4 of 42 snapshot pairs and still misses ids the key parser drops as durations (synthesis).
+
+**Decision.** (D). A fourth tier, `findTitleMatch`, runs only after every minted-key tier misses, so a keyed home still wins. It applies the ceremony's predicate (its similarity test) to open issues, then `titlesNameDifferentEntities` vetoes any pair where a fleet pilot id, a registered game action or a scheduler job id appears in only one title. A match bumps the lowest-numbered issue with the full finding, and an unreadable backlog falls back to create. Replayed over the 2026-09-22 snapshot, 28 of 306 duplicates bump, with zero cross-pilot, cross-action or cross-job merges. The veto refused four true bumps, which the ceremony still sees. Ablated: removing the veto bumps the pilot twin, and each word list reddens its own case (PR #147 fix round).
