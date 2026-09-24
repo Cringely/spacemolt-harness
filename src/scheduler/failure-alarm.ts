@@ -80,6 +80,10 @@ export function fileFailureAlarm(gh: GhRunner, stateDir: string, input: FailureA
     // channel a failing job has). Safe to bypass unconditionally: the key is
     // code-minted here, stable per job id, never caller-supplied — so it
     // creates once and bumps thereafter regardless of the consumer gate.
-    { bypassConsumerGate: true },
+    // skipTitleMatch (#1133): the same code-minted key makes the title tier
+    // wrong here. Every alarm title differs only in the job id, which is not
+    // an entity anchor, so a strategy failure would title-match the council
+    // alarm and land on the wrong job's issue.
+    { bypassConsumerGate: true, skipTitleMatch: true },
   );
 }

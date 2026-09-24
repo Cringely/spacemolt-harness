@@ -35,6 +35,12 @@
 //   (a)(4) flood cap.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+// Circular on purpose: dedupe.ts imports this module's key primitives, and this
+// module imports the ceremony's title check back (#1133), so one definition of
+// "these titles name the same finding" serves both. Safe under ESM because
+// neither module touches the other's exports at load time, only inside
+// functions. Keep it that way: a top-level use across this cycle is a TDZ crash.
+import { OPEN_FETCH_LIMIT, isNearDuplicateTitle } from "./dedupe";
 
 export interface GhResult {
   stdout: string;
@@ -564,6 +570,67 @@ function findNearMatch(gh: GhRunner, dedupKey: string): NearMatchResult {
   return { fetch };
 }
 
+// --- tier 4: title match over the whole open backlog (#1133) ---------------
+//
+// Tiers 1-3 compare keys, and a key is wording a headless spawn invented. The
+// 2026-09-22 snapshot had 389 of 521 open issues in duplicate clusters, filed
+// because two runs worded one defect differently (`corsair-in-battle-deadlock-
+// unresolved` and `corsair-in-battle-no-flee-lever` share 3 of 7 segments), and
+// because an operator-authored issue carries no key at all. This tier reads the
+// open backlog's TITLES instead, through the dedupe ceremony's own check
+// (isNearDuplicateTitle), so the filer and the ceremony share one definition of
+// sameness rather than two that drift.
+//
+// Scope, and why each limit is there:
+// - All open issues, operator-authored included. Matching titles is what makes
+//   those visible at all. Open only, like tier 3.
+// - Runs last, only when every key tier missed: a minted-key home still wins.
+// - The entity rule is the ceremony's titleAnchorsConflict. Two titles naming
+//   different PR/issue numbers never match, the PR #40 into PR #83 incident.
+// - The suppression notice is never a target, the same guard tier 3 carries.
+// - A backlog it cannot read falls through to today's create path, recorded
+//   as "unreadable", never to a thrown error that would drop the finding.
+//
+// Measured by replaying filing order over that snapshot: 31 of the 408
+// CLI-filed arrivals would have bumped, each onto an issue the snapshot's
+// duplicate report puts in the same cluster. The largest clusters reword too
+// far for a title check (the Corsair pile collapses one of its 19 duplicates).
+// That gap is the ceremony's semantic pass, not something to lower this floor for.
+type TitleScan = "ok" | "truncated" | "unreadable";
+
+/** Heads a title-tier bump comment, so a wrong match is visible where it landed. */
+export const TITLE_BUMP_NOTE =
+  "Bumped here because this finding's title matches this issue's title. If it is a different defect, it needs its own issue.";
+
+interface TitleMatchResult {
+  issue?: number;
+  fetch: TitleScan;
+}
+
+function findTitleMatch(gh: GhRunner, title: string): TitleMatchResult {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(
+      run(gh, ["issue", "list", "--state", "open", "--limit", String(OPEN_FETCH_LIMIT), "--json", "number,title,body"]),
+    );
+  } catch {
+    return { fetch: "unreadable" }; // gh failure or unparseable JSON: create as before
+  }
+  if (!Array.isArray(rows)) return { fetch: "unreadable" };
+  const fetch: TitleScan = rows.length >= OPEN_FETCH_LIMIT ? "truncated" : "ok";
+  // Lowest matching number: the oldest open issue is where the conversation
+  // and any triage already live (the ceremony's own final tiebreak), and the
+  // choice no longer depends on gh's result ordering.
+  let target: number | undefined;
+  for (const row of rows as Array<{ number?: unknown; title?: unknown; body?: unknown }>) {
+    if (!Number.isInteger(row?.number) || typeof row.title !== "string") continue;
+    if (typeof row.body === "string" && readDedupKey(row.body) === SUPPRESSION_NOTICE_KEY) continue;
+    const n = row.number as number;
+    if ((target === undefined || n < target) && isNearDuplicateTitle(title, row.title)) target = n;
+  }
+  return target === undefined ? { fetch } : { issue: target, fetch };
+}
+
 /**
  * Per-filing side channel, appended beside the cycle counters this module
  * already owns. It carries the key, what happened to it, the issue number, and
@@ -591,6 +658,11 @@ export interface FilingLogEntry {
   issue: number | null;
   /** "skipped" = an exact-key match or the cap path pre-empted the scan. */
   nearMatch: "skipped" | NearMatchFetch;
+  /**
+   * Tier 4. "skipped" = a key tier matched, the cap path ran, or the caller
+   * opted out. Optional because rows written before #1133 lack it.
+   */
+  titleMatch?: "skipped" | TitleScan;
   /** "skipped" = the consumer gate was never consulted (bump path, or bypassed). */
   consumer: ConsumerProbe | "skipped";
 }
@@ -728,7 +800,7 @@ export function fileFinding(
   gh: GhRunner,
   stateDir: string,
   input: FindingInput,
-  opts?: { bypassConsumerGate?: boolean },
+  opts?: { bypassConsumerGate?: boolean; skipTitleMatch?: boolean },
 ): FindingOutcome {
   const { jobId, cycleId, dedupKey, title, body: rawBody } = input;
   if (!DEDUP_KEY_RE.test(dedupKey)) {
@@ -761,6 +833,10 @@ export function fileFinding(
     return probe === "present";
   };
 
+  // Tier 4's scan status, read by record() below. Stays "skipped" on every
+  // path that never reaches the title scan.
+  let titleMatch: NonNullable<FilingLogEntry["titleMatch"]> = "skipped";
+
   const record = (
     outcome: FindingOutcome["outcome"],
     issue: number | undefined,
@@ -776,6 +852,7 @@ export function fileFinding(
       outcome,
       issue: issue ?? null,
       nearMatch,
+      titleMatch,
       consumer,
     });
     return { outcome, issue };
@@ -826,16 +903,27 @@ export function fileFinding(
   // `p0-core-harvest-unimplemented` with no agent search step in between.
   const near: NearMatchResult | undefined = match ? undefined : findNearMatch(gh, dedupKey);
   const nearMatch: FilingLogEntry["nearMatch"] = near?.fetch ?? "skipped";
-  const bumpTarget = match?.number ?? near?.issue;
-  // Both routes into bumpTarget already exclude the suppression notice at
-  // their own source: findNearMatch skips a candidate keyed to the notice
-  // (guard above), findDedupMatch drops any hit whose body carries the
-  // notice's marker before returning a match (see the comment there). So
-  // bumpTarget can never legitimately resolve to the notice issue here —
-  // no second check needed, and no dependency on suppression-notice.json
+  const keyTarget = match?.number ?? near?.issue;
+  // #1133: every key tier missed, so check the finding's title against the
+  // open backlog. The failure alarm opts out: its key is code-minted and one
+  // issue per job is its contract, and replayed over the 2026-09-22 snapshot
+  // its "strategy" and "standup" alarms title-match the "council" one.
+  const byTitle = keyTarget === undefined && !opts?.skipTitleMatch ? findTitleMatch(gh, title) : undefined;
+  if (byTitle) titleMatch = byTitle.fetch;
+  const bumpTarget = keyTarget ?? byTitle?.issue;
+  // All three routes into bumpTarget already exclude the suppression notice at
+  // their own source: findNearMatch and findTitleMatch skip a candidate keyed
+  // to the notice (guards above), findDedupMatch drops any hit whose body
+  // carries the notice's marker before returning a match (see the comment
+  // there). So bumpTarget can never legitimately resolve to the notice issue
+  // here — no second check needed, and no dependency on suppression-notice.json
   // (a missing/corrupt state file no longer has any bearing on this path).
   if (bumpTarget !== undefined) {
-    const scratch = writeScratchBody(stateDir, body);
+    // A title-tier bump lands on an issue filed under other wording, so the
+    // comment carries the finding's own title as well as its full text: the
+    // finding is redirected, never trimmed, and a reader can re-file it.
+    const text = keyTarget === undefined ? [`## ${title}`, "", TITLE_BUMP_NOTE, "", body].join("\n") : body;
+    const scratch = writeScratchBody(stateDir, text);
     run(gh, ["issue", "comment", String(bumpTarget), "--body-file", scratch]);
     counter.count += 1;
     saveCounter(stateDir, jobId, cycleId, counter);

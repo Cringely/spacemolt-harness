@@ -311,6 +311,7 @@ describe("filing side channel (LOUD degradation, #654 class)", () => {
       outcome: "created",
       issue: created.issue!,
       nearMatch: "ok",
+      titleMatch: "ok",
       consumer: "present",
     });
     expect(lines[1]!.outcome).toBe("bumped");
