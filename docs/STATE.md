@@ -13,7 +13,7 @@ _Refreshed 2026-09-24 (fifth pass, cluster #137-#147). Boot from this block + `d
 
 **SEVEN PRs MERGED, SIX TRACKER ISSUES CLOSED.** #137 (`b53dffc`): four core-managed hooks synced, pilot code untouched. #140 (`1f666a3`) closes #1115: an affordability refuel give-up clears once credits rise above the balance recorded at the failure. A dry-station give-up still latches (#672 intact). Legacy rows classify from their stored message. #142 (`af3e309`) closes #1114: each briefing carries a bounded distress fact for any fleet-mate under a 20-credit refuel floor, naming a credits gift in prose, never a filled-in command (zero-fuel trigger dropped: a gift cannot fix credits-but-no-fuel). #139 (`045d765`) closes #1116: the buy-guard refusal names `create_buy_order` in prose, template removed. A docked pilot refused an overpriced `fuel_cell` is steered to `refuel` when the station reports reserve fuel. #143 (`b985d59`) closes #1135: the weekly backlog dedupe ceremony, built to the merged spec, shipped GATED OFF (`gates.json` `dedupePosting`, default off, fails closed). Review removed a file-finding grant that let a gated-off run write to the tracker. #141 (`fefe4d9`) closes #1136: the scheduled doc-steward ceremony stands down while a dispatched steward PR covers the same merges, 24-hour bound, fork PRs ignored. #147 (`3cfa929`) closes #1133: after every minted-key tier misses, `fileFinding` bumps an open issue whose title matches (the ceremony's `isNearDuplicateTitle`), with a filer-only veto on titles naming a different pilot, game action or scheduler job. An unreadable backlog falls back to create. Replay, 2026-09-22 snapshot: 28 of 306 duplicates bumped, zero cross-pilot, cross-action or cross-job. Ceremonies filed #1137, #1138 (titled P0, labelled P2: strategy-review ceremony crashes on a zod v4 mismatch, 7+ duplicate filings) and #1139. #1134 (flaky Windows scheduler tests, P2) open. See L-59.
 
-**DEDUPE DRY RUN (PM local, 2026-09-23, gate off, zero tracker writes, semantic pass not run).** 514 open issues, 27 clusters with 36 members, 20 proposals (the per-run budget, all high-tier), 16 deferred. PM spot check of 12: 11 the same defect, one pairing a council failure alarm onto a strategy failure alarm (two different jobs). Live posting needs the uncreated labels `dedupe:candidate` and `dedupe:confirmed`, and an operator decision.
+**DEDUPE LIVE since 2026-09-24.** PM dry run 2026-09-23 (gate off, no model pass): 514 open, 27 clusters/36 members, 20 high-tier proposals (the per-run budget), 16 deferred. Spot check of 12: 11 the same defect, one pairing two different jobs' failure alarms. On the operator's go-ahead: labels created, `dedupePosting` on, first live run labelled 20 issues `dedupe:candidate` and opened standing report #1142.
 
 **LIVE PROOF: NONE YET.** Signals: a latched pilot refuelling itself once credits arrive (#1115), a solvent pilot gifting a rescue unprompted (#1114), zero guard-sourced buy orders (#1116), fewer new duplicate clusters per week (#1133), a week with at most one steward PR per merge cluster (#1136).
 
@@ -23,7 +23,7 @@ _Refreshed 2026-09-24 (fifth pass, cluster #137-#147). Boot from this block + `d
 
 **BACKLOG:** `docs/backlog.md`, regenerated this pass.
 
-**Next:** #1138, the live signals above, the dedupe-posting call (labels first). F4 (3 pilots/24h/zero strands, steer confirmed) stays open.
+**Next:** #1138, the live signals above, adjudicating the 20 dedupe proposals in #1142. F4 (3 pilots/24h/zero strands, steer confirmed) stays open.
 
 ## Recent history, 2026-09-24
 

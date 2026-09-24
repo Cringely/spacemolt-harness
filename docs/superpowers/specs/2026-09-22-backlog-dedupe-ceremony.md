@@ -98,8 +98,9 @@ exactly the drift class this spec exists to close, one level up. The second seam
 gate, which cannot be reused as is and gets its own title-side extractor, argued in full further
 down this section.
 
-Any issue still carrying an `sm-dedup:` marker is already solved, the cheapest pass there is, and
-the ceremony skips it unless a new candidate merges into it.
+The first pass is the filer's own mint-time key match in `filing.ts`, which runs before an issue is
+ever filed. The ceremony does not re-run it and does not skip issues that carry its `sm-dedup:`
+marker: every open issue, marked or not, enters the second pass.
 
 The second pass is deterministic and calls no model. It runs each issue's title through
 `titleToSegments()` and scores it against every other title's segments the way `isNearDuplicate`
@@ -183,8 +184,9 @@ stated for what it actually reads.
 The third pass runs on Sonnet, and only on what the second pass leaves unresolved: issues that
 stayed singletons or scored below the match floor. It compares title and body meaning directly.
 This is the layer the key matcher cannot do at any threshold, because it never reads body text
-and has no representation of meaning beyond a slug. It is also the only layer that can catch an
-operator-authored issue, since those carry no key for the first two passes to key off at all.
+and has no representation of meaning beyond a slug. An operator-authored issue carries no key, so
+the first pass never sees it. The second pass still reaches it through its title, and this pass
+catches the ones whose titles are worded differently from their duplicates.
 
 Canonical selection follows the rule the human pass already used and states in its own method
 section: cause over symptom, then evidence weight, then lowest, oldest, issue number.
