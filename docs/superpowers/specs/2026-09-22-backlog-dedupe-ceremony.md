@@ -98,9 +98,6 @@ exactly the drift class this spec exists to close, one level up. The second seam
 gate, which cannot be reused as is and gets its own title-side extractor, argued in full further
 down this section.
 
-Any issue still carrying an `sm-dedup:` marker is already solved, the cheapest pass there is, and
-the ceremony skips it unless a new candidate merges into it.
-
 The second pass is deterministic and calls no model. It runs each issue's title through
 `titleToSegments()` and scores it against every other title's segments the way `isNearDuplicate`
 scores two keys, except the anchor gate cannot be `isNearDuplicate`'s gate unchanged.
