@@ -128,13 +128,17 @@ describe("due evaluation (A2)", () => {
       headCommitAt: mergedAt,
       newSubjectsSinceAnchor: ["feat(agent): thing (#380)"],
     };
-    // 5 min old: inside the 20-min settle — not due, not absorbed.
-    let r = dueJobs(JOBS, anchors, mergedAt + 5 * MIN, merge);
+    // 25 min old: inside the #1136-fix-round 60-min settle — not due, not
+    // absorbed. (25 min, not 5: this is past the OLD 20-min settle, pinning
+    // that the widened window, not just any positive age, is what defers.)
+    let r = dueJobs(JOBS, anchors, mergedAt + 25 * MIN, merge);
     expect(firedIds(r)).not.toContain("steward");
     expect(r.absorb).toEqual([]);
-    // 20 min old: due.
-    expect(firedIds(dueJobs(JOBS, anchors, mergedAt + 20 * MIN, merge))).toContain("steward");
+    // 60 min old: due.
+    expect(firedIds(dueJobs(JOBS, anchors, mergedAt + 60 * MIN, merge))).toContain("steward");
     // All-new-subjects steward self-merge: never fires, sha absorbed.
+    // Absorption never depends on settle time (it is checked first), so a
+    // short 25-min age still proves the branch, not just the 60-min-old case.
     const selfMerge: MainStatus = {
       headSha: "new2",
       headCommitAt: mergedAt,
@@ -143,24 +147,40 @@ describe("due evaluation (A2)", () => {
     r = dueJobs(JOBS, anchors, mergedAt + 25 * MIN, selfMerge);
     expect(firedIds(r)).not.toContain("steward");
     expect(r.absorb).toEqual([{ jobId: "steward", sha: "new2" }]);
-    // Mixed cluster (steward PR + a real one): fires.
-    const mixed: MainStatus = {
+    // Mixed cluster, steward subject NEWEST (subjects[0]): absorbed even
+    // though an older real subject sits behind it -- #1136 fix-round, the
+    // #132/#135 shape (a steward pass merges last and covers everything
+    // before it in the same delta).
+    const mixedStewardNewest: MainStatus = {
       headSha: "new3",
       headCommitAt: mergedAt,
       newSubjectsSinceAnchor: ["docs(steward): reconcile (#381)", "fix(agent): real (#382)"],
     };
-    expect(firedIds(dueJobs(JOBS, anchors, mergedAt + 25 * MIN, mixed))).toContain("steward");
+    r = dueJobs(JOBS, anchors, mergedAt + 25 * MIN, mixedStewardNewest);
+    expect(firedIds(r)).not.toContain("steward");
+    expect(r.absorb).toEqual([{ jobId: "steward", sha: "new3" }]);
+    // Mixed cluster, REAL subject newest: fires once settled -- a steward
+    // pass sitting behind a newer real merge cannot have reconciled it.
+    const mixedRealNewest: MainStatus = {
+      headSha: "new4",
+      headCommitAt: mergedAt,
+      newSubjectsSinceAnchor: ["fix(agent): real (#382)", "docs(steward): reconcile (#381)"],
+    };
+    r = dueJobs(JOBS, anchors, mergedAt + 25 * MIN, mixedRealNewest);
+    expect(firedIds(r)).not.toContain("steward"); // still settling
+    expect(r.absorb).toEqual([]);
+    expect(firedIds(dueJobs(JOBS, anchors, mergedAt + 60 * MIN, mixedRealNewest))).toContain("steward");
     // Unchanged sha: inert.
     const unchanged: MainStatus = { headSha: "old", headCommitAt: 0, newSubjectsSinceAnchor: [] };
-    r = dueJobs(JOBS, anchors, mergedAt + 60 * MIN, unchanged);
+    r = dueJobs(JOBS, anchors, mergedAt + 90 * MIN, unchanged);
     expect(firedIds(r)).not.toContain("steward");
     expect(r.absorb).toEqual([]);
   });
 
-  // Catches: dropping the `subjects.length > 0` guard in due.ts — an EMPTY
-  // subject list makes `every(...)` vacuously true, silently absorbing a real
-  // sha delta (rebase/force-push, git hiccup) and advancing the anchor past a
-  // real merge forever. A sha change with no subjects must FIRE, never absorb.
+  // Catches: dropping the `subjects.length > 0` guard in due.ts — reading
+  // `subjects[0]` on an EMPTY list silently absorbs a real sha delta
+  // (rebase/force-push, git hiccup) and advances the anchor past a real
+  // merge forever. A sha change with no subjects must FIRE, never absorb.
   test("empty-subject sha delta fires -- vacuous self-merge must not absorb", () => {
     const anchors = freshAnchors();
     anchors.steward.stewardAnchorSha = "old";
@@ -171,9 +191,39 @@ describe("due evaluation (A2)", () => {
       newSubjectsSinceAnchor: [],
     };
     // Past the settle window: must be in fire, not absorb.
-    const r = dueJobs(JOBS, anchors, mergedAt + 20 * MIN, emptyDelta);
+    const r = dueJobs(JOBS, anchors, mergedAt + 60 * MIN, emptyDelta);
     expect(firedIds(r)).toContain("steward");
     expect(r.absorb).toEqual([]);
+  });
+
+  // Catches (#1136): the ceremony firing a competing PR while a dispatched
+  // steward pass is already open for this cluster -- the four-PRs-in-four-
+  // days duplicate. stewardPrInFlight gates the fire; unset/false must
+  // behave exactly as every test above (default firing), and true must
+  // neither fire NOR absorb -- the anchor stays put so a later tick, once
+  // the in-flight PR ages out of the standdown window, re-evaluates fresh.
+  test("stewardPrInFlight: true suppresses firing without advancing the anchor", () => {
+    const anchors = freshAnchors();
+    anchors.steward.stewardAnchorSha = "old";
+    const mergedAt = utc(18, 9, 0);
+    const covered: MainStatus = {
+      headSha: "new",
+      headCommitAt: mergedAt,
+      newSubjectsSinceAnchor: ["feat(agent): thing (#380)"],
+      stewardPrInFlight: true,
+    };
+    // Past the settle window, but a steward PR already covers it: neither
+    // fired nor absorbed.
+    let r = dueJobs(JOBS, anchors, mergedAt + 60 * MIN, covered);
+    expect(firedIds(r)).not.toContain("steward");
+    expect(r.absorb).toEqual([]);
+    expect(anchors.steward.stewardAnchorSha).toBe("old"); // untouched
+
+    // Same delta, flag false: fires exactly as the un-gated test above does
+    // -- proves the new field is additive, not a silent behavior change.
+    const uncovered: MainStatus = { ...covered, stewardPrInFlight: false };
+    r = dueJobs(JOBS, anchors, mergedAt + 60 * MIN, uncovered);
+    expect(firedIds(r)).toContain("steward");
   });
 
   // Catches: a failing job re-spawning every 10-min tick (L-3, token burn) —

@@ -1,7 +1,7 @@
 // Batch D / Task D-Tick (#114): tick orchestration + entry script. Offline:
 // injected clock/gitRunner/spawner, temp dirs, zero live spawns, zero git
 // network, zero tokens. The scenario walk runs against the REAL JOBS table so
-// the mandated cadences (2h @ :07, 6h @ :27, daily 06:19, merge+20min settle)
+// the mandated cadences (2h @ :07, 6h @ :27, daily 06:19, merge+60min settle)
 // are what is under test, not a fixture's idea of them.
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadBreakers } from "../src/scheduler/breaker";
 import { HARD_DEADLINE_FLOOR_MS, LEDGER_FILE, loadLedger, recordDispatch } from "../src/scheduler/dispatch-ledger";
+import type { GhRunner } from "../src/scheduler/filing";
 import { JOBS } from "../src/scheduler/jobs";
 import type { Spawner } from "../src/scheduler/spawn";
 import { defaultAnchor, loadAnchors, saveAnchors, type JobAnchor, type JobId } from "../src/scheduler/state";
@@ -149,8 +150,9 @@ describe("tick orchestration (D-Tick)", () => {
     await tick(deps(T + 2 * HOUR + 10 * MIN));
     expect(calls.map(jobOf)).toEqual(["strategy"]);
 
-    // Merge lands at 12:32; tick at 12:45 sits inside the 20-min settle
-    // window ⇒ no steward (and no grid job is due) — zero spawns.
+    // Merge lands at 12:32; tick at 12:45 (13 min later) sits inside the
+    // #1136-fix-round 60-min settle ⇒ no steward (and no grid job is due) —
+    // zero spawns.
     repo.sha = "bbb";
     repo.commitAtMs = T + 2 * HOUR + 12 * MIN;
     repo.subjects = ["feat(agent): real change (#390)"];
@@ -159,20 +161,21 @@ describe("tick orchestration (D-Tick)", () => {
     expect(calls.length).toBe(0);
     expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("aaa"); // anchor NOT advanced mid-settle
 
-    // 12:55 — settle passed (23 min) ⇒ steward fires, alone; sha advances.
+    // 13:35 — settle passed (63 min) ⇒ steward fires, alone; sha advances.
     calls.length = 0;
-    r = await tick(deps(T + 2 * HOUR + 35 * MIN));
+    r = await tick(deps(T + 3 * HOUR + 15 * MIN));
     expect(calls.map(jobOf)).toEqual(["steward"]);
     expect(r.fired).toEqual([{ jobId: "steward", result: "ok" }]);
     expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("bbb");
 
     // The steward's own merged PR (all-new-subjects docs(steward)) must be
-    // absorbed, never fired — the L-3 self-trigger loop.
+    // absorbed, never fired — the L-3 self-trigger loop. Absorption never
+    // checks settle time, so the tick doesn't need to sit close to commitAtMs.
     repo.sha = "ccc";
-    repo.commitAtMs = T + 2 * HOUR + 40 * MIN;
+    repo.commitAtMs = T + 3 * HOUR + 25 * MIN;
     repo.subjects = ["docs(steward): reconcile cluster (#391)"];
     calls.length = 0;
-    r = await tick(deps(T + 3 * HOUR + 5 * MIN));
+    r = await tick(deps(T + 3 * HOUR + 40 * MIN)); // still short of standup's next grid point (14:07)
     expect(calls.length).toBe(0);
     expect(r.absorbed).toEqual(["steward"]);
     expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("ccc");
@@ -191,7 +194,7 @@ describe("tick orchestration (D-Tick)", () => {
   // proves divergence is actually impossible, not just unrestored.
   test("steward fires ⇒ runs in its own ephemeral worktree, never the shared checkout", async () => {
     const dirs = makeDirs();
-    // Steward-due state: a merge landed + settled (>20min old, new subjects,
+    // Steward-due state: a merge landed + settled (>60min old, new subjects,
     // sha ahead of the anchor); grids quiesced so the steward fires alone.
     const anchors: Record<JobId, JobAnchor> = {
       standup: { ...defaultAnchor(), lastAttemptAt: T },
@@ -201,7 +204,7 @@ describe("tick orchestration (D-Tick)", () => {
       dedupe: { ...defaultAnchor(), lastAttemptAt: T },
     };
     saveAnchors(dirs.stateDir, anchors);
-    const repo = { sha: "new", commitAtMs: T - 30 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
+    const repo = { sha: "new", commitAtMs: T - 90 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
     const base = fakeGit(repo, dirs.checkoutDir);
     const gitCalls: string[][] = [];
     const recordingGit: GitRunner = (args) => {
@@ -219,6 +222,44 @@ describe("tick orchestration (D-Tick)", () => {
     expect(gitCalls).not.toContainEqual(["checkout", "-f", "main"]); // the old restore is dead code — nothing to restore
     expect(gitCalls.some((c) => c[0] === "worktree" && c[1] === "add")).toBe(true);
     expect(gitCalls.some((c) => c[0] === "worktree" && c[1] === "remove")).toBe(true);
+  });
+
+  // Catches (#1136): the full wiring from an injected ghRunner through
+  // readMainStatus into dueJobs -- a docs/steward-* PR is already open for
+  // this exact delta (the PM's dispatched pass beat the ceremony to it), so
+  // the steward must NOT fire even though settle has long passed and the
+  // grids are quiesced. The anchor must stay put (not the false confidence
+  // of "absorbed") so a later tick, once that PR ages out of the standdown
+  // window, re-evaluates fresh rather than skipping this merge forever.
+  test("steward stands down when a docs/steward-* PR is already open for this delta", async () => {
+    const dirs = makeDirs();
+    const quiesced: Record<JobId, JobAnchor> = {
+      standup: { ...defaultAnchor(), lastAttemptAt: T },
+      strategy: { ...defaultAnchor(), lastAttemptAt: T },
+      council: { ...defaultAnchor(), lastAttemptAt: T },
+      steward: { ...defaultAnchor(), stewardAnchorSha: "old" },
+      dedupe: { ...defaultAnchor(), lastAttemptAt: T },
+    };
+    saveAnchors(dirs.stateDir, quiesced);
+    const repo = { sha: "new", commitAtMs: T - 90 * MIN, subjects: ["feat(agent): a real merge (#1)"] };
+    const ghCalls: string[][] = [];
+    const ghRunner: GhRunner = (args) => {
+      ghCalls.push(args);
+      return {
+        stdout: JSON.stringify([
+          { headRefName: "docs/steward-2026-09-19-wave", createdAt: new Date(T - 10 * MIN).toISOString(), isCrossRepository: false },
+        ]),
+        exitCode: 0,
+      };
+    };
+    const { spawner, calls } = fakeSpawner();
+    const r = await tick({ clock: () => T, gitRunner: fakeGit(repo, dirs.checkoutDir), spawner, ghRunner, ...dirs });
+    expect(calls.length).toBe(0); // nothing spawned -- no competing PR opened
+    expect(r.fired).toEqual([]);
+    expect(r.absorbed).toEqual([]); // NOT absorbed either -- this merge still needs stewarding later
+    expect(loadAnchors(dirs.stateDir).steward.stewardAnchorSha).toBe("old"); // anchor untouched
+    expect(ghCalls.length).toBeGreaterThan(0); // the probe actually ran
+    expect(ghCalls[0]).toContain("Cringely/spacemolt-harness");
   });
 
   // Catches (#585): a worktree left behind by a tick that was killed mid-job
