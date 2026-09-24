@@ -34,7 +34,17 @@
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -151,3 +161,201 @@ describe(".githooks wiring", () => {
     expect(missing).toEqual([]);
   });
 });
+
+// --- end to end: a rejection from the chained hook must reach git ----------
+//
+// The tests above prove the shims exist, are executable, and name a target
+// that exists. None of them run the shim, so none would have caught the real
+// gap: `.githooks/pre-commit` called `sh .claude/hooks/pre-commit` and never
+// looked at its exit status. `.claude/hooks/pre-commit`'s identity gate is
+// real, not advisory -- it can and does `exit 1` -- but this shim discarded
+// that and moved on to the D3 policy-path fence regardless, so a refusal
+// from the chained hook never reached git. Fixed with `|| exit 1` on the
+// chained call. These three describe blocks run each shim for real, against
+// an isolated temp git repo, and pin both a refusal reaching exit 1 and a
+// pass staying exit 0.
+
+const shPath = Bun.which("sh");
+const gitOk = (() => {
+  try {
+    return spawnSync("git", ["--version"]).status === 0;
+  } catch {
+    return false;
+  }
+})();
+// git-for-windows runs hooks through its own bundled sh, so a PATH probe for
+// `sh` proves nothing on win32 — same reasoning as test/policy-path-gate.test.ts.
+const shOk =
+  process.platform === "win32"
+    ? true
+    : (() => {
+        try {
+          return spawnSync("sh", ["-c", "exit 0"]).status === 0;
+        } catch {
+          return false;
+        }
+      })();
+
+function runShim(
+  scriptPath: string,
+  args: string[],
+  opts: { cwd: string; env: NodeJS.ProcessEnv; input?: string },
+) {
+  return spawnSync(shPath ?? "sh", [scriptPath.replaceAll("\\", "/"), ...args], {
+    cwd: opts.cwd,
+    env: opts.env,
+    input: opts.input,
+    encoding: "utf8",
+  });
+}
+
+/** Isolated temp git repo: no global hooksPath/gpgsign/templateDir leaking in. */
+function makeRepo(prefix: string) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const emptyCfg = join(dir, "empty-gitconfig");
+  writeFileSync(emptyCfg, "");
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: emptyCfg, GIT_CONFIG_SYSTEM: emptyCfg };
+  const git = (...args: string[]) => spawnSync("git", args, { cwd: dir, env, encoding: "utf8" });
+  git("init", "-q", "-b", "main");
+  git("config", "user.name", "test");
+  git("config", "user.email", "test@example.invalid");
+  return { dir, env, git };
+}
+
+/** Copy a real hook (shim or chained target) into a fixture repo, executable. */
+function installHook(destDir: string, relPath: string, content: string) {
+  const dest = join(destDir, relPath);
+  mkdirSync(join(dest, ".."), { recursive: true });
+  writeFileSync(dest, content);
+  chmodSync(dest, 0o755);
+  return dest;
+}
+
+describe.skipIf(!gitOk || !shOk)(".githooks/pre-commit propagates the chained hook's exit code", () => {
+  // The chained hook is stubbed so this test is about THIS shim's control
+  // flow, not identity-patterns.sh's own missing-file/broken-file behavior
+  // (covered separately by identity-patterns.sh's own design, not by this
+  // file). scripts/policy-path-gate.ts is stubbed to always exit 0, so the
+  // only way the overall run can be non-zero is the propagation under test —
+  // before the fix, this red-cases test passed a chained exit 1 straight
+  // through to a shim exit 0.
+  const setup = (chainedExit: 0 | 1) => {
+    const { dir, env } = makeRepo("pre-commit-chain-");
+    installHook(
+      dir,
+      ".claude/hooks/pre-commit",
+      `#!/bin/sh\necho "stub core pre-commit: exit ${chainedExit}" >&2\nexit ${chainedExit}\n`,
+    );
+    writeFileSync(
+      (() => {
+        mkdirSync(join(dir, "scripts"), { recursive: true });
+        return join(dir, "scripts", "policy-path-gate.ts");
+      })(),
+      "process.exit(0);\n",
+    );
+    const shimPath = installHook(dir, ".githooks/pre-commit", readFileSync(join(ROOT, ".githooks", "pre-commit"), "utf8"));
+    return { dir, env, shimPath };
+  };
+
+  test("chained core hook refuses (exit 1): the shim must also refuse, not fall through to the D3 fence", () => {
+    const { dir, env, shimPath } = setup(1);
+    const r = runShim(shimPath, [], { cwd: dir, env });
+    expect(r.stderr).toContain("stub core pre-commit: exit 1");
+    expect(r.status).toBe(1);
+  });
+
+  test("chained core hook passes (exit 0): the shim still runs the D3 fence normally", () => {
+    const { dir, env, shimPath } = setup(0);
+    const r = runShim(shimPath, [], { cwd: dir, env });
+    expect(r.status).toBe(0);
+  });
+});
+
+describe.skipIf(!gitOk || !shOk)(".githooks/commit-msg chains the AI-attribution refusal", () => {
+  const setup = () => {
+    const { dir, env } = makeRepo("commit-msg-chain-");
+    installHook(
+      dir,
+      ".claude/hooks/commit-msg",
+      readFileSync(join(ROOT, ".claude", "hooks", "commit-msg"), "utf8"),
+    );
+    const shimPath = installHook(dir, ".githooks/commit-msg", readFileSync(join(ROOT, ".githooks", "commit-msg"), "utf8"));
+    return { dir, env, shimPath };
+  };
+
+  test("a message carrying a Co-Authored-By trailer naming Claude is refused", () => {
+    const { dir, env, shimPath } = setup();
+    const msgFile = join(dir, "MSG");
+    writeFileSync(msgFile, "chore: test\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n");
+    const r = runShim(shimPath, [msgFile.replaceAll("\\", "/")], { cwd: dir, env });
+    expect(r.stderr).toContain("Co-Authored-By");
+    expect(r.status).toBe(1);
+  });
+
+  test("a clean message passes", () => {
+    const { dir, env, shimPath } = setup();
+    const msgFile = join(dir, "MSG");
+    writeFileSync(msgFile, "chore: test\n");
+    const r = runShim(shimPath, [msgFile.replaceAll("\\", "/")], { cwd: dir, env });
+    expect(r.status).toBe(0);
+  });
+});
+
+describe.skipIf(!gitOk || !shOk)(
+  ".githooks/pre-push chains the identity sweep and keeps the main-branch block",
+  () => {
+    const setup = () => {
+      const { dir, env, git } = makeRepo("pre-push-chain-");
+      installHook(
+        dir,
+        ".claude/hooks/pre-push",
+        readFileSync(join(ROOT, ".claude", "hooks", "pre-push"), "utf8"),
+      );
+      installHook(
+        dir,
+        ".claude/hooks/identity-patterns.sh",
+        readFileSync(join(ROOT, ".claude", "hooks", "identity-patterns.sh"), "utf8"),
+      );
+      const shimPath = installHook(dir, ".githooks/pre-push", readFileSync(join(ROOT, ".githooks", "pre-push"), "utf8"));
+      writeFileSync(join(dir, "README.md"), "seed\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "seed");
+      const head = git("rev-parse", "HEAD").stdout.trim();
+      return { dir, env, shimPath, head };
+    };
+
+    // Both tests spawn the real identity-patterns.sh sweep, which the fixture
+    // isolates from this workstation's own git config (GIT_CONFIG_GLOBAL/
+    // SYSTEM point at an empty file, same as makeRepo elsewhere in this
+    // file). Measured on Windows: that isolation alone costs 9-14s here,
+    // independent of range size — every one of the dozen-plus git/grep
+    // subprocesses this sweep spawns pays Windows process-spawn overhead
+    // (antivirus real-time scanning is the usual cause), and losing the
+    // workstation's config loses whatever locally tuned it away. Real HEAD
+    // as both local and remote oid keeps the RANGE itself empty (HEAD..HEAD)
+    // so only that fixed per-process cost is paid, not a scan of any actual
+    // content — bun's 5s default test timeout is well under it regardless.
+    test(
+      "a ref line pushing to refs/heads/main is blocked",
+      () => {
+        const { dir, env, shimPath, head } = setup();
+        const refLine = `refs/heads/work ${head} refs/heads/main ${head}\n`;
+        const r = runShim(shimPath, ["origin", "https://example.invalid"], { cwd: dir, env, input: refLine });
+        expect(r.stderr).toContain("direct push to main blocked");
+        expect(r.status).toBe(1);
+      },
+      20000,
+    );
+
+    test(
+      "a ref line pushing to a non-main branch passes",
+      () => {
+        const { dir, env, shimPath, head } = setup();
+        const refLine = `refs/heads/work ${head} refs/heads/work ${head}\n`;
+        const r = runShim(shimPath, ["origin", "https://example.invalid"], { cwd: dir, env, input: refLine });
+        expect(r.status).toBe(0);
+      },
+      20000,
+    );
+  },
+);
