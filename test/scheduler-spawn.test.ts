@@ -102,6 +102,13 @@ const RESULT_JSON = JSON.stringify({
 
 const job = (id: JobDef["id"]): JobDef => JOBS.find((j) => j.id === id)!;
 
+// A fixed sandbox fence for the argv-only tests; runJob builds the real one from its deps.
+const FENCE = {
+  secretsDir: "/srv/sched/secrets",
+  stateDir: "/srv/sched/state",
+  hostEnvFile: "/home/sched/.config/spacemolt-sched.env",
+};
+
 // Fix round on PR #143: dedupe carries no file-finding.ts grant (jobs.ts), so
 // its work order carries neither FILING_HOWTO nor OBSERVE_AND_FILE_ONLY (see
 // spawn.ts's workOrder — both would name a command its closed allowedTools
@@ -444,12 +451,82 @@ describe("spawn composer + runner (C3)", () => {
   // entry on EVERY job so a job gaining Edit later cannot reopen the hole.
   test("every job's argv denies Edit on every POLICY_PATHS entry via --disallowedTools", () => {
     for (const j of JOBS) {
-      const argv = buildArgv(j);
+      const argv = buildArgv(j, FENCE);
       const denyFlagIdx = argv.indexOf("--disallowedTools");
       expect(denyFlagIdx).toBeGreaterThan(-1);
       for (const p of POLICY_PATHS) {
         expect(argv.indexOf(`Edit(${p})`)).toBeGreaterThan(denyFlagIdx);
       }
+    }
+  });
+
+  // Catches (Cringely/spacemolt#865, appsec P1): `--allowedTools` is an additive
+  // allow list, so a job's tool set was never closed. `--restricted` confines
+  // the file tools to the worktree and ignores project settings; `--tools` makes
+  // the built-in set an explicit list. Deleting either flag from buildArgv
+  // reopens unscoped Read/Edit of the secrets dir, gates.json and the host env
+  // file while every grant-content test stays green.
+  test("every job's argv passes --restricted and a --tools list equal to its granted tool names", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      expect(argv).toContain("--restricted");
+      const toolsIdx = argv.indexOf("--tools");
+      expect(toolsIdx).toBeGreaterThan(-1);
+      // Derived independently of the implementation: the part before "(" of each grant, deduped.
+      const expected = [...new Set(j.allowedTools.map((t) => t.replace(/\(.*$/, "")))];
+      expect(argv[toolsIdx + 1]!.split(",").sort()).toEqual(expected.sort());
+      // One comma-joined value, then the next flag: nothing else is swept into the set.
+      expect(argv[toolsIdx + 2]!.startsWith("--")).toBe(true);
+    }
+  });
+
+  // Catches (#865): Task in the council grant. A Task subagent runs Bash that
+  // is not held to the job's allowedTools list (live evidence in #865), so no
+  // job may be granted it until that is fixed.
+  test("no job holds Task, in its grant or in its --tools set", () => {
+    for (const j of JOBS) {
+      expect(j.allowedTools.some((t) => t === "Task" || t.startsWith("Task("))).toBe(false);
+      const argv = buildArgv(j, FENCE);
+      expect(argv[argv.indexOf("--tools") + 1]!.split(",")).not.toContain("Task");
+    }
+  });
+
+  // Catches: the deny rules for the paths a prompt-injected job must never
+  // read or edit (secrets dir, gates.json, host env file) dropping out of argv.
+  // `--restricted` is the primary control. These are the defence in depth
+  // behind it, and the only guard if a Claude Code build does not confine
+  // read-only Bash. `//path` is Claude Code's absolute-path rule syntax.
+  test("every job's argv denies Read/Edit on the secrets dir, gates.json and the host env file", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+      for (const tool of ["Read", "Edit"]) {
+        expect(denies).toContain(`${tool}(//srv/sched/secrets/**)`);
+        expect(denies).toContain(`${tool}(//srv/sched/state/gates.json)`);
+        expect(denies).toContain(`${tool}(//home/sched/.config/spacemolt-sched.env)`);
+      }
+      expect(denies).toContain("Bash(cat *//srv/sched/secrets*)");
+      expect(denies).toContain("Bash(cat *//home/sched/.config/spacemolt-sched.env*)");
+    }
+  });
+
+  // Catches: SCHEDULER_SECRETS (the literal secrets path, exported by
+  // scheduler-tick.sh) riding process.env into the child. The child's scripts
+  // never read it, so handing it over only tells an injected job where the
+  // PAT files are. Also pins that runJob builds the argv fence from ITS OWN
+  // secretsDir rather than a constant.
+  test("the child env drops SCHEDULER_SECRETS and the argv fence is built from the run's own secrets dir", async () => {
+    const dirs = makeDirs();
+    process.env.SCHEDULER_SECRETS = dirs.secretsDir;
+    try {
+      const { spawner, calls } = fakeSpawner(0);
+      await runJob(job("steward"), { spawner, clock: () => 1_000_000, ...dirs });
+      expect("SCHEDULER_SECRETS" in calls[0]!.opts.env).toBe(false);
+      expect(calls[0]!.opts.env.GH_TOKEN).toBe(SENTINELS.gh_pat_steward); // the real secrets still arrive
+      const posixSecrets = dirs.secretsDir.replaceAll("\\", "/");
+      expect(calls[0]!.argv.some((a) => a.startsWith("Read(") && a.includes(posixSecrets))).toBe(true);
+    } finally {
+      delete process.env.SCHEDULER_SECRETS;
     }
   });
 
