@@ -2517,6 +2517,16 @@ export class Agent {
       // eviction -- see evictOldestUnpinned for why and the visible-eviction
       // fallback when pinned entries alone fill the cap.
       if (this.goals.length > MAX_GOALS) this.goals = this.evictOldestUnpinned(this.goals, MAX_GOALS);
+      // When standing config goals plus pinned steers already fill the cap,
+      // pass 1 of the eviction can only drop the steer just pushed. Config
+      // and pinned goals outrank an errand, so the loss stands, but it must
+      // leave a receipt (PR #170 review): pushing the errand and evicting it
+      // is one step here, so this is the one site that knows it was the loser.
+      if (!this.goals.includes(instruction)) {
+        try {
+          this.emit("instruction_dropped", { instruction, reason: "goal cap full of standing and pinned goals" });
+        } catch { /* telemetry is not the control path -- see instruct() */ }
+      }
     }
     // Re-merge the standing config goals AFTER the push-side eviction above:
     // if the cap just pushed a standing goal off the front, this restores it

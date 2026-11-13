@@ -114,6 +114,35 @@ describe("standing goal merge is stable (#821)", () => {
   });
 });
 
+describe("a steer the full goal list cannot hold leaves a receipt (#170 review)", () => {
+  // Breakage caught: with standing config goals and pinned steers protected
+  // from eviction (#821), three config goals plus two pinned steers fill the
+  // cap (5), so the only evictable entry is the errand just sent. It was
+  // dropped at the push site with no event: the operator's steer vanished
+  // and nothing recorded why. The list itself is right (nothing protected is
+  // evicted), so the contract is the receipt: an instruction_dropped event
+  // naming the lost steer.
+  test("an errand that cannot fit beside 3 config goals and 2 pinned steers is dropped with an event", async () => {
+    const STANDING = ["MILESTONE one", "MILESTONE two", "FUEL rule"];
+    const store = new Store(":memory:");
+    const agent = new Agent({
+      id: "m1", persona: "p", goals: STANDING, api: stubApi().api, store,
+      planner: new MockPlanner([okPlan]), config, now: () => 1,
+    });
+    agent.instruct("RULE: one", { standing: true });
+    await agent.runOnce();
+    agent.instruct("RULE: two", { standing: true });
+    await agent.runOnce();
+    expect(store.recentEventsByType("m1", "instruction_dropped", 10)).toEqual([]);
+    agent.instruct("errand that cannot fit");
+    await agent.runOnce();
+    expect(agent.snapshot().goals).toEqual([...STANDING, "RULE: one", "RULE: two"]);
+    const dropped = store.recentEventsByType("m1", "instruction_dropped", 10);
+    expect(dropped.length).toBe(1);
+    expect((dropped[0]!.payload as { instruction: string }).instruction).toBe("errand that cannot fit");
+  });
+});
+
 describe("one-shot destructive steers (#542)", () => {
   // A planner that reads goals the way the live model does: it plans a
   // self_destruct whenever a goal in the briefing names one, and never reports
