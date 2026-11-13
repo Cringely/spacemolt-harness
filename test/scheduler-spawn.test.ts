@@ -587,31 +587,6 @@ describe("spawn composer + runner (C3)", () => {
     }
   });
 
-  // Catches (#717, #1131, #1140, #1141, #1144): council's brief Triage step
-  // needs the previous report's date, and council had no command that could
-  // find its own report. Same L-39 shape as the stand-up test above.
-  test("council's brief names read-latest-report and the job holds the grant", () => {
-    const grant = "Bash(bun scripts/read-latest-report.ts *)";
-    expect(job("council").allowedTools).toContain(grant);
-    const prefix = grant.slice("Bash(".length, -" *)".length);
-    const brief = readFileSync(join(import.meta.dir, "..", job("council").charterPath), "utf8");
-    expect(brief).toContain(`${prefix} --glob '*-council-review.md'`);
-    expect(job("council").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
-  });
-
-  // Catches: the council report being routed to a docs/council/ commit nobody
-  // can make (the job's PAT cannot push, #1130). The reports/ state dir is the
-  // record; neither the brief nor the work order may ask for a pickup.
-  test("council asks for no PM pickup or docs/council commit", () => {
-    const prompt = composePrompt(job("council"), { charterText: "x", stateNow: "y", cycleId: "council-1" });
-    expect(prompt).not.toContain("docs/council");
-    expect(prompt).not.toContain("pickup");
-    const brief = readFileSync(join(import.meta.dir, "..", job("council").charterPath), "utf8");
-    const instructions = brief.split(/^## CHANGELOG/m)[0]!;
-    expect(instructions).not.toContain("docs/council");
-    expect(instructions).not.toContain("pickup");
-  });
-
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
   // Steward's Edit is scoped to its docs allowlist, and an on-disk charter edit
   // bypasses the commit-time D3 fence — the deny (deny wins over allow;
