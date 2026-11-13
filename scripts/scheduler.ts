@@ -16,6 +16,7 @@ import { JOBS } from "../src/scheduler/jobs";
 import type { Spawner } from "../src/scheduler/spawn";
 import { JOB_IDS, type JobId } from "../src/scheduler/state";
 import { tick, type GitRunner } from "../src/scheduler/tick";
+import type { CommandRunner } from "../src/scheduler/worktree";
 import { makeUsageFetcher } from "../src/scheduler/usage-poll";
 
 function usage(msg: string): never {
@@ -69,6 +70,18 @@ const gitRunner: GitRunner = (args) => {
   return { stdout: res.stdout ?? "", exitCode: res.status ?? 1 };
 };
 
+// The dependency-install runner (worktree.ts INSTALL_ARGV). Runs in the
+// scheduler process with its own env, never a job's (no job secrets reach it).
+// The 5-minute cap exists because the tick holds the per-tick lock: an install
+// hung on the network would otherwise block every later tick. spawnSync kills
+// on timeout and leaves status null, which maps to exit 1 (a failed job).
+const INSTALL_TIMEOUT_MS = 300_000;
+const commandRunner: CommandRunner = (argv, cwd) => {
+  const res = spawnSync(argv[0]!, argv.slice(1), { cwd, encoding: "utf8", timeout: INSTALL_TIMEOUT_MS });
+  if (res.error) return { stdout: String(res.error.message), exitCode: 1 };
+  return { stdout: `${res.stdout ?? ""}${res.stderr ?? ""}`, exitCode: res.status ?? 1 };
+};
+
 // Real spawner: `claude` + the flags-only argv from spawn.ts; the prompt goes
 // to stdin (ENAMETOOLONG lesson). stdout is PIPED (not inherited) so runJob can
 // read the `--output-format json` result envelope for the spawn's cost/usage;
@@ -118,5 +131,5 @@ try {
   console.error("gh_pat_readcomment secret unreadable — failure-alarm filing disabled this run");
 }
 
-const result = await tick({ clock: Date.now, stateDir, checkoutDir, secretsDir, gitRunner, spawner, usageFetcher, ghRunner });
+const result = await tick({ clock: Date.now, stateDir, checkoutDir, secretsDir, gitRunner, commandRunner, spawner, usageFetcher, ghRunner });
 console.log(JSON.stringify(result));

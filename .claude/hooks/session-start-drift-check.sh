@@ -32,11 +32,14 @@
 # resolve to a real directory, hold install/Install-Harness.ps1, and sit outside the project
 # being audited. It is then passed as a single argv element. Never interpolated into a shell
 # string, never eval'd.
-#   Two limits worth stating rather than implying. This is a containment check, not an
-# authenticity check: a core checkout anywhere outside the project is trusted on its name and
-# location alone, so an attacker who can already write outside the repo is not stopped here.
-# And a project that is itself the core checkout gets no drift check, since its coreRepo would
-# name its own root; that degrades to silence like every other refusal.
+#   Containment alone is not authenticity: any directory outside the project that holds that
+# installer would otherwise be trusted on its name and location (issue #265). So the resolved
+# checkout must also be on a per-user allowlist kept in the user profile, outside every repo
+# (see the allowlist block below). A sidecar naming a sibling clone the operator never
+# registered is refused with one visible line, not silence.
+#   One limit worth stating rather than implying: a project that is itself the core checkout
+# gets no drift check, since its coreRepo would name its own root. That degrades to silence
+# like every other refusal.
 
 set -eu
 # pipefail where the shell has it. Guarded rather than bare, which is the simpler form and
@@ -45,6 +48,12 @@ set -eu
 # special builtin whose error aborts a non-interactive shell. Bare, this hook would die at
 # line 2 on such a host and take the session start with it. The subshell absorbs that abort.
 if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi
+
+# Copilot CLI also runs .claude/settings.json hooks (#227). Stand down there, but never while
+# CLAUDECODE is set, so a Claude Code session always runs the rest.
+if [ -n "${COPILOT_CLI:-}" ] && [ -z "${CLAUDECODE:-}" ]; then
+    exit 0
+fi
 
 # Every external command below carries `2>/dev/null || exit 0`, uniformly and without
 # exception. Under `set -e` a command that is missing from PATH aborts the hook at 127 with
@@ -130,6 +139,37 @@ case "$core_lc/" in "$root_lc"/*) exit 0 ;; esac
 
 installer="$core_abs/install/Install-Harness.ps1"
 [ -f "$installer" ] || exit 0
+
+# ALLOWLIST (issue #265). Outside the project and holding the installer still says nothing
+# about whose installer it is: a sidecar naming a clone the attacker controls would run it
+# with the operator's privileges and no prompt. The authenticity anchor is a file the repo
+# cannot write, in the user profile: one absolute checkout path per line. Install-Harness.ps1
+# appends the checkout it runs from, so the act of installing from a checkout is what
+# registers it, and a project installed before this check needs one re-run of the installer.
+# HARNESS_CORE_ALLOWLIST overrides the location (tests, relocated profiles). It comes from
+# the user's environment, never from the project. $USERPROFILE before $HOME for the reason in
+# pre-commit: under Git Bash on Windows $HOME is not the real profile.
+#   Entries are compared after the same cd+pwd normalization as core_abs, so a native
+# Windows path in the file matches the form this shell resolves. Exact compare, no case
+# fold: the installer wrote both sides from one string, and a miss fails closed into the
+# line below. Rejected: pinning a hash of Install-Harness.ps1 in the sidecar, which a
+# sidecar naming a different checkout along with that checkout's own hash walks straight past.
+# Only shell builtins here, so a host missing sed/tr/awk is not newly broken by this block.
+allowlist="${HARNESS_CORE_ALLOWLIST:-${USERPROFILE:-${HOME:-}}/.claude/harness-core-checkouts}"
+cr=$(printf '\r')
+trusted=0
+if [ -r "$allowlist" ]; then
+    while IFS= read -r entry || [ -n "$entry" ]; do
+        entry=${entry%"$cr"}
+        [ -n "$entry" ] || continue
+        entry_abs=$(CDPATH= cd -- "$entry" 2>/dev/null && pwd) || continue
+        if [ "$entry_abs" = "$core_abs" ]; then trusted=1; break; fi
+    done 2>/dev/null < "$allowlist" || :
+fi
+if [ "$trusted" -ne 1 ]; then
+    printf '%s\n' "harness: coreRepo is not on the checkout allowlist, drift check skipped (re-run install/Install-Harness.ps1 from your core checkout)"
+    exit 0
+fi
 
 # Checked here rather than at the top of the file so the validation above still runs on a
 # host with no pwsh, which is what keeps the security assertions in the test meaningful

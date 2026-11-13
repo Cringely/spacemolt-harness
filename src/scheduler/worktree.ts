@@ -26,7 +26,7 @@
 // worktree simply discards it.
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { GitRunner } from "./git";
+import type { GitResult, GitRunner } from "./git";
 
 export const WORKTREES_SUBDIR = "worktrees";
 
@@ -50,6 +50,35 @@ export function createJobWorktree(git: GitRunner, stateDir: string, name: string
     throw new Error(`git worktree add failed (exit ${res.exitCode}): ${res.stdout.slice(0, 300)}`);
   }
   return path;
+}
+
+/** The seam for running one command in a directory (the install step). Tests inject a fake. */
+export type CommandRunner = (argv: string[], cwd: string) => GitResult;
+
+// The invariant: a job worktree resolves dependencies from the committed
+// bun.lock before `claude` spawns. A fresh `git worktree add` carries no
+// node_modules, and bun then falls back to its global package cache and
+// auto-installs the NEWEST zod it holds (4.x), not the locked 3.25.x, so
+// params-shape.ts's `z.ZodEffects` is undefined and every strategy-store op
+// crashes at module load (Cringely/spacemolt#1110 and the duplicate filings
+// after it). `--frozen-lockfile` makes the lockfile, not the cache, decide
+// what installs, and makes a lockfile/package.json mismatch an error rather
+// than a silent rewrite of the pinned commit's files. Considered and
+// rejected: linking the shared checkout's node_modules (the checkout is not
+// guaranteed to have one, and a link would let a job write through it into
+// the "read-only" reference clone this design exists to protect).
+export const INSTALL_ARGV = ["bun", "install", "--frozen-lockfile"];
+
+/**
+ * Install the locked dependencies into a job worktree. Throws on a non-zero
+ * exit: runJob's try/catch records that as a failed job, so a broken install
+ * is loud, never a spawn that quietly resolves zod 4 from the global cache.
+ */
+export function installJobDependencies(run: CommandRunner, worktreePath: string): void {
+  const res = run(INSTALL_ARGV, worktreePath);
+  if (res.exitCode !== 0) {
+    throw new Error(`${INSTALL_ARGV.join(" ")} failed (exit ${res.exitCode}): ${res.stdout.slice(-300)}`);
+  }
 }
 
 /**

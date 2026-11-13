@@ -8,7 +8,7 @@ import {
   validateStoreArgs, resolveBaseUrl, resolveBearerToken, buildStoreRequest, parseSteerText,
   StoreArgError, STORE_OPS,
 } from "../scripts/strategy-store";
-import { INSTRUCTION_MAX_LENGTH } from "../src/server/server";
+import { INSTRUCTION_MAX_LENGTH } from "../src/server/store-protocol";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 

@@ -26,8 +26,18 @@ const TravelToStepSchema = z.object({
   params: z.object({ system_id: z.string() }).strict(),
 }).strict();
 
-export const PlanStepSchema = z.union(
-  [...stepSchemas, TravelToStepSchema] as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]],
+// `ZodType<any>` keeps PlanStep typed `any`, as it was under the plain union
+// (the executor and normalizer index step.params freely).
+type StepOption = z.ZodType<any> & z.core.$ZodTypeDiscriminable;
+
+// Discriminated on `action`, not a plain z.union, so a known action with bad
+// params reports only THAT action's failing path. In zod 4 a failed `.int()`
+// aborts its union member, and handleUnionResults then dumps every member's
+// errors (~100 branches, 23-33 KB) into the planner's retry prompt; zod 3
+// kept the matching member and reported ~250 chars. (PR #156 review.)
+export const PlanStepSchema = z.discriminatedUnion(
+  "action",
+  [...stepSchemas, TravelToStepSchema] as unknown as [StepOption, StepOption, ...StepOption[]],
 );
 
 export const PlanSchema = z.object({
@@ -62,9 +72,11 @@ export const PlanSchema = z.object({
   // place where the step's params and its repeat/until are visible together,
   // and a plan refused here costs zero ticks and zero credits. The refinement
   // sits on the whole plan rather than on the deposit branch of the step union
-  // so that PlanStepSchema stays a ZodUnion: test/instruct-gate.test.ts reads
-  // `PlanStepSchema.options[].shape.action.value` to re-derive the plannable
-  // vocabulary, and a ZodEffects member has no `.shape` (the #527 seam).
+  // so that PlanStepSchema stays a plain union of unrefined objects:
+  // test/instruct-gate.test.ts reads `PlanStepSchema.options[].shape.action.value`
+  // to re-derive the plannable vocabulary, and a zod 3 ZodEffects member had no
+  // `.shape` (the #527 seam). zod 4 would keep `.shape`, but the plan-level
+  // placement is still the only spot that sees params and repeat/until together.
   //
   // The ITEM form keeps repeat/until untouched -- repeating a deposit of ore is
   // real (the craft/recycle chain, #221), and a rule keyed on the action alone
@@ -78,7 +90,7 @@ export const PlanSchema = z.object({
     const target = (step.params as { target?: unknown } | undefined)?.target;
     if (typeof target !== "string") return; // item form: repeat/until are fine
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       path: ["steps", i],
       // Written as a correction the planner can act on, same contract as the
       // registry refinement's messages and the executor's guard reasons.

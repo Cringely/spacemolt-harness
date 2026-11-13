@@ -233,7 +233,7 @@ describe("registry", () => {
     test("chat requires target and content, target_id optional", () => {
       const chat = getAction("chat");
       expect(chat.tool).toBe("spacemolt_social");
-      const shape = (chat.params as z.ZodObject<z.ZodRawShape>).shape;
+      const shape = (chat.params as z.ZodObject<Record<string, z.ZodType>>).shape;
       expect(shape.target!.isOptional()).toBe(false);
       expect(shape.content!.isOptional()).toBe(false);
       expect(shape.target_id!.isOptional()).toBe(true);
@@ -329,6 +329,50 @@ describe("registry", () => {
       expect(view.params.safeParse({}).success).toBe(true);
       expect(view.params.safeParse({ station_id: "st_1", target: "faction" }).success).toBe(true);
       expect(view.params.safeParse({ station_id: "st_1", bogus: true }).success).toBe(false); // strict
+    });
+  });
+
+  // Battle escape hatch (Cringely/spacemolt#1018; corsair in_battle reports
+  // #819/#830/#904/#969): the game's own in_battle error says "use the battle
+  // command to fight or flee" and none of it was registered, so a pilot in a
+  // fight had attack as its only lever. VERIFIED against the vendored OpenAPI
+  // (docs/game-reference/upstream/openapi-v2.json, spacemolt_battle tool):
+  // /stance properties [id] required [id], id enum fire|evade|brace|flee,
+  // example body {"id":"fire"} (the prose says a `stance` field, the request
+  // schema says `id`; the schema is what validates). Only stance is registered:
+  // status (an unplannable query with no gather) and retreat (one zone out, not
+  // an escape) were dropped in the PR 166 review.
+  describe("battle", () => {
+    // stance is kind "mutation" although the spec carries no x-is-mutation on
+    // it: PlanSchema admits mutations only, and a query the planner cannot plan
+    // leaves a trapped pilot with no way to flee.
+    test("stance requires id in fire|evade|brace|flee", () => {
+      const a = getAction("stance");
+      expect(a.tool).toBe("spacemolt_battle");
+      expect(a.kind).toBe("mutation");
+      for (const s of ["fire", "evade", "brace", "flee"]) {
+        expect(a.params.safeParse({ id: s }).success).toBe(true);
+      }
+      expect(a.params.safeParse({}).success).toBe(false);
+      expect(a.params.safeParse({ id: "run" }).success).toBe(false);
+      expect(a.params.safeParse({ stance: "flee" }).success).toBe(false); // prose name, not the schema field
+      expect(a.params.safeParse({ id: "flee", extra: 1 }).success).toBe(false);
+    });
+
+    test("a plan can flee", () => {
+      const plan = PlanSchema.parse({
+        goal: "get out of the fight",
+        steps: [{ action: "stance", params: { id: "flee" } }],
+      });
+      expect(plan.steps.length).toBe(1);
+    });
+
+    // The battle tool's other routes stay out of the registry until something
+    // uses them (PR 166 review): status has no gather to call it, retreat is
+    // positional, not an escape.
+    test("status and retreat are not registered", () => {
+      expect(() => getAction("status")).toThrow();
+      expect(() => getAction("retreat")).toThrow();
     });
   });
 });

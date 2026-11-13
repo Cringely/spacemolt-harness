@@ -10,6 +10,7 @@ import { JOBS, type JobDef } from "../src/scheduler/jobs";
 import { POLICY_PATHS } from "../src/scheduler/policy-paths";
 import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
 import { loadAnchors } from "../src/scheduler/state";
+import { INSTALL_ARGV, type CommandRunner } from "../src/scheduler/worktree";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
@@ -67,7 +68,11 @@ function makeDirs(stateNowBody = "now-block-content-marker") {
   for (const [name, value] of Object.entries(SENTINELS)) {
     writeFileSync(join(secretsDir, name), `${value}\n`); // trailing newline like a real secret file
   }
-  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), pinnedSha: TEST_PINNED_SHA };
+  // commandRunner is the dependency-install seam: a no-op success here, because
+  // these tests are not about dependency resolution. The install tests at the
+  // end of this file override it.
+  const commandRunner: CommandRunner = () => ({ stdout: "", exitCode: 0 });
+  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), commandRunner, pinnedSha: TEST_PINNED_SHA };
 }
 
 interface SpawnCall {
@@ -96,6 +101,13 @@ const RESULT_JSON = JSON.stringify({
 });
 
 const job = (id: JobDef["id"]): JobDef => JOBS.find((j) => j.id === id)!;
+
+// A fixed sandbox fence for the argv-only tests; runJob builds the real one from its deps.
+const FENCE = {
+  secretsDir: "/srv/sched/secrets",
+  stateDir: "/srv/sched/state",
+  hostEnvFile: "/home/sched/.config/spacemolt-sched.env",
+};
 
 // Fix round on PR #143: dedupe carries no file-finding.ts grant (jobs.ts), so
 // its work order carries neither FILING_HOWTO nor OBSERVE_AND_FILE_ONLY (see
@@ -439,12 +451,111 @@ describe("spawn composer + runner (C3)", () => {
   // entry on EVERY job so a job gaining Edit later cannot reopen the hole.
   test("every job's argv denies Edit on every POLICY_PATHS entry via --disallowedTools", () => {
     for (const j of JOBS) {
-      const argv = buildArgv(j);
+      const argv = buildArgv(j, FENCE);
       const denyFlagIdx = argv.indexOf("--disallowedTools");
       expect(denyFlagIdx).toBeGreaterThan(-1);
       for (const p of POLICY_PATHS) {
         expect(argv.indexOf(`Edit(${p})`)).toBeGreaterThan(denyFlagIdx);
       }
+    }
+  });
+
+  // Catches (Cringely/spacemolt#865, appsec P1): `--allowedTools` is an additive
+  // allow list, so a job's tool set was never closed. `--restricted` confines
+  // the file tools to the worktree and ignores project settings; `--tools` makes
+  // the built-in set an explicit list. Deleting either flag from buildArgv
+  // reopens unscoped Read/Edit of the secrets dir, gates.json and the host env
+  // file while every grant-content test stays green.
+  test("every job's argv passes --restricted and a --tools list equal to its granted tool names", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      expect(argv).toContain("--restricted");
+      const toolsIdx = argv.indexOf("--tools");
+      expect(toolsIdx).toBeGreaterThan(-1);
+      // Derived independently of the implementation: the part before "(" of each grant, deduped.
+      const expected = [...new Set(j.allowedTools.map((t) => t.replace(/\(.*$/, "")))];
+      expect(argv[toolsIdx + 1]!.split(",").sort()).toEqual(expected.sort());
+      // One comma-joined value, then the next flag: nothing else is swept into the set.
+      expect(argv[toolsIdx + 2]!.startsWith("--")).toBe(true);
+    }
+  });
+
+  // Catches (#865): Task in the council grant. A Task subagent runs Bash that
+  // is not held to the job's allowedTools list (live evidence in #865), so no
+  // job may be granted it until that is fixed.
+  test("no job holds Task, in its grant or in its --tools set", () => {
+    for (const j of JOBS) {
+      expect(j.allowedTools.some((t) => t === "Task" || t.startsWith("Task("))).toBe(false);
+      const argv = buildArgv(j, FENCE);
+      expect(argv[argv.indexOf("--tools") + 1]!.split(",")).not.toContain("Task");
+    }
+  });
+
+  // Catches: the deny rules for the paths a prompt-injected job must never
+  // read or edit (secrets dir, gates.json, host env file) dropping out of argv.
+  // `--restricted` is the primary control for the file tools. These rules are
+  // the defence in depth behind it, and Claude Code also applies Read denies to
+  // cat/head/tail/sed named in Bash. `//path` is its absolute-path rule syntax.
+  // No Bash(...) deny belongs here: Bash rules match command text literally,
+  // so a path-shaped one never matches (PR #158 round 1).
+  test("every job's argv denies Read/Edit on the secrets dir, gates.json and the host env file, and no Bash deny", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+      for (const tool of ["Read", "Edit"]) {
+        expect(denies).toContain(`${tool}(//srv/sched/secrets/**)`);
+        expect(denies).toContain(`${tool}(//srv/sched/state/gates.json)`);
+        expect(denies).toContain(`${tool}(//home/sched/.config/spacemolt-sched.env)`);
+      }
+      expect(denies.filter((d) => d.startsWith("Bash(") && d.includes("srv/sched"))).toEqual([]);
+    }
+  });
+
+  // Catches: a relative SCHEDULER_SECRETS / SCHEDULER_STATE_DIR / env-file path
+  // reaching the fence unresolved. `Read(/rel/secrets/**)` anchors at the job's
+  // cwd and matches nothing, so the deny rules silently fail open.
+  test("a relative fence path is resolved to an absolute path before the rule is built", () => {
+    const argv = buildArgv(job("steward"), { secretsDir: "rel/secrets", stateDir: "rel/state", hostEnvFile: "rel/host.env" });
+    const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+    const cwd = process.cwd().replaceAll("\\", "/");
+    for (const rel of ["rel/secrets/**", "rel/state/gates.json", "rel/host.env"]) {
+      const rule = denies.find((d) => d.startsWith("Read(") && d.endsWith(`${rel})`));
+      expect(rule).toBeDefined();
+      expect(rule!.includes(`${cwd}/${rel}`)).toBe(true);
+    }
+  });
+
+  // Catches (#158 round 1): --restricted confines the file tools only, not
+  // Bash. blockReadsOutsideWorkingDirectories, passed through --settings (which
+  // --restricted still loads), makes recognized file-reading Bash commands on
+  // outside paths prompt, and a -p run denies a prompt. Dropping the flag
+  // leaves `cat ../../secrets/x` running unprompted.
+  test("every job's argv passes --settings with permissions.blockReadsOutsideWorkingDirectories true", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const idx = argv.indexOf("--settings");
+      expect(idx).toBeGreaterThan(-1);
+      expect(JSON.parse(argv[idx + 1]!)).toEqual({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+    }
+  });
+
+  // Catches: SCHEDULER_SECRETS (the literal secrets path, exported by
+  // scheduler-tick.sh) riding process.env into the child. The child's scripts
+  // never read it, so handing it over only tells an injected job where the
+  // PAT files are. Also pins that runJob builds the argv fence from ITS OWN
+  // secretsDir rather than a constant.
+  test("the child env drops SCHEDULER_SECRETS and the argv fence is built from the run's own secrets dir", async () => {
+    const dirs = makeDirs();
+    process.env.SCHEDULER_SECRETS = dirs.secretsDir;
+    try {
+      const { spawner, calls } = fakeSpawner(0);
+      await runJob(job("steward"), { spawner, clock: () => 1_000_000, ...dirs });
+      expect("SCHEDULER_SECRETS" in calls[0]!.opts.env).toBe(false);
+      expect(calls[0]!.opts.env.GH_TOKEN).toBe(SENTINELS.gh_pat_steward); // the real secrets still arrive
+      const posixSecrets = dirs.secretsDir.replaceAll("\\", "/");
+      expect(calls[0]!.argv.some((a) => a.startsWith("Read(") && a.includes(posixSecrets))).toBe(true);
+    } finally {
+      delete process.env.SCHEDULER_SECRETS;
     }
   });
 
@@ -533,5 +644,53 @@ describe("spawn composer + runner (C3)", () => {
     expect(call.argv.includes(CHARTER_TEXT)).toBe(false);
     expect(call.argv).toContain("--allowedTools");
     for (const tool of job("council").allowedTools) expect(call.argv).toContain(tool);
+  });
+
+  // Catches: a job worktree spawning with no node_modules, so bun falls back to
+  // its global cache and resolves zod 4 (Cringely/spacemolt#1110 and its
+  // duplicates). The install must run FIRST, inside the very directory the
+  // spawn then uses as cwd, and must be the lockfile-frozen form.
+  test("locked deps are installed in the job worktree before claude spawns", async () => {
+    const dirs = makeDirs();
+    const events: string[] = [];
+    const installs: Array<{ argv: string[]; cwd: string }> = [];
+    const commandRunner: CommandRunner = (argv, cwd) => {
+      events.push("install");
+      installs.push({ argv, cwd });
+      return { stdout: "", exitCode: 0 };
+    };
+    const calls: SpawnCall[] = [];
+    const spawner: Spawner = (argv, opts) => {
+      events.push("spawn");
+      calls.push({ argv, opts });
+      return { exited: Promise.resolve({ exitCode: 0 }), kill() {} };
+    };
+    const outcome = await runJob(job("strategy"), { spawner, clock: () => 1_000_000, ...dirs, commandRunner });
+    expect(outcome.result).toBe("ok");
+    expect(events).toEqual(["install", "spawn"]);
+    expect(installs[0]!.argv).toEqual(INSTALL_ARGV);
+    expect(installs[0]!.argv).toContain("--frozen-lockfile");
+    expect(installs[0]!.cwd).toBe(calls[0]!.opts.cwd);
+  });
+
+  // Catches: a failed install being swallowed and the job spawning anyway
+  // against a half-installed or cache-resolved tree. It must fail the job
+  // loudly: no spawn, result fail, error on the run row, failStreak bumped,
+  // and the worktree still cleaned up.
+  test("a failed install fails the job: no spawn, error recorded, worktree removed", async () => {
+    const dirs = makeDirs();
+    const commandRunner: CommandRunner = () => ({ stdout: "error: lockfile had changes, but lockfile is frozen", exitCode: 1 });
+    const { spawner, calls } = fakeSpawner(0);
+    const outcome = await runJob(job("strategy"), { spawner, clock: () => 1_000_000, ...dirs, commandRunner });
+    expect(outcome.result).toBe("fail");
+    expect(calls.length).toBe(0);
+    const logText = readdirSync(join(dirs.stateDir, "logs"))
+      .map((f) => readFileSync(join(dirs.stateDir, "logs", f), "utf8"))
+      .join("");
+    const line = JSON.parse(logText.trim());
+    expect(line.error).toContain("bun install --frozen-lockfile failed (exit 1)");
+    expect(line.error).toContain("lockfile is frozen");
+    expect(loadAnchors(dirs.stateDir).strategy.failStreak).toBe(1);
+    expect(existsSync(join(dirs.stateDir, "worktrees", outcome.cycleId))).toBe(false);
   });
 });

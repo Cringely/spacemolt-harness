@@ -145,7 +145,8 @@ function makeDirs() {
   for (const name of ["claude_oauth_token", "gh_pat_readcomment", "gh_pat_steward", "instruct_bearer", "store_bearer", "sm_store_url"]) {
     writeFileSync(join(secretsDir, name), "SENTINEL\n");
   }
-  return { checkoutDir, secretsDir, stateDir };
+  // Install is faked: these tests are not about dependency resolution (see scheduler-spawn.test.ts).
+  return { checkoutDir, secretsDir, stateDir, commandRunner: () => ({ stdout: "", exitCode: 0 }) };
 }
 
 function fakeGit(repo: { sha: string; commitAtMs: number; subjects: string[] }, checkoutDir?: string): GitRunner {

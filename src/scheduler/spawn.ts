@@ -10,16 +10,23 @@
 //   src/planner/claude-subscription.ts:44 — an argv prompt overflows spawn
 //   limits, and argv is visible in `ps`).
 // - Secret VALUES travel by child env only — never argv, never logs.
-// - allowedTools is a closed per-job list (jobs.ts); the spawn passes it
-//   verbatim, because LLM output is untrusted input (security-baseline.md).
+// - allowedTools is a per-job ALLOW list (jobs.ts), passed verbatim because
+//   LLM output is untrusted input (security-baseline.md). It is additive, not
+//   closed: buildArgv adds `--restricted` (file tools confined to the
+//   worktree, project/user settings ignored) and `--tools` (the built-in set
+//   as an explicit list) to close it, plus deny rules for the secrets dir,
+//   gates.json and the host env file (Cringely/spacemolt#865). Bash is NOT
+//   path-confined by --restricted. See the note above buildArgv.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { writeActiveCycle } from "./filing";
+import { GATES_FILE } from "./gates";
 import type { GitRunner } from "./git";
-import type { JobDef } from "./jobs";
+import { toolNames, type JobDef } from "./jobs";
 import { POLICY_PATHS } from "./policy-paths";
 import { loadAnchors, saveAnchors } from "./state";
-import { createJobWorktree, removeJobWorktree } from "./worktree";
+import { createJobWorktree, installJobDependencies, removeJobWorktree, type CommandRunner } from "./worktree";
 
 export interface SpawnHandle {
   // stdout is the child's captured output — the `claude -p --output-format json`
@@ -103,6 +110,8 @@ export interface RunDeps {
   stateDir: string;
   /** The one seam runJob uses to create/destroy its ephemeral worktree (#585) — no direct filesystem git calls here. */
   gitRunner: GitRunner;
+  /** Runs the dependency install inside the fresh worktree, before the job spawns. Required (not optional): an absent installer would silently restore the no-node_modules spawn. */
+  commandRunner: CommandRunner;
   /** Commit every job this tick is pinned to (tick.ts reads it once per tick from origin/main). */
   pinnedSha: string;
   secretsDir: string;
@@ -226,7 +235,52 @@ export function composePrompt(
 // composing it inside buildArgv means a future job gaining Edit or Write
 // cannot reopen the hole by omission. POLICY_PATHS is imported, never
 // hand-copied — the fence list has one definition (policy-paths.ts).
-export function buildArgv(job: JobDef): string[] {
+//
+// `--restricted` + `--tools` close the tool set (an --allowedTools list alone
+// is additive; Cringely/spacemolt#865). --restricted confines Read/Grep/Glob/
+// Edit to the worktree (cwd) and ignores user/project/local settings, so the
+// worktree's .claude/settings.json hooks (workstation dev-team gates, none of
+// which a job depends on) no longer load. --restricted does NOT confine Bash:
+// read-only commands (cat, head, tail, grep, ...) run unprompted on any path.
+// BLOCK_OUTSIDE_READS (via --settings, which --restricted still loads) makes
+// recognized file-reading Bash commands on paths outside the worktree, and
+// commands the shell parser cannot trace, prompt. A -p run denies a prompt.
+// That is a prompt-and-deny gate on recognized commands, not a boundary:
+// commands outside Claude Code's recognized set (base64, od, ...) are
+// unverified, so a separate uid or the sandbox stays the structural fix. The
+// Read/Edit deny rules are defence in depth: Claude Code applies them to the
+// file tools and to cat/head/tail/sed/tee named in Bash, not to Bash rules on
+// the same paths (Bash rules match command text literally, so a path-shaped
+// Bash deny cannot match).
+const BLOCK_OUTSIDE_READS = JSON.stringify({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+
+export interface SandboxFence {
+  secretsDir: string;
+  stateDir: string;
+  /** Holds the SCHEDULER_* paths and SCHEDULER_SERVICE_USER (whose absence fails the D3 fence open). */
+  hostEnvFile: string;
+}
+
+/** The same default the cron wrappers use (scheduler-tick.sh ENV_FILE). */
+export function hostEnvFile(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SPACEMOLT_SCHED_ENV ?? join(homedir(), ".config", "spacemolt-sched.env");
+}
+
+// Claude Code's absolute-path rule syntax is `//path`: a single leading slash
+// means project-relative, so an absolute path gets one more slash prepended.
+// A relative path (a relative SCHEDULER_SECRETS in the env file) is resolved
+// first: left alone it would anchor at the job's cwd and match nothing, so the
+// fence would fail open. An absolute path is passed through as-is (resolve()
+// would add a drive letter on a Windows dev box and change the rule).
+const absPath = (p: string) => `/${(isAbsolute(p) ? p : resolve(p)).replaceAll("\\", "/")}`;
+
+function fenceDenies(fence: SandboxFence): string[] {
+  const dir = absPath(fence.secretsDir);
+  const files = [absPath(join(fence.stateDir, GATES_FILE)), absPath(fence.hostEnvFile)];
+  return ["Read", "Edit"].flatMap((tool) => [`${tool}(${dir}/**)`, ...files.map((f) => `${tool}(${f})`)]);
+}
+
+export function buildArgv(job: JobDef, fence: SandboxFence): string[] {
   return [
     "-p",
     "--output-format",
@@ -235,10 +289,16 @@ export function buildArgv(job: JobDef): string[] {
     job.model,
     "--strict-mcp-config",
     "--no-session-persistence",
+    "--restricted",
+    "--settings",
+    BLOCK_OUTSIDE_READS,
+    "--tools",
+    toolNames(job.allowedTools).join(","),
     "--allowedTools",
     ...job.allowedTools,
     "--disallowedTools",
     ...POLICY_PATHS.map((p) => `Edit(${p})`),
+    ...fenceDenies(fence),
   ];
 }
 
@@ -254,8 +314,14 @@ function readSecret(secretsDir: string, name: string): string {
 }
 
 function buildEnv(job: JobDef, secretsDir: string): Record<string, string> {
+  // SCHEDULER_SECRETS (the literal secrets path, exported by scheduler-tick.sh)
+  // is dropped: no child script reads it, and passing it only tells an
+  // injected job where the PAT files are. A full env allowlist was rejected:
+  // the child needs PATH/HOME/proxy/bun vars this repo cannot enumerate for
+  // the host, and a wrong list breaks every job.
+  const { SCHEDULER_SECRETS: _dropped, ...inherited } = process.env;
   const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+    ...(inherited as Record<string, string>),
     CLAUDE_CODE_OAUTH_TOKEN: readSecret(secretsDir, "claude_oauth_token"),
     GH_TOKEN: readSecret(secretsDir, job.patSecret),
   };
@@ -318,6 +384,9 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     // creation failure is caught below exactly like a charter-read failure
     // (never a throw out of runJob), so no separate error path is needed.
     worktreePath = createJobWorktree(deps.gitRunner, deps.stateDir, cycleId, deps.pinnedSha);
+    // A fresh worktree has no node_modules; install the locked deps before
+    // anything spawns (see worktree.ts). Throws → recorded as a job failure.
+    installJobDependencies(deps.commandRunner, worktreePath);
     // Charter read failure is a job failure, recorded, never a throw — a
     // charterless spawn would run an unarmed identity at full cadence.
     const charterText = readFileSync(join(worktreePath, job.charterPath), "utf8");
@@ -333,7 +402,8 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     // instead of trusting caller-supplied --job/--cycle flags, so a spawned
     // agent cannot mint fresh cycle ids past the (a)(4) flood cap.
     writeActiveCycle(deps.stateDir, { jobId: job.id, cycleId });
-    const handle = deps.spawner(buildArgv(job), { cwd: worktreePath, env, stdin: prompt });
+    const fence = { secretsDir: deps.secretsDir, stateDir: deps.stateDir, hostEnvFile: hostEnvFile() };
+    const handle = deps.spawner(buildArgv(job, fence), { cwd: worktreePath, env, stdin: prompt });
     const raced = await raceTimeout(handle.exited, job.timeoutMs, deps.waitTimeout);
     if (raced === "timeout") {
       handle.kill(); // one hung `claude -p` must never outlive its budget (plan decision 2)
