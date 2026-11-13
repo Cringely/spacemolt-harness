@@ -3,7 +3,7 @@ import { Agent, type AgentConfig } from "../src/agent/agent";
 import { MockPlanner } from "../src/planner/mock";
 import { Store } from "../src/store/store";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
-import type { V2Result } from "../src/client/http";
+import type { EnvelopeNotification, V2Result } from "../src/client/http";
 import type { Plan } from "../src/registry/plan";
 import type { Planner, PlanContext } from "../src/planner/types";
 import { TransientPlannerError } from "../src/planner/errors";
@@ -216,10 +216,12 @@ describe("Layer 4 escalation: unrecoverable state (issue #534)", () => {
       credits: 304, fuel: 90, maxFuel: 100, hull: 100, maxHull: 100,
       cargoUsed: 12, cargoCapacity: 50, docked: true, inTransit: false, systemId: "s1",
     };
+    // Notifications a test queues for the NEXT poll; drained on read.
+    const pending: EnvelopeNotification[] = [];
     const api: GameApi = {
       async action(): Promise<V2Result> { return { result: "ok" }; }, // dock "succeeds" -> plan_done
       async status() { return status; },
-      async notifications() { return []; },
+      async notifications() { return pending.splice(0); },
     };
     const store = new Store(":memory:");
     let goalNum = 0;
@@ -240,7 +242,7 @@ describe("Layer 4 escalation: unrecoverable state (issue #534)", () => {
       config: { ...baseConfig, heartbeatMinutes: 0.1 },
       now: () => now.v,
     });
-    return { status, store, contexts, agent };
+    return { status, store, contexts, agent, pending };
   }
 
   async function tick(agent: Agent, now: { v: number }) {
@@ -330,6 +332,52 @@ describe("Layer 4 escalation: unrecoverable state (issue #534)", () => {
 
     expect(contexts.length).toBe(callsBefore + 1);
     expect(contexts[contexts.length - 1]!.instruction).toBe("stop selling and hold the cargo");
+  });
+
+  // Issue Cringely/spacemolt#1150, live 2026-11-10: the corsair latched
+  // `unrecoverable` WHILE in battle (every action blocked "in_battle"), the
+  // battle then ended by stalemate (battle_ended notification, captured), and
+  // the pilot stayed frozen for 3 days. The latch's only exits are a changed
+  // fingerprint or an operator instruction, and an idle ship produces neither.
+  // The fingerprint here is deliberately left FROZEN after the notification:
+  // the battle ending changes nothing the fingerprint reads, so the exit has
+  // to come from the notification itself.
+  test("a battle_ended notification releases the unrecoverable latch and replanning resumes on a frozen fingerprint (#1150)", async () => {
+    const now = { v: 0 };
+    const { store, contexts, agent, pending } = frozenPlanDoneSetup(now);
+
+    const opAlerts = await driveToNthAlert(agent, store, now, 3);
+    expect((opAlerts[2]!.payload as { class: string }).class).toBe("unrecoverable");
+    const callsAtEscalation = contexts.length;
+
+    // Control: the latch really holds with no notification, across more than
+    // one backoff window (6s). Otherwise the resume below proves nothing.
+    for (let i = 0; i < 20; i++) await tick(agent, now);
+    expect(contexts.length).toBe(callsAtEscalation);
+    expect(agent.snapshot().plannerHealth.stuck).toBe(true);
+
+    // A combat notification that is NOT the battle ending (still in the
+    // fight) must not release it.
+    pending.push({
+      id: "n-update", type: "combat", msg_type: "battle_update",
+      timestamp: "2026-11-10T14:09:00Z", data: { battle_id: "b1", tick: 2368100 },
+    });
+    for (let i = 0; i < 10; i++) await tick(agent, now);
+    expect(contexts.length).toBe(callsAtEscalation);
+
+    // Shape captured live: type "combat", msg_type "battle_ended".
+    pending.push({
+      id: "n-ended", type: "combat", msg_type: "battle_ended",
+      timestamp: "2026-11-10T14:09:35Z",
+      data: { battle_id: "b1", winning_side: -1, reason: "stalemate", duration: 117, total_damage: 40, ships_destroyed: 0 },
+    });
+    // Within 2 ticks, not after the next backoff expiry (6s): the release
+    // also drops the backoff the latch armed.
+    await tick(agent, now);
+    await tick(agent, now);
+
+    expect(contexts.length).toBeGreaterThan(callsAtEscalation);
+    expect(agent.snapshot().plannerHealth.stuck).toBe(false);
   });
 
   // The gap flagged in review on this same issue: unlike frozenPlanDoneSetup
