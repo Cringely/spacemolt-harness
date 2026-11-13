@@ -114,6 +114,29 @@ const SEAMS: Seam[] = [
     anchors: [/Refueling Pump/i, /no_refueling_pump/i, /fill my own tank/i],
   },
   {
+    guard: "full-tank refuel guard (tracker Cringely/spacemolt#995: a refill against a tank status reads full " +
+      "advances instead of calling the game)",
+    code: { file: "src/agent/executor.ts", marker: "preStatus.fuel >= preStatus.maxFuel" },
+    anchors: [/tank_full/i, /max_fuel/i],
+  },
+  {
+    guard: "espionage membership guard (tracker Cringely/spacemolt#1004: no faction on status -> blocked wake)",
+    code: { file: "src/agent/executor.ts", marker: 'step.action === "espionage"' },
+    anchors: ["espionage", /Espionage HQ/i, /faction_id/i],
+  },
+  {
+    guard: "distress_signal cooldown guard (tracker Cringely/spacemolt#792: inside the one-hour cooldown of " +
+      "the pilot's own last call -> blocked wake)",
+    code: { file: "src/agent/executor.ts", marker: "distressCooldownMinutes > 0" },
+    anchors: ["distress_signal", /one-hour cooldown/i, /already_active/i],
+  },
+  {
+    guard: "in_battle guard (tracker Cringely/spacemolt#892: movement, scan and distress calls refused for a " +
+      "window after the game's own in_battle answer)",
+    code: { file: "src/agent/executor.ts", marker: "IN_BATTLE_BLOCKED_ACTIONS.has(step.action)" },
+    anchors: ["in_battle", /mid-battle/i, "reload"],
+  },
+  {
     guard: "tick-pacing settle (SM-12: pending accept skips one submission)",
     code: { file: "src/agent/executor.ts", marker: /settle: true/ },
     anchors: [/action pending/i, /wait one tick/i],
@@ -408,6 +431,15 @@ const SEAMS: Seam[] = [
     // this literal header, so the marker vanishing is the guard vanishing.
     code: { file: "src/planner/digest.ts", marker: "STANDING OPERATOR INSTRUCTION" },
     anchors: [/acted on ONCE/i, /is this done yet/i, "instruction_done"],
+  },
+  {
+    guard: "one-shot destructive order is spent once it runs: a successful oneShot action (self_destruct) retires the steer that ordered it, so it never re-runs on a respawned ship (#542)",
+    // The retirement block's own condition. Not the bare `oneShot` flag or the
+    // ONE_SHOT_ACTIONS name: those also occur in the registry, the set's
+    // declaration and comments, so deleting the block would leave them
+    // matching. This call is the block's gate and occurs once in agent.ts.
+    code: { file: "src/agent/agent.ts", marker: "ONE_SHOT_ACTIONS.has(step.action)" },
+    anchors: [/spent once/i, /never re-?run/i, /respawn/i],
   },
   {
     guard: "pinned (\"standing until revoked\") instruction survives instruction_done -- only an explicit operator revoke clears it (#817)",

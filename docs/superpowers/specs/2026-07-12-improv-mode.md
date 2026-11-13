@@ -69,6 +69,26 @@ Resources / survival:
   ship-to-ship transfer attempt and blocked. (Also a §5 deterministic backstop: in plan-then-execute
   the executor blocks a non-"fleet" `target` before the call when no utility module is fitted,
   issue #595.)
+- Check the tank before you refuel: a refill with the tank already at maximum is a guaranteed
+  `tank_full` refusal and a wasted action (99 of them fleet-wide in 72h, tracker
+  Cringely/spacemolt#995). Compare `ship.fuel` with `ship.max_fuel` first and move on if they
+  match. (Also a §5 deterministic backstop: in plan-then-execute the executor advances past a
+  tank-refill step when this tick's status reads the tank full.)
+- `espionage` needs faction membership plus a faction-built Espionage HQ. With no `faction_id`
+  on your player block it is refused every time, and no action you have can join a faction, so
+  pick another goal (tracker Cringely/spacemolt#1004). (Also a §5 deterministic backstop: the
+  executor blocks espionage when status shows no faction.)
+- `distress_signal` allows one active signal and a one-hour cooldown between calls, and nothing
+  in `get_status` shows either. Remember when you last sent one, including a mayday the harness
+  sent for you, and do not send another inside the hour: the game answers `cooldown` or
+  `already_active` and the wait is lost (67 refused retries in one 72h window, tracker
+  Cringely/spacemolt#792). (Also a §5 deterministic backstop for plan-then-execute pilots.)
+- Once the game rejects an action with `in_battle`, movement, `scan` and `distress_signal`
+  stay refused until the battle ends, and `get_status` does not say when that is. Stop
+  retrying them and either fight or wait; `use_item` and `reload` still work mid-battle (26
+  rejected actions in 72h, tracker Cringely/spacemolt#892). (Also a §5 deterministic backstop:
+  the executor refuses those actions for a short window after the game's own `in_battle`
+  answer.)
 - Before you plan a `refuel`, check that a fuel source exists and the tank is not full. At a
   station, `get_system`'s `fuel_reserve` for your POI is the station tank: 0 means a station
   refuel fails with `station_fuel_empty`, and it then works only by cracking `fuel_cell` items
@@ -565,8 +585,9 @@ Operator steers:
   older — a fresh steer revokes any earlier contradicting one. Never let an old "standing
   instruction" outvote a newer contradicting steer (live, 2026-07-13, #186: a stale "ignore
   Palladium Ore entirely" beat the operator's newer "sell palladium if a buyer is detected" on the
-  very next plan). (Also a §5 deterministic backstop: the harness retains only the 5 most recent
-  instructions, evicting oldest, so stale steers age out of the briefing entirely.)
+  very next plan). (Also a §5 deterministic backstop: in plan-then-execute the harness retires the
+  older unpinned steers when a newer one arrives (#535), keeps config goals and pinned steers, and
+  caps the whole list at 5 goals, so stale steers age out of the briefing entirely.)
 - Standing goals from agents.yaml (`goals:`, #216) are DURABLE objectives, not steers: they stay
   in force until the operator edits the config, and the 5-steer aging above never applies to
   them. A newer steer can supersede HOW you pursue a standing goal this pass; it never revokes
@@ -586,6 +607,13 @@ Operator steers:
   instruction as a STANDING OPERATOR INSTRUCTION block at the top of every briefing, and the
   planner retires it by reporting "instruction_done": true in its plan JSON once the work is
   already carried out -- never on the plan that merely starts it.)
+- A one-shot destructive order (an operator steer to `self_destruct` the ship) is spent once it
+  runs: after the action succeeds, treat the order as done and never re-run it. The order stays in
+  the briefing after the ship respawns, and the respawned ship is not a new target -- re-reading it
+  as still pending destroys every fresh ship (live, #542: the same order fired on each respawn,
+  200cr fee plus the hold, until the operator removed it). A refused or failed attempt leaves the
+  order pending. (Also a §5 deterministic backstop: in plan-then-execute a successful `oneShot`
+  registry action retires the steer that named it, persisted at once, so a restart cannot replay it.)
 - A PINNED instruction ("standing until revoked", a persistent rule rather than a one-time errand)
   is a real state the harness tracks (#817), but it is classified at INTAKE -- when the operator
   sends it, via a flag on the request -- never by reading the instruction's own wording. Under
@@ -905,9 +933,11 @@ The model gets the wheel, not the safety switches:
   bounded exponential backoff+jitter; a per-tool circuit breaker that fails fast during a cooldown
   after repeated server failures. Stays deterministic under improv — the model never sees these
   retries, only the final success or a surfaced terminal error.
-- **Instruction-history cap** (#186): the operator-instruction list retains only the 5 most recent
-  steers (oldest evicted on push; a persisted list from before the cap is trimmed on load), so a
-  stale steer ages out instead of accumulating into a permanent "standing instruction" archive.
+- **Instruction-history cap** (#186): the goal list is capped at 5 entries (oldest unpinned steer
+  evicted on push, config goals and pinned steers kept; a persisted list from before the cap is
+  trimmed on load), so a stale steer ages out instead of accumulating into a permanent "standing
+  instruction" archive. When config goals plus pinned steers already fill the cap, a new errand is
+  the one dropped, with an `instruction_dropped` event as the receipt.
   Deterministic in both modes; under improv it is the backstop beneath the §4 newest-supersedes
   rule — a self-driving agent that over-weights an old steer stops seeing it at all once it ages out.
 - **Persisted-state tolerance** (new, from the 2026-07-12 chat-enum incident): stored artifacts
