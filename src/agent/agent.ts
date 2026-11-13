@@ -7,7 +7,7 @@ import type {
 } from "../planner/types";
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
-import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
+import { summarizeStatus, clipPlanContext, clipUntrusted, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
 import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
@@ -2738,7 +2738,14 @@ export class Agent {
       // structurally impossible: every plan reaching the retry gate below
       // has already failed (or passed) BOTH checks together, and the SAME
       // is true of the retried plan.
-      let admitted = admitPlan(plan, surroundings);
+      // Item ids the game itself reported this replan (#1152): the cargo and
+      // docked-market rows the planner was just shown. They outrank the
+      // vendored catalog at admission (normalize-plan.ts normalizePlanItems).
+      const liveItemIds = new Set<string>([
+        ...(ctx.cargo?.items ?? []).map((c) => c.itemId),
+        ...(ctx.marketRows ?? []).map((r) => r.itemId),
+      ]);
+      let admitted = admitPlan(plan, surroundings, liveItemIds);
       if (!admitted.ok) {
         // Routed into the same single-retry pattern every Planner
         // implementation already applies to JSON/schema validation
@@ -2763,13 +2770,19 @@ export class Agent {
         plan = PlanSchema.parse(rawRetry.plan);
         promptChars += rawRetry.promptChars;
         responseChars += rawRetry.responseChars;
-        admitted = admitPlan(plan, surroundings);
+        admitted = admitPlan(plan, surroundings, liveItemIds);
         if (!admitted.ok) {
           throw new Error(`plan admission failed after retry: ${admitted.error}`);
         }
       }
       plan = admitted.plan;
       rewrites = admitted.rewrites;
+      // The vendored catalog is behind the live game (#1152): surface it so
+      // `bun run scripts/refresh-catalog.ts` gets run. Bounded: the ids are
+      // game-reported text and the plan holds at most 30 steps.
+      if (admitted.catalogDrift?.length) {
+        this.emit("catalog_drift", { ids: admitted.catalogDrift.map((id) => clipUntrusted(id)) });
+      }
 
       // Fleet-gift id->username resolution (issue #788), the same name/id
       // failure class as the block above and handled the same deterministic way.
