@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildDigest, summarizeStatus, FLEET_REFUEL_FLOOR_CR, BID_STALE_HOURS } from "../src/planner/digest";
+import { getAction } from "../src/registry/actions";
 import { parseMarketText } from "../src/client/mcp-text-parser";
 import type { PlanContext } from "../src/planner/types";
 import type { StatusSnapshot } from "../src/client/client";
@@ -19,6 +20,22 @@ const baseCtx: PlanContext = {
 };
 
 describe("buildDigest", () => {
+  // PR 166 review: ACTION_VOCAB renders stance as `stance(id:string)` with no enum
+  // values, so the planner could not learn `flee` was the escape. The digest line
+  // is pinned against the VALUES THE REGISTRY SCHEMA ACCEPTS (read off the zod enum,
+  // not off the BATTLE_STANCES constant the digest also uses), anchored to the
+  // stance line because bare words like "fire" match the whole digest trivially.
+  test("the stance line names every registry stance and says flee is the escape", () => {
+    const { shape } = getAction("stance").params as unknown as { shape: { id: { options: string[] } } };
+    const stances = shape.id.options;
+    expect(stances).toContain("flee"); // guard: the options read worked and flee is still a stance
+    const line = buildDigest(baseCtx).split("\n").find((l) => /^stance id is one of/.test(l));
+    expect(line).toBeDefined();
+    for (const s of stances) expect(line!).toContain(s);
+    expect(line!).toContain("flee is the escape");
+    expect(line!).toMatch(/3 ticks/);
+  });
+
   // Enumeration test (simplicity rule 5): every PlanContext field must appear
   // in the built prompt. This is the guard against a future edit silently
   // dropping a field the planner needs to see.

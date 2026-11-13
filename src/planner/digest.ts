@@ -1,4 +1,4 @@
-import { REGISTRY } from "../registry/actions";
+import { BATTLE_STANCES, REGISTRY } from "../registry/actions";
 import { describeParamsShape } from "../registry/params-shape";
 import { isNoBuyersBlock } from "../agent/wake";
 import { JETTISON_VALUE_FLOOR, SPARSE_LOCK_MULTIPLIER, canLockDeposit, totalMiningPower } from "../agent/executor";
@@ -817,6 +817,12 @@ export function buildDigest(ctx: PlanContext): string {
     // This is chat's HOW-TO only; the outbound-identity and untrusted-text
     // boundaries below still govern WHAT may be said.
     `chat target is one of five channels: local or system (area chat around you), faction (your own faction), private (one player -- also set target_id to that player's id), emergency (distress/help). content is your message text.`,
+    // Battle-stance steer (Cringely/spacemolt#1018, PR 166 review): ACTION_VOCAB
+    // renders stance as `stance(id:string)` with no enum values, and the game's
+    // own help prose calls the field `stance` (the strict schema rejects that),
+    // so without this line the planner cannot learn that `flee` is the escape.
+    // Values come from the registry enum (BATTLE_STANCES), never a second list.
+    `stance id is one of ${BATTLE_STANCES.join(", ")} (the field is id, not stance). When in battle, flee is the escape: the game needs 3 ticks of flee stance to disengage you (longer if you are slower than your pursuers).`,
     // SECURITY, standing instruction (generalized from the chat-specific
     // boundary this task started with): covers every quoted-game-text seam in
     // this digest -- chat messages, a blocked wake's detail, and (already
