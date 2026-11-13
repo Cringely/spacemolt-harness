@@ -26,8 +26,18 @@ const TravelToStepSchema = z.object({
   params: z.object({ system_id: z.string() }).strict(),
 }).strict();
 
-export const PlanStepSchema = z.union(
-  [...stepSchemas, TravelToStepSchema] as unknown as [z.ZodType<any>, z.ZodType<any>, ...z.ZodType<any>[]],
+// `ZodType<any>` keeps PlanStep typed `any`, as it was under the plain union
+// (the executor and normalizer index step.params freely).
+type StepOption = z.ZodType<any> & z.core.$ZodTypeDiscriminable;
+
+// Discriminated on `action`, not a plain z.union, so a known action with bad
+// params reports only THAT action's failing path. In zod 4 a failed `.int()`
+// aborts its union member, and handleUnionResults then dumps every member's
+// errors (~100 branches, 23-33 KB) into the planner's retry prompt; zod 3
+// kept the matching member and reported ~250 chars. (PR #156 review.)
+export const PlanStepSchema = z.discriminatedUnion(
+  "action",
+  [...stepSchemas, TravelToStepSchema] as unknown as [StepOption, StepOption, ...StepOption[]],
 );
 
 export const PlanSchema = z.object({

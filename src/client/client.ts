@@ -858,7 +858,7 @@ const ActiveMissionObjectiveSchema = z.object({
 // array, which degraded every mission's id/objectives/progress to undefined
 // for the tick -- the exact dangling state #931's fix above depends on
 // staying rare. `.catch()` contains a field's own parse failure to that
-// field alone (verified on this repo's pinned zod 3.25.76: a divergent
+// field alone (verified on zod 3.25.76, re-verified on the pinned 4.6.7: a divergent
 // `credits` value yields a rewards object missing only `credits`, `skill_xp`
 // and the rest of the mission parse normally) -- a cosmetic display value
 // must not be able to blank the one sanctioned mission_id source.
