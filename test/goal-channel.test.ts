@@ -134,7 +134,9 @@ describe("standing config goals (#216)", () => {
       api, store, planner: new MockPlanner([okPlan]), config, now: () => 1,
     });
     for (let i = 1; i <= 5; i++) {
-      agent.instruct(`steer ${i}`);
+      // Pinned: an unpinned steer supersedes its predecessors outright
+      // (Cringely/spacemolt#535), so only pinned ones can overflow the cap.
+      agent.instruct(`steer ${i}`, { standing: true });
       await agent.runOnce();
     }
     const goals = agent.snapshot().goals;

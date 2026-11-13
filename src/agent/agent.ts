@@ -2482,6 +2482,24 @@ export class Agent {
     // PlanContext.instruction ONLY, never the persisted goals -- a transient
     // nudge, not a new standing goal.
     if (instruction && opts.persistInstruction !== false) {
+      // Supersession (Cringely/spacemolt#535): a newer operator steer replaces
+      // the older ones. Retirement used to depend on the planner reporting each
+      // steer done, one at a time, so after five steers to a stranded pilot
+      // three "jump and spend fuel" orders sat beside the "do NOT jump"
+      // correction that superseded them. Deterministic here, at intake, where
+      // "newer" is known. Config goals (agents.yaml) and pinned steers
+      // ("standing until revoked", #817) are not errands the newer steer
+      // replaces, and a pinned steer is itself additive: it supersedes nothing.
+      // Rejected alternative: an explicit replaces flag on the instruct body
+      // (the issue's option 2) -- a new API field for stacking nobody has used,
+      // and the default would still have to be replace-all.
+      if (!this.pinnedInstructions.has(instruction)) {
+        const retired = this.goals.filter((g) => !this.standingGoals.includes(g) && !this.pinnedInstructions.has(g));
+        if (retired.length) {
+          this.goals = this.goals.filter((g) => !retired.includes(g));
+          this.emit("instruction_superseded", { instruction, retired });
+        }
+      }
       this.goals.push(instruction);
       // Cap the retained history (issue #186): evict oldest so stale steers
       // age out instead of accumulating forever. See MAX_GOALS for the value
