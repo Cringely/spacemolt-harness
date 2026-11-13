@@ -66,3 +66,34 @@ describe("refuel on a full tank (#995 #848 #888 #938)", () => {
     expect(calls).toEqual(["refuel"]);
   });
 });
+
+describe("espionage while unaffiliated (#1004)", () => {
+  // espionage.md:5, "All of these are faction systems: they require
+  // membership in a faction", and the game's own answer: "You must be in a
+  // faction to conduct espionage".
+  const plan: Plan = { goal: "spy", steps: [{ action: "espionage", params: {} }] };
+
+  test("a pilot known to be in no faction is refused before the game, in prose", async () => {
+    const { api, calls } = stubApi(status({ factionId: null }));
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(calls).toEqual([]);
+    expect(r.kind).toBe("blocked");
+    if (r.kind !== "blocked") throw new Error("unreachable");
+    expect(r.guard).toBe(true);
+    expect(r.reason).toContain("faction");
+    // #1116: a refusal hands back prose, never an action{...} call to resubmit.
+    expect(r.reason).not.toMatch(/\w+\{/);
+  });
+
+  test("a faction member reaches the game", async () => {
+    const { api, calls } = stubApi(status({ factionId: "f_crimson" }));
+    await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(calls).toEqual(["espionage"]);
+  });
+
+  test("an unknown affiliation (factionId undefined) is no verdict: the call goes through", async () => {
+    const { api, calls } = stubApi(status());
+    await executeTick(api, plan, { step: 0, iteration: 0 });
+    expect(calls).toEqual(["espionage"]);
+  });
+});

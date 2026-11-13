@@ -24,6 +24,15 @@ export interface StatusSnapshot {
   // fail OPEN, which is what the guard's `!preStatus.creditsKnown` does. Same
   // "optional, additive" reasoning as systemId/stats above.
   creditsKnown?: boolean;
+  // Tracker Cringely/spacemolt#1004. The pilot's faction, three-valued like
+  // creditsKnown: a string is the faction id, null means the player block
+  // parsed and carries no faction (the live capture,
+  // test/fixtures/spacemolt-probe-2026-07-12.json, omits the key for an
+  // unaffiliated pilot), undefined means UNKNOWN (no parsed player block, or a
+  // faction_id of an unexpected type). The espionage guard refuses on null
+  // only. Set by status() below; parseStatusText (the MCP improv driver, which
+  // never runs executeTick) leaves it undefined.
+  factionId?: string | null;
   fuel: number;
   maxFuel: number;
   hull: number;
@@ -700,6 +709,9 @@ const StatusSchema = z.object({
     // numeric entries, so a shape surprise degrades one counter, never the
     // whole get_status parse.
     stats: z.record(z.string(), z.unknown()).optional(),
+    // z.unknown, not z.string: a null or odd-typed faction_id must degrade to
+    // UNKNOWN in status() below, never fail the whole get_status parse.
+    faction_id: z.unknown(),
   }).partial().default({}),
   location: z.object({
     docked_at: z.string().nullable(),
@@ -1054,6 +1066,14 @@ export class SpacemoltClient implements GameApi {
       // arrives here as undefined and is indistinguishable from a real zero
       // balance in `credits`.
       creditsKnown: typeof s.player.credits === "number",
+      // Absent/null/"" is "no faction" only when the player block demonstrably
+      // parsed (credits present, the same test as creditsKnown); a non-string
+      // value is UNKNOWN, not a verdict.
+      factionId: typeof s.player.faction_id === "string" && s.player.faction_id !== ""
+        ? s.player.faction_id
+        : typeof s.player.credits === "number" && (s.player.faction_id == null || s.player.faction_id === "")
+          ? null
+          : undefined,
       fuel: s.ship.fuel ?? 0, maxFuel: s.ship.max_fuel ?? 0,
       hull: s.ship.hull ?? 0, maxHull: s.ship.max_hull ?? 0,
       cargoUsed: s.ship.cargo_used ?? 0, cargoCapacity: s.ship.cargo_capacity ?? 0,

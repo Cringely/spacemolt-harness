@@ -1676,6 +1676,29 @@ export async function executeTick(
     );
   }
 
+  // Espionage membership guard (tracker Cringely/spacemolt#1004: the miner
+  // planned espionage twice in 72h, answered "You must be in a faction to
+  // conduct espionage"). Invariant: espionage is never SUBMITTED by a pilot
+  // whose status says it belongs to no faction. espionage.md opens "All of
+  // these are faction systems: they require membership in a faction", and
+  // spacemolt_faction has no registered join/create action (see the
+  // faction-routed craft note above craftDepositBlock), so the precondition
+  // cannot become true inside a plan: a block, not an advance, and the reason
+  // says to change goal rather than name a remedy that does not exist.
+  //
+  // Fires on factionId === null only. undefined is UNKNOWN (client.ts: no
+  // parsed player block, or a faction_id of an unexpected type) and falls
+  // through to the game, as every guard here fails open. Membership is the
+  // half this can check for free; the Espionage HQ facility half stays with
+  // the game's own refusal.
+  if (step.action === "espionage" && preStatus?.factionId === null) {
+    return guardBlock(
+      "espionage refused: you are not in any faction, and espionage is a faction command that needs " +
+      "membership plus a faction-built Espionage HQ. Joining a faction is not something a plan can do " +
+      "from here, so choose a goal that does not depend on it.",
+    );
+  }
+
   // accept_mission precondition guard (live diagnosis 2026-07-12): the pilot
   // reached for missions but called accept_mission with EMPTY params and the
   // game answered "invalid_payload: Must provide template_id (or mission_id)
