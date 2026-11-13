@@ -81,7 +81,9 @@ export interface PlanRewrite {
 }
 
 export type NormalizeResult =
-  | { ok: true; plan: Plan; rewrites: PlanRewrite[] }
+  // catalogDrift (#1152): item ids admitted because live state reported them
+  // while the vendored catalog does not know them. Set by the item check only.
+  | { ok: true; plan: Plan; rewrites: PlanRewrite[]; catalogDrift?: string[] }
   // error is the full retry-ready message (unknown ref with known ids, or an
   // ambiguous ref naming every candidate) -- built here where the candidate
   // data lives, so the caller routes it into the retry verbatim.
@@ -241,8 +243,8 @@ export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): 
  * Deliberately never resolves or rewrites an id, unlike normalizePlanLocations'
  * candidate matching -- an item id has no "surroundings" list of legitimate
  * candidates to fuzzy-match against (a sell's legitimate ids come from the
- * pilot's OWN cargo, which this function is not given and should not guess
- * from), and a wrong guess on a sell/withdraw is a worse outcome than one
+ * pilot's OWN cargo, which is consulted below only to ADMIT an id the
+ * planner already wrote, never to guess one), and a wrong guess on a sell/withdraw is a worse outcome than one
  * retry. The edit-distance suggestion is surfaced in the RETRY ERROR TEXT only
  * (nearestCatalogItemId, catalog.ts, the same algorithm executor.ts's buy-id
  * correction already uses) so a typo like 'fuel_cells' self-corrects on the
@@ -251,13 +253,25 @@ export function normalizePlanLocations(plan: Plan, surroundings: Surroundings): 
  * 'exotic_matter_sample' (no such id exists at all) has no near match and gets
  * a flat "copy the id" instruction instead of a guessed correction.
  *
- * Enumerated inputs: plan.steps only, no cached state -- the catalog it reads
- * against is the module-level singleton (catalog.ts), a static SSOT that does
- * not vary per replan the way surroundings does, so (unlike
- * normalizePlanLocations) this runs unconditionally, with no gathered-state
- * gate.
+ * Live state outranks the vendored catalog (#1152, AGENTS.md evidence
+ * precedence): an id in `liveItemIds` -- the pilot's own cargo and the docked
+ * market's rows, game-reported rather than planner-authored -- is real by
+ * construction, so a catalog miss there means the snapshot is stale, not that
+ * the id is invented. It is admitted and returned in `catalogDrift` so the
+ * caller can surface it. Without this, the planner copied 'rhodium_ore' from its
+ * cargo exactly as briefed, admission rejected it, and the retry text told it
+ * to copy from its cargo again. Receipt: refreshing the snapshot alone was
+ * rejected because the game ships items faster than we re-vendor (214 versions
+ * in four months).
+ *
+ * Enumerated inputs: plan.steps and `liveItemIds`, both arguments, no cached
+ * state -- the catalog it reads against is the module-level singleton
+ * (catalog.ts), a static SSOT that does not vary per replan the way
+ * surroundings does, so (unlike normalizePlanLocations) this runs
+ * unconditionally, with no gathered-state gate.
  */
-export function normalizePlanItems(plan: Plan): NormalizeResult {
+export function normalizePlanItems(plan: Plan, liveItemIds?: ReadonlySet<string>): NormalizeResult {
+  const catalogDrift = new Set<string>();
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i]!;
     const param = ITEM_PARAM_BY_ACTION[step.action];
@@ -270,6 +284,10 @@ export function normalizePlanItems(plan: Plan): NormalizeResult {
     // missing/non-string value here is a different step shape, not a bad id.
     if (typeof raw !== "string") continue;
     if (itemMeta(raw)) continue;
+    if (liveItemIds?.has(raw)) {
+      catalogDrift.add(raw);
+      continue;
+    }
 
     const suggestion = nearestCatalogItemId(raw);
     const hint = suggestion
@@ -290,7 +308,7 @@ export function normalizePlanItems(plan: Plan): NormalizeResult {
       error: `${step.action}.${param}: '${shown}' is not a catalog item id -- ${hint}`,
     };
   }
-  return { ok: true, plan, rewrites: [] };
+  return { ok: true, plan, rewrites: [], catalogDrift: [...catalogDrift] };
 }
 
 /**
@@ -315,7 +333,11 @@ export function normalizePlanItems(plan: Plan): NormalizeResult {
  * a location rewrite is visible in `plan` by the time normalizePlanItems
  * reads the same plan object.
  */
-export function admitPlan(plan: Plan, surroundings: Surroundings | undefined): NormalizeResult {
+export function admitPlan(
+  plan: Plan,
+  surroundings: Surroundings | undefined,
+  liveItemIds?: ReadonlySet<string>,
+): NormalizeResult {
   let rewrites: PlanRewrite[] = [];
   if (surroundings) {
     const loc = normalizePlanLocations(plan, surroundings);
@@ -323,9 +345,9 @@ export function admitPlan(plan: Plan, surroundings: Surroundings | undefined): N
     plan = loc.plan;
     rewrites = loc.rewrites;
   }
-  const items = normalizePlanItems(plan);
+  const items = normalizePlanItems(plan, liveItemIds);
   if (!items.ok) return items;
-  return { ok: true, plan, rewrites };
+  return { ok: true, plan, rewrites, catalogDrift: items.catalogDrift };
 }
 
 /** One pilot this harness runs: the agents.yaml `id` and the in-game `username`. */

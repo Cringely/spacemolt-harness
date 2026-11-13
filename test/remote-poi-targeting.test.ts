@@ -311,6 +311,31 @@ describe("digest: here vs elsewhere (#176)", () => {
     expect(text).toMatch(/never place a travel\{id\}.*AFTER a step that leaves this system/);
   });
 
+  // Cringely/spacemolt#1151: the leave-the-system rule above says "end the plan
+  // when you arrive", while the Known stations line says reaching a station is
+  // three steps. A literal model obeys the first and plans a bare travel_to
+  // (80 of 287 miner plans in 24h), paying one full replan per leg. A Known
+  // station's POI id is a receipt from a past dock, not an id guessed from the
+  // wrong system, so the rule must carve it out -- and only when one is listed.
+  test("a Known station's POI id is exempt from end-the-plan-on-arrival, so the whole trip is one plan", () => {
+    const withStation: PlanContext = {
+      ...ctx,
+      knownStations: [{
+        systemId: "factory_belt", stationPoiId: "factory_belt_manufacturing_hub",
+        station: "Factory Belt Manufacturing Hub", services: ["crafting"], lastSeen: 1,
+      }],
+    };
+    const text = buildDigest(withStation);
+    expect(text).toMatch(/end the plan when you arrive.*EXCEPT a Known station.*ONE plan/);
+    expect(text).toContain("travel{id=factory_belt_manufacturing_hub}");
+  });
+
+  test("with no Known station POI to cite, end-the-plan-on-arrival stands unqualified", () => {
+    expect(buildDigest(ctx)).not.toContain("EXCEPT a Known station");
+    const systemOnly: PlanContext = { ...ctx, knownStations: [{ systemId: "factory_belt", services: [], lastSeen: 1 }] };
+    expect(buildDigest(systemOnly)).not.toContain("EXCEPT a Known station");
+  });
+
   test("with no Nearby section, the scan rule tells the planner not to plan scan at all", () => {
     const text = buildDigest(ctx);
     expect(text).not.toContain("Nearby --");
