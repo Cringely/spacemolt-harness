@@ -1543,6 +1543,19 @@ describe("fuel availability line (D1)", () => {
     expect(line).not.toContain("EMPTY");
   });
 
+  test("low fuel at a stocked docked station: advisory does not claim refuel needs cargo cells (review #163)", () => {
+    // fuel.md:105-109 / travel.md:62: a docked refuel draws the station tank
+    // first, so "none aboard = refuel fails" contradicts the availability line.
+    const text = buildDigest(ctxOf({ lowFuel: true, surroundings: station(500) }));
+    expect(text).toContain("FUEL IS LOW");
+    expect(text).toContain("fills your tank");
+    expect(text).not.toMatch(/none aboard/i);
+    expect(text).not.toMatch(/FROM YOUR CARGO/);
+    expect(text).not.toMatch(/refuel fails/i);
+    // the exact-id guidance (#152) survives the reword
+    expect(text).toMatch(/buy id=fuel_cell/);
+  });
+
   test("full tank: states a refuel buys nothing and offers no refuel path", () => {
     const line = fuelLine(ctxOf({ tank: { fuel: 100, maxFuel: 100 }, surroundings: station(500) }))!;
     expect(line).toContain("FULL");

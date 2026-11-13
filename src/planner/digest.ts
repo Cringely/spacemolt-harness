@@ -338,8 +338,8 @@ export function buildDigest(ctx: PlanContext): string {
   // the correct id in front of the planner BEFORE it can guess from prose.
   if (ctx.lowFuel && FUEL_CELL_IDS_LINE) {
     lines.push(
-      `FUEL IS LOW. refuel consumes fuel cells FROM YOUR CARGO (none aboard = refuel fails). ` +
-      `Purchasable fuel items, EXACT catalog ids: ${FUEL_CELL_IDS_LINE}. ` +
+      `FUEL IS LOW. The Fuel availability line below states where a refuel can draw from. ` +
+      `If you need fuel cells (the station tank is dry or you are undocked), purchasable fuel items, EXACT catalog ids: ${FUEL_CELL_IDS_LINE}. ` +
       `Sequence: dock at a station selling them, buy the exact id (buy id=fuel_cell -- ` +
       `singular; 'fuel_cells' is NOT an item), then refuel.`
     );
