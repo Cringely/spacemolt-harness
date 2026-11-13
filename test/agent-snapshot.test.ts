@@ -41,7 +41,7 @@ describe("Agent.snapshot", () => {
     expect(snap.goal).toBeUndefined();
     expect(snap.plannerHealth).toEqual({
       stalled: false, usingFallback: false, claudeDisabled: false,
-      backoffUntil: 0, consecutiveTransientFailures: 0, stuck: false,
+      backoffUntil: 0, consecutiveTransientFailures: 0, stuck: false, budgetCappedUntil: 0,
     });
   });
 
@@ -105,7 +105,7 @@ describe("Agent.snapshot", () => {
       ["blockedReason", "goal", "goals", "id", "planState", "plannerHealth", "status", "stepIndex", "totalSteps"].sort(),
     );
     expect(Object.keys(snap.plannerHealth).sort()).toEqual(
-      ["backoffUntil", "claudeDisabled", "consecutiveTransientFailures", "stalled", "stuck", "usingFallback"].sort(),
+      ["backoffUntil", "budgetCappedUntil", "claudeDisabled", "consecutiveTransientFailures", "stalled", "stuck", "usingFallback"].sort(),
     );
   });
 

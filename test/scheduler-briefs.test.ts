@@ -6,9 +6,11 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { JOBS } from "../src/scheduler/jobs";
+import { JOBS, type JobDef } from "../src/scheduler/jobs";
+import { composePrompt } from "../src/scheduler/spawn";
 
 const root = join(import.meta.dir, "..");
+const job = (id: JobDef["id"]): JobDef => JOBS.find((j) => j.id === id)!;
 const docsPresent = existsSync(join(root, "docs", "charters"));
 
 // First non-empty line under `## Tier` — the charters' shape is "Model, effort — why".
@@ -53,20 +55,28 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
   });
 
   // Catches: a charter/brief's INSTRUCTIONS reintroducing a dead filing/report
-  // form (#114). Findings and reports now carry the body as a single-line
-  // `--body-b64` argv token; the `--body-file` outbox jail and the STDIN/heredoc
-  // form are both denied headless (no fleet tool could write the outbox file;
-  // the permission layer splits a Bash command on newlines). scheduler-spawn's
-  // work-order test runs the same STDIN/`<<` check on the spawn.ts template, but
-  // only sees stubbed strings — this pins the REAL charter/brief files, closing
-  // the seam-manifest entry-9 gap. Scoped to the instruction body: a
-  // `## CHANGELOG` may legitimately name the old forms as history, not instruction.
-  test("no charter/brief instructs a dead filing/report form (--body-file, STDIN, heredoc)", () => {
+  // form (#114). The STDIN/heredoc form is denied headless (the permission layer
+  // splits a Bash command on newlines), and so was the original outbox jail (no
+  // fleet tool could write the outbox file). The live form is `--body-file`
+  // pointing inside the job's own checkout at a file it wrote with the Write
+  // tool, so the flag itself is no longer a tell: the outbox is. A shell encoder
+  // (`printf ... | base64`) is the other banned form (injection, PR 171 review).
+  // scheduler-spawn's work-order test runs the same checks on the spawn.ts
+  // template, but only sees stubbed strings — this pins the REAL charter/brief
+  // files, closing the seam-manifest entry-9 gap. Scoped to the instruction body:
+  // a `## CHANGELOG` may legitimately name the old forms as history, not instruction.
+  test("no charter/brief instructs a dead filing/report form (outbox, STDIN, heredoc, shell encoder)", () => {
     for (const job of JOBS) {
       const instructions = readFileSync(join(root, job.charterPath), "utf8").split(/^## CHANGELOG/m)[0]!;
-      expect(instructions).not.toContain("--body-file");
+      expect(instructions).not.toContain("outbox");
       expect(instructions).not.toContain("STDIN");
       expect(instructions).not.toContain("<<");
+      expect(instructions).not.toContain("printf");
+      expect(instructions).not.toContain("| base64");
+      // The work order names the file flags, so an instruction body still
+      // teaching a base64 flag would contradict it (base64 flags still work,
+      // they are just no longer how a job is told to pass a body).
+      expect(instructions).not.toMatch(/--(body|text|semantic)-b64/);
     }
   });
 
@@ -100,5 +110,80 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
     const charter = readFileSync(join(root, strategy.charterPath), "utf8");
     expect(charter).toContain("bun scripts/strategy-store.ts steer");
     expect(charter).toContain("POST /api/store/:agentId/steer");
+  });
+
+  // Catches (Cringely/spacemolt#912, #956, #958, #962, #964, #970, #974, #979,
+  // #886, #1048, #1056): the stand-up citing a PR number it never looked up. The
+  // same fabricated triple (462/463/467) was filed as a "blocker" at least four
+  // times, and the tracker's own issues #88/#89/#91 were once read as PRs. The
+  // charter is inlined verbatim into the spawn, so these pins are the only thing
+  // standing between that text and a silent revert. Instruction body only: a
+  // CHANGELOG may name the rule as history.
+  describe("PR claims are verified before they are cited", () => {
+    const instructions = (path: string) =>
+      readFileSync(join(root, path), "utf8").split(/^## CHANGELOG/m)[0]!;
+
+    // The `-R` is load-bearing: the tracker repo shares number space with the
+    // code repo, so a bare `gh pr view 88` from the wrong cwd answers for the
+    // wrong repo (or not at all).
+    test("soc-monitor requires a same-cycle gh pr view against the harness repo, open state only", () => {
+      const c = instructions("docs/charters/soc-monitor.md");
+      expect(c).toMatch(/gh pr view <N> -R Cringely\/spacemolt-harness/);
+      expect(c).toMatch(/state.*`OPEN`/s);
+      expect(c).toMatch(/THIS cycle/);
+    });
+
+    // Catches (#886): a PR that merged or closed since the claim was made.
+    test("soc-monitor drops a claim whose PR is missing, merged or closed", () => {
+      const c = instructions("docs/charters/soc-monitor.md");
+      expect(c).toMatch(/`MERGED`|MERGED/);
+      expect(c).toMatch(/Could not resolve to a PullRequest/);
+    });
+
+    // Catches (#1048, #1056): GitHub computes mergeability lazily, so UNKNOWN is
+    // the never-queried population and must not be read as merge-ready.
+    test("soc-monitor does not treat mergeable UNKNOWN as merge-ready", () => {
+      const c = instructions("docs/charters/soc-monitor.md");
+      expect(c).toMatch(/UNKNOWN[^\n]*NOT merge-ready/);
+      expect(c).toContain("MERGEABLE");
+    });
+
+    // The council holds no gh pr grant (#490), so it cannot verify a PR and its
+    // brief must say to treat the number as a claim. Pairing the prose with the
+    // grant keeps them agreeing: if a gh pr grant is ever added, the sentence
+    // "you hold no gh pr grant" becomes false and this fails until the brief
+    // is rewritten to require the lookup instead.
+    test("council brief treats a PR number as an unverified claim and the job holds no gh pr grant", () => {
+      const b = instructions("docs/briefs/council-review.md");
+      expect(b).toMatch(/PR number[\s\S]{0,120}unverified claim/i);
+      expect(b).toMatch(/hold no `gh pr` grant/);
+      const council = JOBS.find((j) => j.id === "council")!;
+      expect(council.allowedTools.some((t) => t.startsWith("Bash(gh pr"))).toBe(false);
+    });
+  });
+
+  // Catches (#717, #1131, #1140, #1141, #1144): council's brief Triage step
+  // needs the previous report's date, and council had no command that could
+  // find its own report. Same L-39 shape as the stand-up test above.
+  test("council's brief names read-latest-report and the job holds the grant", () => {
+    const grant = "Bash(bun scripts/read-latest-report.ts *)";
+    expect(job("council").allowedTools).toContain(grant);
+    const prefix = grant.slice("Bash(".length, -" *)".length);
+    const brief = readFileSync(join(root, job("council").charterPath), "utf8");
+    expect(brief).toContain(`${prefix} --glob '*-council-review.md'`);
+    expect(job("council").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
+  });
+
+  // Catches: the council report being routed to a docs/council/ commit nobody
+  // can make (the job's PAT cannot push, #1130). The reports/ state dir is the
+  // record; neither the brief nor the work order may ask for a pickup.
+  test("council asks for no PM pickup or docs/council commit", () => {
+    const prompt = composePrompt(job("council"), { charterText: "x", stateNow: "y", cycleId: "council-1" });
+    expect(prompt).not.toContain("docs/council");
+    expect(prompt).not.toContain("pickup");
+    const brief = readFileSync(join(root, job("council").charterPath), "utf8");
+    const instructions = brief.split(/^## CHANGELOG/m)[0]!;
+    expect(instructions).not.toContain("docs/council");
+    expect(instructions).not.toContain("pickup");
   });
 });

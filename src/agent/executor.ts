@@ -4,7 +4,7 @@ import type { Plan, PlanStep } from "../registry/plan";
 import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { PlanCursor } from "../store/store";
 import { catalog, nearestCatalogItemId } from "../catalog/catalog";
-import { fuelUrgent } from "./reflex";
+import { fuelUrgent, fuelRemedyUnavailable } from "./reflex";
 
 // Invariant: resultText carries a short snippet (capped ~120 chars, see
 // snippet() below) of the game's human-readable `result` text on every
@@ -1167,8 +1167,7 @@ async function verifySellEffect(
 // conservative-suppression rule (#155), a guard that cannot fire beats a
 // guard that blocks profit: the lesson ships as the digest's advisory
 // net-profit verdict (digest.ts, interpolating net-trip.ts's constants) and
-// the improv briefing rule. estimateNetTrip (net-trip.ts) stays the model
-// SSOT, ready for wiring if a live-bid producer ever lands.
+// the improv briefing rule.
 
 /**
  * travel_to expands into repeated "jump" calls, one hop per tick, re-querying
@@ -1562,6 +1561,16 @@ function orderCreditBlock(
 }
 
 /**
+ * Plan actions the game has been seen to reject with in_battle (tracker
+ * Cringely/spacemolt#892, the 72h sample: distress_signal, jump, scan,
+ * travel_to). Evidence-bound on purpose, see the guard in executeTick. Shared
+ * with agent.ts so it only pays for the battle read on a step that could use it.
+ */
+export const IN_BATTLE_BLOCKED_ACTIONS: ReadonlySet<string> = new Set([
+  "distress_signal", "jump", "scan", "travel_to",
+]);
+
+/**
  * Runs exactly one game mutation and reports where the plan stands.
  *
  * `tickStatus` is this tick's status snapshot, already fetched by the caller
@@ -1597,7 +1606,7 @@ function orderCreditBlock(
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
   learnedSparse?: LearnedSparseRule[], buyOrderAlreadyOpen?: boolean,
-  fuelReserveConfig?: { keepFuelAboveJumps?: number; keepFuelAbovePct?: number },
+  fuelReserveConfig?: { keepFuelAboveJumps?: number; keepFuelAbovePct?: number; poiHasBase?: boolean },
   fuelPerJump?: number,
   // Issue #669: appended at the end (not slotted alongside buyOrderAlreadyOpen
   // above) so every existing positional call site -- dozens across test/ --
@@ -1610,6 +1619,15 @@ export async function executeTick(
   // Issue #705: appended at the end for the same reason -- every existing
   // positional call site keeps its argument list unaffected.
   selfDestructAuthorized?: boolean,
+  // Tracker Cringely/spacemolt#792: appended at the end for the same reason.
+  // Whole minutes left on the distress_signal cooldown, plain data computed in
+  // agent.ts (this file is store-free and clockless). Undefined or <= 0: no
+  // cooldown on record.
+  distressCooldownMinutes?: number,
+  // Tracker Cringely/spacemolt#892: appended at the end for the same reason.
+  // True when agent.ts holds a recent game-confirmed in_battle refusal for
+  // this pilot. Plain data: this file stays store-free and clockless.
+  inBattle?: boolean,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1650,6 +1668,101 @@ export async function executeTick(
   // classifyGameError catch the block at the call site.
   if (step.action === "undock" && preStatus && preStatus.docked === false) {
     return advance(plan, cursor, "already undocked; undock is a no-op");
+  }
+
+  // Full-tank refuel guard (tracker Cringely/spacemolt#995/#848/#888/#938, 99
+  // + 87 wasted calls per 72h fleet-wide, every one answered "tank_full: Fuel
+  // tank is already full (130/130). No refueling needed."). Invariant: a tank
+  // refill is never SUBMITTED against a tank this tick's own status reads as
+  // full. Same shape as the undock guard above, and for the same reason it
+  // ADVANCES instead of blocking: a refill that is already satisfied is a
+  // done step, not a failure, and a blocked wake would buy a planner call to
+  // be told so. The resultText is the prose the action event carries.
+  //
+  // `target` (ship-to-ship transfer, or "fleet" status read) is not a refill
+  // of THIS tank, so any target keeps the guard out. maxFuel > 0 is the
+  // known-reading test: status() defaults a missing ship.fuel/max_fuel to 0/0,
+  // and 0 >= 0 must not read as "full". Fail-open like every guard here: no
+  // preStatus, no verdict.
+  if (
+    step.action === "refuel" && preStatus && preStatus.maxFuel > 0 && preStatus.fuel >= preStatus.maxFuel &&
+    !(step.params as { target?: unknown }).target
+  ) {
+    return advance(
+      plan, cursor,
+      `fuel tank already full (${preStatus.fuel}/${preStatus.maxFuel}); refuel is a no-op, moving on`,
+    );
+  }
+
+  // Espionage membership guard (tracker Cringely/spacemolt#1004: the miner
+  // planned espionage twice in 72h, answered "You must be in a faction to
+  // conduct espionage"). Invariant: espionage is never SUBMITTED by a pilot
+  // whose status says it belongs to no faction. espionage.md opens "All of
+  // these are faction systems: they require membership in a faction", and
+  // spacemolt_faction has no registered join/create action (see the
+  // faction-routed craft note above craftDepositBlock), so the precondition
+  // cannot become true inside a plan: a block, not an advance, and the reason
+  // says to change goal rather than name a remedy that does not exist.
+  //
+  // The reason is quoted by the digest through clipUntrusted at
+  // UNTRUSTED_TEXT_SNIPPET_LEN (200), so the steer must sit inside that cap
+  // (pinned in test/executor-noop-admission.test.ts).
+  //
+  // Fires on factionId === null only. undefined is UNKNOWN (client.ts: no
+  // parsed player block, or a faction_id of an unexpected type) and falls
+  // through to the game, as every guard here fails open. Membership is the
+  // half this can check for free; the Espionage HQ facility half stays with
+  // the game's own refusal.
+  if (step.action === "espionage" && preStatus?.factionId === null) {
+    return guardBlock(
+      "espionage refused: you are in no faction, and espionage needs membership plus a faction-built " +
+      "Espionage HQ. A plan cannot join one, so choose a goal that does not depend on it.",
+    );
+  }
+
+  // in_battle guard (tracker Cringely/spacemolt#892: 26 corsair actions in
+  // 72h rejected with "in_battle: cannot perform this action while in combat.
+  // Use the battle command to fight or flee."). Invariant: an action the game
+  // has been seen to reject with in_battle is not SUBMITTED while that
+  // rejection is still fresh. get_status carries no battle flag, so `inBattle`
+  // is the pilot's own recent refusal, windowed in agent.ts (see
+  // inBattleRecently there).
+  //
+  // The set is exactly the four the tracker evidence names, not "every
+  // non-combat action": the game does not publish the full blocked list
+  // (use_item and reload are documented as working mid-battle), and a guess
+  // wider than the evidence would refuse something that works. attack and the
+  // other combat actions are never here, since they are how a battle ends.
+  // Reason length: the steer ("fight or wait it out") must sit inside the
+  // digest's 200-char clip, longest action name included (test pins it).
+  if (inBattle && IN_BATTLE_BLOCKED_ACTIONS.has(step.action)) {
+    return guardBlock(
+      `${step.action} refused: a battle is under way (the game recently rejected an action with in_battle). ` +
+      `Movement, scanning and distress calls stay blocked until it ends, so fight or wait it out.`,
+    );
+  }
+
+  // distress_signal cooldown guard (tracker Cringely/spacemolt#792: 43 corsair
+  // + 24 scout failed retries in one window, answered "cooldown: Distress
+  // signal on cooldown. Try again in Nm0s." or "already_active"). Invariant: a
+  // distress_signal is never SUBMITTED inside the one-hour cooldown that
+  // follows this pilot's own last one (missions.md:70, "one active distress
+  // signal at a time, a 1-hour cooldown between calls"). get_status carries no
+  // distress flag, so the only source is the pilot's own history, which
+  // agent.ts reduces to a minutes-left number (distressCooldownMinutes).
+  //
+  // Scope on purpose: the documented 1-hour cooldown only. An active signal
+  // can outlive it (its missions expire in 3 hours), and past the hour the
+  // call goes to the game once more and learns already_active there, because
+  // blocking on a guessed 3-hour life would refuse a re-broadcast after an
+  // early rescue. A block, with the wait in prose: the planner should spend
+  // its steps on something else, not on this call.
+  if (step.action === "distress_signal" && distressCooldownMinutes !== undefined && distressCooldownMinutes > 0) {
+    return guardBlock(
+      `distress_signal refused: your last one went out within the past hour and the game allows one ` +
+      `every 60 minutes, with about ${distressCooldownMinutes} minutes left. Spend the wait on other ` +
+      `income or on moving toward fuel.`,
+    );
   }
 
   // accept_mission precondition guard (live diagnosis 2026-07-12): the pilot
@@ -1741,7 +1854,16 @@ export async function executeTick(
     fuelUrgent(
       preStatus.fuel, preStatus.maxFuel, fuelPerJump,
       fuelReserveConfig?.keepFuelAboveJumps, fuelReserveConfig?.keepFuelAbovePct,
-    )
+    ) &&
+    // #1068: a ship at 0 fuel with no cell has no remedy for this block to
+    // steer toward, so at a POI with a base mining (then dock and sell) is its
+    // only way out -- admit. Scoped to a base POI on purpose: with no base the
+    // ore cannot be sold without moving, and an admitted mine returns
+    // `continue`, which resets agent.ts's fuelBlockedMoves so isStranded
+    // (stall-monitor.ts) never reaches its threshold and the distress/alert
+    // ladder goes silent. Blocking there keeps the #690 strand evidence
+    // accruing. poiHasBase unset reads false: fail toward the strand ladder.
+    !(fuelReserveConfig?.poiHasBase && fuelRemedyUnavailable(preStatus))
   ) {
     const reason =
       `fuel ${preStatus.fuel}/${preStatus.maxFuel} is at or below the configured reserve floor -- ` +

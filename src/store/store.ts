@@ -64,9 +64,15 @@ export class Store {
     return row.id;
   }
 
+  // SCHEMA TOLERANCE (AGENTS.md, Cringely/spacemolt#540): every events reader
+  // below filters `json_valid(payload)` in SQL, so a half-written payload is
+  // discarded as that one row (and a LIMIT still counts only readable rows)
+  // instead of throwing out of JSON.parse, or out of json_extract in
+  // latestEventPerPayloadKey. A NULL payload is dropped too; appendEvent never
+  // writes one. dockTrail and lastMeasuredFuelPerJump carry the same predicate.
   recentEvents(agentId: string, limit: number): Array<AgentEvent & { id: number }> {
     const rows = this.db
-      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? ORDER BY id DESC LIMIT ?")
+      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND json_valid(payload) ORDER BY id DESC LIMIT ?")
       .all(agentId, limit) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
     return rows.reverse().map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
@@ -83,7 +89,7 @@ export class Store {
    */
   eventsSince(agentId: string, cutoffTs: number): Array<AgentEvent & { id: number }> {
     const rows = this.db
-      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND ts >= ? ORDER BY id ASC")
+      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND ts >= ? AND json_valid(payload) ORDER BY id ASC")
       .all(agentId, cutoffTs) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
     return rows.map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
@@ -117,7 +123,7 @@ export class Store {
    */
   recentEventsByType(agentId: string, type: string, limit: number): Array<AgentEvent & { id: number }> {
     const rows = this.db
-      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND type = ? ORDER BY id DESC LIMIT ?")
+      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND type = ? AND json_valid(payload) ORDER BY id DESC LIMIT ?")
       .all(agentId, type, limit) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
     return rows.reverse().map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
@@ -137,7 +143,7 @@ export class Store {
    */
   eventsByTypeSince(agentId: string, type: string, cutoffTs: number): Array<AgentEvent & { id: number }> {
     const rows = this.db
-      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND type = ? AND ts >= ? ORDER BY id ASC")
+      .query("SELECT id, agent_id, ts, type, payload FROM events WHERE agent_id = ? AND type = ? AND ts >= ? AND json_valid(payload) ORDER BY id ASC")
       .all(agentId, type, cutoffTs) as Array<{ id: number; agent_id: string; ts: number; type: string; payload: string }>;
     return rows.map((r) => ({
       id: r.id, agentId: r.agent_id, ts: r.ts, type: r.type, payload: JSON.parse(r.payload),
@@ -187,7 +193,8 @@ export class Store {
   ): Array<AgentEvent & { id: number }> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid payload key: ${key}`);
     const grouped = `SELECT id, agent_id, ts, type, payload FROM events
-              WHERE agent_id = ? AND type = ? AND json_extract(payload, '$.${key}') IS NOT NULL
+              WHERE agent_id = ? AND type = ? AND json_valid(payload)
+                AND json_extract(payload, '$.${key}') IS NOT NULL
               GROUP BY json_extract(payload, '$.${key}')
               HAVING id = MAX(id)`;
     const params: Array<string | number> = [agentId, type];
@@ -350,6 +357,13 @@ export class Store {
       .query(`INSERT INTO plans (agent_id, plan, step, iteration, goals) VALUES (?, ?, 0, 0, ?)
               ON CONFLICT(agent_id) DO UPDATE SET plan = excluded.plan, step = 0, iteration = 0, goals = excluded.goals`)
       .run(agentId, JSON.stringify(plan), JSON.stringify(goals));
+  }
+
+  // Goals only, cursor and plan untouched. savePlan resets the cursor to step
+  // 0, which would re-run a half-finished plan; a retired steer must reach the
+  // row without that side effect. A no-op when no plan row exists.
+  saveGoals(agentId: string, goals: string[]): void {
+    this.db.query("UPDATE plans SET goals = ? WHERE agent_id = ?").run(JSON.stringify(goals), agentId);
   }
 
   saveCursor(agentId: string, cursor: PlanCursor): void {

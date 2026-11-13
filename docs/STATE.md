@@ -5,19 +5,55 @@
 > **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
 
 
-**Last updated:** 2026-09-24, doc-steward pass reconciling wave-5 cluster PRs #137-#147 (tracker #1115/#1114/#1116/#1135/#1136/#1133 closed). Primary repo: github.com/Cringely/spacemolt-harness
+**Last updated:** 2026-09-24, doc-steward pass reconciling PRs #149-#150 (spec fix + githooks). Primary repo: github.com/Cringely/spacemolt-harness
 
 ## NOW, live status
 
-_Refreshed 2026-09-24 (fifth pass, cluster #137-#147). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+_Refreshed 2026-11-13 (seventh pass, cluster #151-#176). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
 
-**SEVEN PRs MERGED, SIX TRACKER ISSUES CLOSED.** #137 (`b53dffc`): four core-managed hooks synced, pilot code untouched. #140 (`1f666a3`) closes #1115: an affordability refuel give-up clears once credits rise above the balance recorded at the failure. A dry-station give-up still latches (#672 intact). Legacy rows classify from their stored message. #142 (`af3e309`) closes #1114: each briefing carries a bounded distress fact for any fleet-mate under a 20-credit refuel floor, naming a credits gift in prose, never a filled-in command (zero-fuel trigger dropped: a gift cannot fix credits-but-no-fuel). #139 (`045d765`) closes #1116: the buy-guard refusal names `create_buy_order` in prose, template removed. A docked pilot refused an overpriced `fuel_cell` is steered to `refuel` when the station reports reserve fuel. #143 (`b985d59`) closes #1135: the weekly backlog dedupe ceremony, built to the merged spec, shipped GATED OFF (`gates.json` `dedupePosting`, default off, fails closed). Review removed a file-finding grant that let a gated-off run write to the tracker. #141 (`fefe4d9`) closes #1136: the scheduled doc-steward ceremony stands down while a dispatched steward PR covers the same merges, 24-hour bound, fork PRs ignored. #147 (`3cfa929`) closes #1133: after every minted-key tier misses, `fileFinding` bumps an open issue whose title matches (the ceremony's `isNearDuplicateTitle`), with a filer-only veto on titles naming a different pilot, game action or scheduler job. An unreadable backlog falls back to create. Replay, 2026-09-22 snapshot: 28 of 306 duplicates bumped, zero cross-pilot, cross-action or cross-job. Ceremonies filed #1137, #1138 (titled P0, labelled P2: strategy-review ceremony crashes on a zod v4 mismatch, 7+ duplicate filings) and #1139. #1134 (flaky Windows scheduler tests, P2) open. See L-59.
+**DEPLOY STATE, PM live capture 2026-11-13T16:41Z (not verifiable from the repo).** Production runs `dbcf18f` (PR #176's merge commit), healthy, provenance verified. Everything merged through #176 is deployed. #171 (`7c0850b`) merged at 16:46Z, after the capture, and deploys on the next publish.
+
+**AUTO-DEPLOY INCIDENT, FIXED BY #176.** Auto-deploy skipped every image from `f911c8a` onward. GitHub's `ubuntu-latest` runner moved from 24.04 to 26.04 under an unchanged workflow, `docker build` there pushed an OCI image index (a wrapper around several manifests) in place of a single manifest, and the host deployer could not map the tag to a sha7, so it refused and production stayed on `c3bfee3`. #176 pins the publish job to `ubuntu-24.04` and builds with `--provenance=false --sbom=false`. See [L-60](wiki/engineering-lessons.md#l-60--a-floating-runner-label-is-an-input-nobody-reviewed).
+
+**TWENTY-FOUR PRs MERGED 2026-11-13** (#151, #154-#176). The open-PR list is empty.
+
+- CI and tooling: #156 (openapi fixture regenerated, zod 3 to 4.6.6 for GHSA-mrhx-c7xc-m3w5), #154, #155, #168.
+- Scheduler: #158 (closed job tool set, secrets paths denied, #865), #160 (locked deps installed per job worktree), #162 (strategy-store gate exits 2 on a crash, #1139/#1143), #172 (charters verify a PR before citing it), #171 (long bodies passed as a file, council reads its own reports).
+- Pilot: #159, #161, #163, #164 (#1068), #165 (catalog snapshot 0.493.0 to 0.707.0), #166 (battle status, retreat, stance registered), #167 (#540), #169 (four no-op calls refused before the game), #170 (newer steer supersedes older unpinned ones, #535), #173 (#1150), #174 (#1151), #175 (#1152).
+- Decisions: #157 accepts the scheduler footprint. Fix-agent dispatch (gate D1) stays off until a named condition, pending operator ratification (#1034).
+
+**TRACKER.** 517 open at the previous pass (PR #151), 238 open at this one (live count 2026-11-13).
+
+**UNPROVEN LIVE.** All of these are offline-tested only:
+
+- the corsair unfreeze after a battle ends (#1150, PR #173)
+- the miner plan-cap fix (#1151, PR #174)
+- live ids outranking the vendored catalog, and the refresh script (#1152, PR #175)
+- the refuel, espionage, in_battle and distress guards (PR #169)
+- the steer lifecycle (PR #170)
+- the scheduler body-file path and council report-reading (PR #171). Its 16 tracker issues stay open until the first live ceremony cycle confirms them.
+
+Carried from the previous pass, still without a live signal recorded here: #1115, #1114, #1116, #1133, #1136.
+
+**BACKLOG:** `docs/backlog.md` was NOT regenerated this pass and still lists the 517-issue backlog. `scripts/gen-backlog.py` refuses a count below half the last one, and 238 is below 258.
+
+**Next:** the live signals above, starting with the first ceremony cycle on #171. Dedupe standing report #1142 is still open. PR #176 leaves two follow-ups: unpin the runner once a newer image is confirmed to push a single manifest, and an operator decision on patching the host deployer to read an index. F4 (3 pilots/24h/zero strands, steer confirmed) stays open (#591).
+
+## Recent history, 2026-09-24 sixth pass (cluster #137-#150)
+
+Moved out of `## NOW` on 2026-11-13 (seventh pass) to fit the 500-word cap. Superseded only where the block above says so. Extracted verbatim from `origin/main`'s pre-11-13 `docs/STATE.md`.
+
+_Refreshed 2026-09-24 (sixth pass, cluster #137-#150). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+
+**ELEVEN PRs MERGED THIS CLUSTER:** wave-5 (#137-#147, six tracker issues closed: #1115/#1114/#1116/#1135/#1136/#1133), plus wave-6 docs/tests (#149 dedupe spec fix, #150 githooks pre-commit propagation). See recent history for wave-5 detail.
 
 **DEDUPE LIVE since 2026-09-24.** PM dry run 2026-09-23 (gate off, no model pass): 514 open, 27 clusters/36 members, 20 high-tier proposals (the per-run budget), 16 deferred. Spot check of 12: 11 the same defect, one pairing two different jobs' failure alarms. On the operator's go-ahead: labels created, `dedupePosting` on, first live run labelled 20 issues `dedupe:candidate` and opened standing report #1142.
 
 **LIVE PROOF: NONE YET.** Signals: a latched pilot refuelling itself once credits arrive (#1115), a solvent pilot gifting a rescue unprompted (#1114), zero guard-sourced buy orders (#1116), fewer new duplicate clusters per week (#1133), a week with at most one steward PR per merge cluster (#1136).
 
 **DEPLOY STATE, PM capture 2026-09-24T05:55Z (not verifiable from the repo).** Prod pilot container healthy on image `fefe4d9`, started 2026-09-24T00:06Z, carrying #137 through #141. #147 (`3cfa929`) merged after the capture, not yet auto-deployed. Scheduler code runs on the scheduler host, which pulls main on its own cadence. Nothing in the capture shows pilot behaviour.
+
+**WAVE-6 DETAIL:** #149 removed an unimplementable sm-dedup: skip rule from the dedupe spec (Matching section incorrectly claimed all sm-dedup:-marked issues get skipped; sm-dedup: is the filer's mint-time marker on every machine-filed issue, not an idempotence flag; the real per-pairing gate is sm-dupe-cluster:, already correctly stated in Idempotence). #150 fixed a pre-commit hook propagation gap: .githooks/pre-commit was discarding the chained .claude/hooks/pre-commit's exit code, so identity-gate refusals never reached git; added `|| exit 1` and end-to-end tests.
 
 **SUPERSEDED by this pass:** five scheduler-ceremony steward PRs (#136, #138, #144, #145, #146) sat open at once, the #1136 defect reproducing live while its fix was in review.
 

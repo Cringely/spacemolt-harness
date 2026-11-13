@@ -38,20 +38,17 @@
 //       not a per-trip marginal fee; modeling it per-trip would double-count
 //       a cost the weekly cycle already owns.
 //
-// The estimator is a PURE function of explicit inputs and fails OPEN the #94
-// way: any missing number makes the estimate UNKNOWN (`known: false`, naming
-// what was missing) -- never a guessed verdict.
-//
 // CONSUMER STATUS (PR #361 review, REVISE): the digest's net-profit verdict
-// interpolates the constants below; no production code calls estimateNetTrip
-// yet. The first cut wired it into an executor travel_to guard priced at
-// catalog base_value -- rejected in review because catalog value does not
-// BOUND revenue in a player-driven market (markets.md:3,7: no global fixed
-// price; station price gaps are the arbitrage profession), so the "provably
-// lossy" premise failed and the guard could block profit (#155, conservative
-// suppression). The function stays as the fee-model SSOT, unit-tested, for a
-// caller that can feed it a KNOWN revenue number (a live destination bid, if
-// a producer for one ever lands).
+// interpolates the constants below. The first cut also had an estimateNetTrip
+// function wired into an executor travel_to guard priced at catalog
+// base_value -- rejected in review because catalog value does not BOUND
+// revenue in a player-driven market (markets.md:3,7: no global fixed price;
+// station price gaps are the arbitrage profession), so the "provably lossy"
+// premise failed and the guard could block profit (#155, conservative
+// suppression). The function then sat with no production caller and was
+// deleted (Cringely/spacemolt#753); only the constants have a live consumer.
+// A future guard needs a KNOWN revenue number (a live destination bid) and
+// can rebuild the arithmetic from the fee model above.
 
 /**
  * Cheapest possible credits-per-fuel-unit anywhere in the game: station fuel
@@ -65,63 +62,3 @@ export const FUEL_PRICE_FLOOR_CR = 2;
 
 /** The exchange's 1% listing fee, book-resting portion only (markets.md:35). */
 export const LISTING_FEE_BPS = 100;
-
-/** One sale leg: an expected fill at a known per-unit price. */
-export interface NetTripSale {
-  /** Credits per unit -- a real bid (view_market) or the catalog base_value. */
-  pricePerUnitCr?: number;
-  quantity?: number;
-}
-
-export interface NetTripInput {
-  /** Sales expected at the destination (bid x qty per markets.md:21,150). */
-  sales?: NetTripSale[];
-  /** Mission payout collected by the trip, when that is the revenue. */
-  missionPayoutCr?: number;
-  /** Fuel UNITS across every leg being judged (find_route, travel.md:28). */
-  fuelUnits?: number;
-  /** Credits per fuel unit (fuel.md:115-120 bands; FUEL_PRICE_FLOOR_CR is the floor). */
-  fuelPricePerUnitCr?: number;
-  /** Order value that will REST on the book, if listing instead of instant-selling. */
-  listedValueCr?: number;
-}
-
-export type NetTripEstimate =
-  /** A number was missing -- no verdict, never a guess (#94). */
-  | { known: false; missing: string[] }
-  | { known: true; netCr: number; revenueCr: number; fuelCostCr: number; listingFeeCr: number };
-
-/**
- * Expected revenue MINUS trip cost, or UNKNOWN when any input is missing.
- * Pure -- no queries, no catalog reads; the caller owns sourcing the numbers.
- * The listing fee rounds DOWN (rounding is uncaptured upstream; flooring keeps
- * the whole estimate a lower bound on cost when the caller feeds floor inputs,
- * so a negative verdict stays safe under either rounding).
- */
-export function estimateNetTrip(input: NetTripInput): NetTripEstimate {
-  const missing: string[] = [];
-  const sales = input.sales ?? [];
-  if (!sales.length && input.missionPayoutCr === undefined) {
-    missing.push("revenue (no sales, no missionPayoutCr)");
-  }
-  sales.forEach((s, i) => {
-    if (s.pricePerUnitCr === undefined) missing.push(`sales[${i}].pricePerUnitCr`);
-    if (s.quantity === undefined) missing.push(`sales[${i}].quantity`);
-  });
-  if (input.fuelUnits === undefined) missing.push("fuelUnits");
-  if (input.fuelPricePerUnitCr === undefined) missing.push("fuelPricePerUnitCr");
-  if (missing.length) return { known: false, missing };
-
-  const revenueCr =
-    sales.reduce((sum, s) => sum + s.pricePerUnitCr! * s.quantity!, 0) +
-    (input.missionPayoutCr ?? 0);
-  const fuelCostCr = input.fuelUnits! * input.fuelPricePerUnitCr!;
-  const listingFeeCr = Math.floor(((input.listedValueCr ?? 0) * LISTING_FEE_BPS) / 10000);
-  return {
-    known: true,
-    netCr: revenueCr - fuelCostCr - listingFeeCr,
-    revenueCr,
-    fuelCostCr,
-    listingFeeCr,
-  };
-}

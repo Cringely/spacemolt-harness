@@ -24,6 +24,15 @@ export interface StatusSnapshot {
   // fail OPEN, which is what the guard's `!preStatus.creditsKnown` does. Same
   // "optional, additive" reasoning as systemId/stats above.
   creditsKnown?: boolean;
+  // Tracker Cringely/spacemolt#1004. The pilot's faction, three-valued like
+  // creditsKnown: a string is the faction id, null means the player block
+  // parsed and carries no faction (the live capture,
+  // test/fixtures/spacemolt-probe-2026-07-12.json, omits the key for an
+  // unaffiliated pilot), undefined means UNKNOWN (no parsed player block, or a
+  // faction_id of an unexpected type). The espionage guard refuses on null
+  // only. Set by status() below; parseStatusText (the MCP improv driver, which
+  // never runs executeTick) leaves it undefined.
+  factionId?: string | null;
   fuel: number;
   maxFuel: number;
   hull: number;
@@ -271,12 +280,18 @@ export interface CurrentPoiInfo {
 // when the cell is blank (no bid); buyQty is the bid's demand. A held item
 // is sellable at this station iff bestBuy is present AND buyQty > 0 — the
 // digest's market check (planner/digest.ts) keys the sell precondition on
-// exactly that. best_sell/spread/sell_qty/item_name are real columns with no
-// consumer yet, so they stay unparsed (no dead data, per CurrentPoiInfo).
+// exactly that. best_sell/spread/item_name are real columns with no consumer
+// yet, so they stay unparsed (no dead data, per CurrentPoiInfo). sell_qty now
+// has one: the standing-bid section (planner/digest.ts) needs "is anyone
+// selling this item here" (Cringely/spacemolt#918, #1013).
 export interface MarketRow {
   itemId: string;
   bestBuy?: number; // cr/unit the market pays you; undefined = no standing bid
   buyQty: number;   // units the market stands ready to buy
+  // Units offered on the ask side (the captured sell_qty column; 0 for a row
+  // with a blank best_sell). undefined = the listing carried no sell_qty
+  // column, which is UNKNOWN, never "no sellers" (#94).
+  sellQty?: number;
 }
 
 // Mission-progress bridge (issue #291): one active mission's structured facts,
@@ -700,6 +715,9 @@ const StatusSchema = z.object({
     // numeric entries, so a shape surprise degrades one counter, never the
     // whole get_status parse.
     stats: z.record(z.string(), z.unknown()).optional(),
+    // z.unknown, not z.string: a null or odd-typed faction_id must degrade to
+    // UNKNOWN in status() below, never fail the whole get_status parse.
+    faction_id: z.unknown(),
   }).partial().default({}),
   location: z.object({
     docked_at: z.string().nullable(),
@@ -858,7 +876,7 @@ const ActiveMissionObjectiveSchema = z.object({
 // array, which degraded every mission's id/objectives/progress to undefined
 // for the tick -- the exact dangling state #931's fix above depends on
 // staying rare. `.catch()` contains a field's own parse failure to that
-// field alone (verified on this repo's pinned zod 3.25.76: a divergent
+// field alone (verified on zod 3.25.76, re-verified on the pinned 4.6.7: a divergent
 // `credits` value yields a rewards object missing only `credits`, `skill_xp`
 // and the rest of the mission parse normally) -- a cosmetic display value
 // must not be able to blank the one sanctioned mission_id source.
@@ -1054,6 +1072,14 @@ export class SpacemoltClient implements GameApi {
       // arrives here as undefined and is indistinguishable from a real zero
       // balance in `credits`.
       creditsKnown: typeof s.player.credits === "number",
+      // Absent/null/"" is "no faction" only when the player block demonstrably
+      // parsed (credits present, the same test as creditsKnown); a non-string
+      // value is UNKNOWN, not a verdict.
+      factionId: typeof s.player.faction_id === "string" && s.player.faction_id !== ""
+        ? s.player.faction_id
+        : typeof s.player.credits === "number" && (s.player.faction_id == null || s.player.faction_id === "")
+          ? null
+          : undefined,
       fuel: s.ship.fuel ?? 0, maxFuel: s.ship.max_fuel ?? 0,
       hull: s.ship.hull ?? 0, maxHull: s.ship.max_hull ?? 0,
       cargoUsed: s.ship.cargo_used ?? 0, cargoCapacity: s.ship.cargo_capacity ?? 0,

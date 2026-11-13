@@ -641,8 +641,9 @@
   const seeded    = new Set(); // agent ids whose history has been pulled once
   // Recency of throttle/no-progress ALERT events per agent, tracked from the
   // same event stream the feed consumes. plannerHealth.stuck (from the polled
-  // snapshot) is the primary STUCK signal; plan_budget_exceeded has no sticky
-  // snapshot flag, so its THROTTLED state is derived from event recency here.
+  // snapshot) is the primary STUCK signal. THROTTLED reads the snapshot's
+  // backoffUntil / budgetCappedUntil, with event recency as a fast path for the
+  // gap before the next poll (plan_budget_exceeded fires once per episode).
   const alertsById = new Map(); // id -> { throttledAt?, noProgressAt? }
   const RECENT_ALERT_MS = 30 * 60 * 1000;
   let order = [];              // stable agent id order (first-seen)
@@ -883,6 +884,7 @@
     const al = alertsById.get(a.id) || {};
     const stuck = !!h.stuck || (al.noProgressAt && now - al.noProgressAt < RECENT_ALERT_MS);
     const throttled = (h.backoffUntil && h.backoffUntil > now) ||
+      (h.budgetCappedUntil && h.budgetCappedUntil > now) ||
       (al.throttledAt && now - al.throttledAt < RECENT_ALERT_MS);
     if (stuck) {
       return '<div class="alert-banner stuck"><span class="tag">Stuck</span>' +

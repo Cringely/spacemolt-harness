@@ -84,6 +84,17 @@ function phraseIn(text: string, phrase: string): boolean {
   return ` ${text} `.includes(` ${phrase} `);
 }
 
+/**
+ * Goals that literally name `action` (a registry id such as "self_destruct"),
+ * token-bounded and punctuation-blind: "self-destruct the ship" and
+ * "self_destruct" both match. Used to find the operator steer a one-shot
+ * action just spent (Cringely/spacemolt#542).
+ */
+export function goalsNamingAction(goals: string[], action: string): string[] {
+  const phrase = normalize(action);
+  return phrase ? goals.filter((g) => phraseIn(normalize(g), phrase)) : [];
+}
+
 export interface GoalPurchaseMatches {
   /**
    * Items the goals literally name, capped at MAX_CANDIDATES. Exact hits win
@@ -121,6 +132,12 @@ export function goalPurchaseCandidates(goals: string[], items: ItemMeta[] = cata
   const exact: Hit[] = [];
   const family: Hit[] = [];
   for (const item of items) {
+    // Catalog 0.707.0 added `fuel` (tradeable:false), the ship's fuel resource,
+    // not a purchasable item. Its one-word name token-matches any goal that says
+    // "fuel" ("buy fuel_cell") and burned a MAX_CANDIDATES slot on an
+    // estimate_purchase that can never succeed. Only an explicit false skips an
+    // item: modules and ships carry no tradeable field and stay candidates.
+    if (item.tradeable === false) continue;
     const name = item.name ? normalize(item.name) : "";
     const id = normalize(item.id);
     const g = name ? firstGoal(name) : -1;

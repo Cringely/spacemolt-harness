@@ -1,4 +1,4 @@
-import { REGISTRY } from "../registry/actions";
+import { BATTLE_STANCES, REGISTRY } from "../registry/actions";
 import { describeParamsShape } from "../registry/params-shape";
 import { isNoBuyersBlock } from "../agent/wake";
 import { JETTISON_VALUE_FLOOR, SPARSE_LOCK_MULTIPLIER, canLockDeposit, totalMiningPower } from "../agent/executor";
@@ -106,8 +106,9 @@ function clipStringsDeep<T>(value: T, maxLen: number): T {
  *
  * Three shaping passes run BEFORE the backstop, because the backstop cannot know
  * them:
- *   1. marketRows -> only the held-item rows, the only rows the digest renders
- *      (renderMarketCheck); the raw listing runs ~482 rows, ~20x the event.
+ *   1. marketRows -> only the held-item rows and the rows of items with a bid at
+ *      this station, the only rows the digest renders (renderMarketCheck,
+ *      renderStandingBids); the raw listing runs ~482 rows, ~20x the event.
  *   2. chat sender/text -> the TIGHTER UNTRUSTED_TEXT_SNIPPET_LEN (200), which is
  *      what the digest quotes chat at. The backstop's 1500 is a ceiling, not a
  *      licence to store more than the planner saw.
@@ -127,7 +128,13 @@ function clipStringsDeep<T>(value: T, maxLen: number): T {
  * untrusted seam's persisted text must appear verbatim in the digest.
  */
 export function clipPlanContext(ctx: PlanContext): PlanContext {
-  const heldIds = new Set((ctx.cargo?.items ?? []).map((i) => i.itemId));
+  // Rows the digest reads: held items (renderMarketCheck) and the item of a bid
+  // at THIS station (renderStandingBids' seller clause, which ignores bids
+  // elsewhere).
+  const heldIds = new Set([
+    ...(ctx.cargo?.items ?? []).map((i) => i.itemId),
+    ...(ctx.openBuyOrders ?? []).filter((o) => o.here).map((o) => o.itemId),
+  ]);
   const shaped: PlanContext = {
     ...ctx,
     wake:
@@ -168,11 +175,15 @@ const TRAVEL_TO_VOCAB = "travel_to(system_id:string) -- expands into jump hops v
 // receipt as ACTION_VOCAB above (simplicity rule 5): the sole input is the
 // vendored-catalog singleton, provably immutable for the process lifetime.
 // Cheapest first so a broke pilot sees the affordable option up front.
-const FUEL_CELL_IDS_LINE = catalog.items()
-  .filter((i) => i.category === "consumable" && i.id.includes("fuel_cell"))
+const FUEL_CELL_ITEMS = catalog.items()
+  .filter((i) => i.category === "consumable" && i.id.includes("fuel_cell"));
+const FUEL_CELL_IDS_LINE = [...FUEL_CELL_ITEMS]
   .sort((a, b) => (a.base_value ?? Number.MAX_SAFE_INTEGER) - (b.base_value ?? Number.MAX_SAFE_INTEGER))
   .map((i) => (i.base_value != null ? `${i.id} (~${i.base_value}cr)` : i.id))
   .join(", ");
+// Same catalog singleton, same immutability receipt: the ids a refuel can crack
+// from cargo (fuel.md:109), for renderFuelAvailability's cells-aboard count.
+const FUEL_CELL_ID_SET = new Set(FUEL_CELL_ITEMS.map((i) => i.id));
 
 // Ore-value signal (issue #366): the catalog's value RANGE for ore, so the
 // deposit check's value advisory can say what "cheap" and "rich" mean in this
@@ -200,8 +211,8 @@ const ORE_VALUE_SCALE = VALUED_ORES.length
  * currentPoiDeposits, nearbyText,
  * lowFuel, marketRows, unavailableItemsAtStation, shipFit, fittedModules,
  * shipyardText, purchaseEstimates, marketInsightsText, locationInfo,
- * knownStations, fleetDistress
- * -- all thirty appear below, so nothing the agent knows
+ * knownStations, fleetDistress, tank
+ * -- all thirty-one appear below, so nothing the agent knows
  * is silently dropped from what the planner sees. No caching of ctx itself:
  * agent.ts builds a fresh PlanContext object on every replan() call
  * (src/agent/agent.ts's replan method), so buildDigest has nothing stale to
@@ -334,12 +345,17 @@ export function buildDigest(ctx: PlanContext): string {
   // the correct id in front of the planner BEFORE it can guess from prose.
   if (ctx.lowFuel && FUEL_CELL_IDS_LINE) {
     lines.push(
-      `FUEL IS LOW. refuel consumes fuel cells FROM YOUR CARGO (none aboard = refuel fails). ` +
-      `Purchasable fuel items, EXACT catalog ids: ${FUEL_CELL_IDS_LINE}. ` +
+      `FUEL IS LOW. The Fuel availability line below states where a refuel can draw from. ` +
+      `If you need fuel cells (the station tank is dry or you are undocked), purchasable fuel items, EXACT catalog ids: ${FUEL_CELL_IDS_LINE}. ` +
       `Sequence: dock at a station selling them, buy the exact id (buy id=fuel_cell -- ` +
       `singular; 'fuel_cells' is NOT an item), then refuel.`
     );
   }
+  // Fuel availability (D1, Cringely/spacemolt#984/#839/#829/#701/#684, canonical
+  // #716): the fuel facts the planner was missing, stated where it reads its
+  // status. See renderFuelAvailability for the invariant.
+  const fuelAvailability = renderFuelAvailability(ctx);
+  if (fuelAvailability) lines.push(fuelAvailability);
   // Fleet-rescue briefing (issue #1114): the read half of the #703 gift path
   // -- rendered right under your own Status/fuel lines, the same priority as
   // the low-fuel advisory above, so "a fleet-mate needs help" reads as a
@@ -407,6 +423,10 @@ export function buildDigest(ctx: PlanContext): string {
       `Proven unavailable at this station (a recent buy here was blocked item_not_available): ${ctx.unavailableItemsAtStation.join(", ")}. Do not plan another buy for these here -- post a standing bid with create_buy_order instead, or find another station.`,
     );
   }
+  // Standing-bid depth and aging: directly under the proven-unavailable line,
+  // whose "post a standing bid instead" remedy is what creates these orders.
+  // Rendered only for a populated list (absence is not a verdict, #94).
+  if (ctx.openBuyOrders?.length) lines.push(renderStandingBids(ctx.openBuyOrders, ctx.marketRows));
   // Ship tool (issue #219): what the pilot is FLYING, rendered next to the
   // credits it could spend on a better one. The live miss this closes: the
   // miner sat on 17,306cr with zero lifetime module or hull purchases, because
@@ -797,6 +817,12 @@ export function buildDigest(ctx: PlanContext): string {
     // This is chat's HOW-TO only; the outbound-identity and untrusted-text
     // boundaries below still govern WHAT may be said.
     `chat target is one of five channels: local or system (area chat around you), faction (your own faction), private (one player -- also set target_id to that player's id), emergency (distress/help). content is your message text.`,
+    // Battle-stance steer (Cringely/spacemolt#1018, PR 166 review): ACTION_VOCAB
+    // renders stance as `stance(id:string)` with no enum values, and the game's
+    // own help prose calls the field `stance` (the strict schema rejects that),
+    // so without this line the planner cannot learn that `flee` is the escape.
+    // Values come from the registry enum (BATTLE_STANCES), never a second list.
+    `stance id is one of ${BATTLE_STANCES.join(", ")} (the field is id, not stance). When in battle, flee is the escape: the game needs 3 ticks of flee stance to disengage you (longer if you are slower than your pursuers).`,
     // SECURITY, standing instruction (generalized from the chat-specific
     // boundary this task started with): covers every quoted-game-text seam in
     // this digest -- chat messages, a blocked wake's detail, and (already
@@ -864,9 +890,83 @@ export function buildDigest(ctx: PlanContext): string {
     // position; this line is that model, and the executor's target-locality
     // guard is the deterministic backstop. Gated on ctx.surroundings like the
     // lines above because it refers to the POIs list rendered there.
-    lines.push(`The POIs above are ONLY the POIs of the system you are in RIGHT NOW; a step's id is resolved when that step RUNS, not when you write it. Your plan executes over many ticks from a MOVING position: after a travel_to or jump step you are in a DIFFERENT system where none of the POI ids above exist. So never place a travel{id} for one of the POIs above AFTER a step that leaves this system (a guaranteed error, not a round trip) -- end the plan when you arrive and plan the next leg from the new system's own POI list.`);
+    // Cringely/spacemolt#1151: "end the plan when you arrive" contradicts the
+    // Known stations line (reaching one is THREE steps), and the planner obeyed
+    // the broader sentence -- 80 of 287 miner plans in 24h were a bare travel_to,
+    // each costing a full replan for the dock leg. A Known station's POI id is a
+    // receipt from a past dock, not an id from the wrong system, so it is exempt.
+    // Gated on a listed stationPoiId: with none, the original rule stands.
+    const stationExemption = ctx.knownStations?.some((s) => s.stationPoiId)
+      ? `, EXCEPT a Known station system listed with its station POI: that id is a receipt from a past dock, so reach it in ONE plan (travel_to, then travel{id=<that station POI>}, then dock) rather than stopping at the system`
+      : "";
+    lines.push(`The POIs above are ONLY the POIs of the system you are in RIGHT NOW; a step's id is resolved when that step RUNS, not when you write it. Your plan executes over many ticks from a MOVING position: after a travel_to or jump step you are in a DIFFERENT system where none of the POI ids above exist. So never place a travel{id} for one of the POIs above AFTER a step that leaves this system (a guaranteed error, not a round trip) -- end the plan when you arrive and plan the next leg from the new system's own POI list${stationExemption}.`);
   }
   return lines.join("\n");
+}
+
+// Fuel availability (D1; Cringely/spacemolt#984 station_fuel_empty 55x/72h,
+// #839 target=self/full 54x/72h, #829 + #684 no_fuel_source, #701 no fuel_cell
+// fallback, canonical #716). Invariant: the digest offers a refuel only where a
+// fuel source exists and the tank is not full. Before this the planner saw
+// "fuel 40/100" and nothing about WHERE fuel exists, so it proposed refuel at
+// a dry station, with nothing aboard to crack, at a full tank, and with a
+// ship-to-ship target meant for someone else. Producer fix: state the facts the
+// refuel outcome is a function of, each with its receipt:
+//   - fuel.md:107-109, fuel.md:138: refuel draws faction reserve, then the
+//     station tank, then cargo cells "if the station is empty"; a station tank
+//     of 0 returns station_fuel_empty. get_system.poi.fuel_reserve is that tank
+//     (openapi-v2.json, required integer on the poi object).
+//   - travel.md:62: docked it buys station fuel and fills the tank; otherwise
+//     it cracks fuel cells from cargo. Undocked with none aboard, nothing draws
+//     (the tracker's no_fuel_source text: "No fuel cells in cargo ...").
+//   - travel.md:62, fuel.md:235: `target` is ship-to-ship (a player at your POI,
+//     Refueling Pump required) or "fleet"; it never means your own tank.
+// Full tank is the one claim with no error text in the reference (fuel.md:225's
+// tank_full belongs to distress_signal), so it is worded as a wasted step, not
+// as a failure. ABSENCE IS NOT A VERDICT (#94): an unread tank renders nothing,
+// an unread station reserve is "unproven", unread cargo never reads as "no
+// cells". fuelReserve is read only while docked; a belt reports 0 meaninglessly.
+// Every input (tank, surroundings.dockedAt/currentPoi, cargo, unavailable list)
+// is a parsed number/id off our own snapshot, so no untrusted-text quoting.
+function renderFuelAvailability(ctx: PlanContext): string | undefined {
+  const tank = ctx.tank;
+  if (!tank || !(tank.maxFuel > 0)) return undefined;
+  const head = `Fuel availability: tank ${tank.fuel}/${tank.maxFuel}.`;
+  if (tank.fuel >= tank.maxFuel) {
+    return `${head} Tank FULL -- a refuel now buys nothing, so do not plan a refuel step until fuel drops.`;
+  }
+  const cells = ctx.cargo
+    ? ctx.cargo.items.filter((i) => FUEL_CELL_ID_SET.has(i.itemId)).reduce((n, i) => n + i.quantity, 0)
+    : undefined;
+  const cellsText = `${cells} fuel cell${cells === 1 ? "" : "s"}`;
+  const target =
+    `To refuel yourself omit target entirely: target is only a player at your POI (ship-to-ship, needs a Refueling Pump) ` +
+    `or "fleet" (read-only status), never "self" or "full".`;
+  const s = ctx.surroundings;
+  let where = "";
+  if (s && !s.dockedAt) {
+    where = cells === undefined
+      ? `Not docked, so no station tank is in reach: refuel can only crack fuel cells from cargo.`
+      : cells > 0
+        ? `Not docked, so no station tank is in reach: refuel cracks your ${cellsText} from cargo.`
+        : `Not docked and no fuel cells aboard: refuel FAILS (no_fuel_source) -- nothing to draw from. Refuel only after a dock step.`;
+  } else if (s) {
+    const reserve = s.currentPoi?.fuelReserve;
+    if (reserve === undefined) {
+      where = `This station's fuel stock was not read this tick, so refuel here is unproven either way.`;
+    } else if (reserve > 0) {
+      where = `This station's fuel tank holds ${reserve} -- refuel here fills your tank from it.`;
+    } else if (cells === undefined) {
+      where = `This station's fuel tank is EMPTY (station_fuel_empty): refuel here works only if you hold fuel cells (cargo not read).`;
+    } else if (cells > 0) {
+      where = `This station's fuel tank is EMPTY (station_fuel_empty), but you hold ${cellsText}: refuel cracks them from cargo.`;
+    } else if (ctx.unavailableItemsAtStation?.some((id) => FUEL_CELL_ID_SET.has(id))) {
+      where = `This station has NO fuel source: its tank is EMPTY (station_fuel_empty), you hold no fuel cells, and a fuel cell buy here is proven unavailable, so refuel here FAILS. travel_to another station before any refuel.`;
+    } else {
+      where = `This station's fuel tank is EMPTY (station_fuel_empty) and you hold no fuel cells, so refuel here FAILS. Buy fuel_cell from this station's market first, or travel_to another station.`;
+    }
+  }
+  return [head, where, target].filter(Boolean).join(" ");
 }
 
 // Compact rendering of PlanContext.surroundings (src/planner/types.ts): id
@@ -1480,6 +1580,72 @@ function renderMarketCheck(
     // estimate -- without this the annotation above is a number with no
     // decision attached. Advisory prose, never a block (#361).
     `A live bid far below an item's catalog estimate is a lowball LOCAL price, not the item's worth -- selling once to clear the hold is fine, but do not settle into a mine-and-sell loop priced by a lowball bid: check the Market intelligence section for better demand, sell at a richer market, or list at your price with create_sell_order.`;
+}
+
+// Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+// #1025, #986, #949, #833): the age at which an unfilled create_buy_order is
+// flagged STALE. Receipt for 24: the observed failures are bids that never
+// filled across 71h (#726) and 3+ days (#808) with the pilot insolvent behind
+// them; 24h fires well before that while leaving a full day (~8,640 ticks) for
+// a hauler to pass and fill. No fill-time figure exists in the vendored
+// reference to derive it from, so this is a judgment constant, same standing
+// as MISSION_STALE_HOURS. Simpler alternative rejected: show the age with no
+// threshold and let the planner judge, which is the status quo's failure --
+// 0 cancels in the captured windows. ADVISORY, never an auto-cancel: a cancel
+// is a mutation on a timer, and a partial fill is invisible to the harness
+// (buy_filled clears every record broadly, agent.ts clearOpenBuyOrders).
+export const BID_STALE_HOURS = 24;
+
+// Standing-bid section. Enumerated inputs: each bid's itemId/stationKey/
+// ageHours/here, the market rows (only for a `here` bid -- the rows describe
+// THIS station's market, so another station's bid gets no seller clause), and
+// BID_STALE_HOURS.
+//
+// Seller clause: row.sellQty > 0 -> units offered; a parsed listing that has
+// the item at sellQty 0 or lacks it entirely -> NO SELLERS (the summary lists
+// an item iff some order exists on it, the same absent-row semantics the
+// buyer check relies on, mcp-text-parser.ts); rows undefined (no listing was
+// fetched), or a listing without a sell_qty column (sellQty undefined) -> no
+// clause, never an inferred verdict. The gate is `rows` defined, not non-empty:
+// gatherMarket never hands over an empty array, and clipPlanContext's clipped
+// rows are [] when neither a held item nor a bid is in the listing, which must
+// still read NO SELLERS so a replayed digest equals the live one.
+//
+// Cancel call only for a `here` bid: cancel_order is station-scoped (openapi-v2
+// cancel_order, "all your orders at this station"), and the scout's 400+
+// no_orders failures (#833, #949, #986, #1025) were cancels issued from
+// somewhere else. For a bid elsewhere the line says go back. It makes no
+// claim about create_buy_order: the duplicate guard keys on the DOCKED station
+// plus the item (agent.ts buyOrderAlreadyOpen), so a bid elsewhere is not refused.
+function renderStandingBids(
+  orders: NonNullable<PlanContext["openBuyOrders"]>,
+  rows: PlanContext["marketRows"],
+): string {
+  const byId = new Map((rows ?? []).map((r) => [r.itemId, r]));
+  const bullets = orders.map((o) => {
+    const stale = o.ageHours >= BID_STALE_HOURS;
+    const parts = [
+      `- ${o.itemId} at ${quoteUntrusted(o.stationKey)} (${o.here ? "HERE" : "NOT this station"}): ` +
+      `placed ~${Math.floor(o.ageHours)}h ago, no fill notification since`,
+    ];
+    if (o.here && rows) {
+      const sellQty = byId.has(o.itemId) ? byId.get(o.itemId)!.sellQty : 0;
+      if (sellQty === 0) parts.push(`NO SELLERS listed here`);
+      else if (sellQty !== undefined) parts.push(`${sellQty} units for sale here`);
+    }
+    if (stale && o.here) {
+      parts.push(
+        `STALE (${BID_STALE_HOURS}h+): cancel it now with cancel_order{order_id="all"} -- the escrowed credits return to your wallet (this clears every order you hold at this station)`,
+      );
+    } else if (stale) {
+      parts.push(
+        `STALE (${BID_STALE_HOURS}h+): cancel_order only works at the station holding the order, so travel back there to cancel it -- from anywhere else cancel_order fails no_orders`,
+      );
+    }
+    return parts.join(". ");
+  });
+  return `Standing buy orders YOU placed (the credits stay in escrow until a seller fills the order or you cancel it):\n${bullets.join("\n")}\n` +
+    `A bid with no sellers fills only if a player lists the item later, and every credit behind it is credits you cannot spend on fuel. Do not post another bid while one is STALE, and cancel a stale one before you chase the item elsewhere.`;
 }
 
 // Market-intelligence injection (issue #269): the harness-run analyze_market

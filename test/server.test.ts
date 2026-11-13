@@ -6,9 +6,10 @@ import { Agent, type AgentConfig } from "../src/agent/agent";
 import { MockPlanner } from "../src/planner/mock";
 import { Store } from "../src/store/store";
 import {
-  startDashboardServer, loadDashboardToken, loadStoreToken, DASHBOARD_TOKEN_HEADER, STORE_TOKEN_HEADER,
+  startDashboardServer, loadDashboardToken, loadStoreToken, DASHBOARD_TOKEN_HEADER,
   type DashboardServer,
 } from "../src/server/server";
+import { STORE_TOKEN_HEADER } from "../src/server/store-protocol";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
 
@@ -56,7 +57,7 @@ describe("GET /api/agents", () => {
     expect(body[0]!.goals).toEqual([]);
     expect(body[0]!.plannerHealth).toEqual({
       stalled: false, usingFallback: false, claudeDisabled: false,
-      backoffUntil: 0, consecutiveTransientFailures: 0, stuck: false,
+      backoffUntil: 0, consecutiveTransientFailures: 0, stuck: false, budgetCappedUntil: 0,
     });
   });
 

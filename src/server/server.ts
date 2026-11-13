@@ -13,6 +13,7 @@ import { findDirectedQueryAction, queryActionRejectionDetail } from "./instruct-
 import { missionSummary } from "./missions";
 import { evaluateReviewGate, markReviewRan } from "../review/review-gate";
 import { readDump, REVIEW_WINDOW_HOURS } from "../../scripts/strategy-review-dump";
+import { INSTRUCTION_MAX_LENGTH, STORE_TOKEN_HEADER } from "./store-protocol";
 
 export interface DashboardServerOptions {
   host: string;
@@ -47,17 +48,10 @@ const EVENTS_TOPIC = "events";
 const DEFAULT_EVENTS_LIMIT = 50;
 const MAX_EVENTS_LIMIT = 500;
 
-// docs/wiki/security-baseline.md: "The dashboard instruction box gets a
-// length bound -- it's a prompt-injection channel into our own planner,
-// contained but worth the guard." 500 chars covers a real operator directive
-// (a sentence or two) while bounding how much attacker-adjacent text can ride
-// into Agent.replan()'s goals.push(instruction) -> digest.ts prompt splice
-// per call. Enforced here, server-side -- the SPA's maxlength (Task 4) is UX
-// only, not the trust boundary.
-// Exported so the scheduler-side caller (scripts/strategy-store.ts) checks the
-// SAME number rather than a copy of it: one bound, two enforcement points
-// (client fails fast, server is the trust boundary).
-export const INSTRUCTION_MAX_LENGTH = 500;
+// INSTRUCTION_MAX_LENGTH (the instruction-box length bound, with its
+// security-baseline rationale) lives in ./store-protocol so the scheduler-side
+// caller can share it without importing this zod-dependent module. Enforced
+// here, server-side -- the SPA's maxlength is UX only, not the trust boundary.
 // #817: `standing` and `revoke` are both optional and both default-false/
 // absent, so an existing caller that sends only `text` (dashboard, current
 // scripts/strategy-store.ts, the scheduler's /steer transport) parses and
@@ -85,10 +79,8 @@ const InstructBodySchema = z.object({
 export const DASHBOARD_TOKEN_HEADER = "X-Dashboard-Token";
 const DASHBOARD_TOKEN_FILE_ENV = "HARNESS_DASHBOARD_TOKEN_FILE";
 
-// #114 A1: the store API's own bearer, a SEPARATE secret from the dashboard
-// token above -- different consumer (the scheduler host's cron job), so a
-// leak of one credential never grants the other's access.
-export const STORE_TOKEN_HEADER = "X-Store-Token";
+// #114 A1: the store API's own bearer (STORE_TOKEN_HEADER, in ./store-protocol),
+// a SEPARATE secret from the dashboard token above.
 const STORE_TOKEN_FILE_ENV = "HARNESS_STORE_TOKEN_FILE";
 
 /**

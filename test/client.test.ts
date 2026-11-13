@@ -83,8 +83,40 @@ describe("SpacemoltClient", () => {
     expect(s).toEqual({
       credits: 1234, creditsKnown: true, fuel: 40, maxFuel: 100, hull: 80, maxHull: 100,
       cargoUsed: 5, cargoCapacity: 50, docked: true, inTransit: false, systemId: "sys-alpha",
-      poiId: "poi-1", dockedAt: "base-1", cargo: [],
+      poiId: "poi-1", dockedAt: "base-1", cargo: [], factionId: null,
     });
+  });
+
+  // Tracker Cringely/spacemolt#1004. The espionage guard refuses a pilot in no
+  // faction, so the producer has to keep three answers apart: a faction id, a
+  // player block that parsed with no faction (null, as in the live capture
+  // test/fixtures/spacemolt-probe-2026-07-12.json, where the key is absent),
+  // and a player block that did not parse (undefined, which the guard treats
+  // as no verdict). A faction_id of the wrong type must not read as "no
+  // faction" either.
+  test("status() separates a faction member, an unaffiliated pilot and an unknown affiliation", async () => {
+    const cases: Array<[unknown, string | null | undefined]> = [
+      [{ credits: 10, faction_id: "f_crimson" }, "f_crimson"],
+      [{ credits: 10 }, null],
+      [{ credits: 10, faction_id: "" }, null],
+      [{ credits: 10, faction_id: null }, null],
+      [{ credits: 10, faction_id: 7 }, undefined],
+      [{}, undefined],
+    ];
+    for (const [player, want] of cases) {
+      server?.stop();
+      server = startFakeServer();
+      server.setHandler("spacemolt", "get_status", () => ({
+        structuredContent: {
+          ship: { fuel: 40, max_fuel: 100, hull: 80, max_hull: 100, cargo_used: 5, cargo_capacity: 50 },
+          player,
+          location: { docked_at: "base-1", in_transit: false },
+        },
+      }));
+      const client = makeClient();
+      await client.login("TestPilot", "pw");
+      expect((await client.status()).factionId).toBe(want);
+    }
   });
 
   // Issue #1030. `credits` falls back to 0 when get_status carries no numeric
@@ -1097,7 +1129,7 @@ describe("SpacemoltClient", () => {
     server.setHandler("spacemolt_market", "view_market", () => ({ result: marketText }));
     const rows = await client.getMarket();
     expect(rows.length).toBe(482);
-    expect(rows.find((r) => r.itemId === "iron_ore")).toEqual({ itemId: "iron_ore", bestBuy: 11, buyQty: 200 });
+    expect(rows.find((r) => r.itemId === "iron_ore")).toEqual({ itemId: "iron_ore", bestBuy: 11, buyQty: 200, sellQty: 10 });
     server.setHandler("spacemolt_market", "view_market", () => ({
       structuredContent: { items: [{ item_id: "iron_ore" }] },
     }));

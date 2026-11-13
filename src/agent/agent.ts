@@ -3,12 +3,13 @@ import type { Store, PlanCursor } from "../store/store";
 import { PlanSchema, type Plan } from "../registry/plan";
 import type {
   Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
-  FleetDistress,
+  FleetDistress, OpenBuyOrder,
 } from "../planner/types";
-import { goalPurchaseCandidates } from "./goal-items";
+import { goalPurchaseCandidates, goalsNamingAction } from "./goal-items";
+import { REGISTRY } from "../registry/actions";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
-import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
-import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
+import { summarizeStatus, clipPlanContext, clipUntrusted, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
+import { executeTick, miningEquipmentKey, classifyGameError, IN_BATTLE_BLOCKED_ACTIONS, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
   knownStationSystems, rememberStation,
@@ -44,6 +45,12 @@ export interface PlannerHealth {
   // replan boundary observes a differing fingerprint, so the operator sees the
   // agent is stuck rather than merely momentarily quiet under backoff.
   stuck: boolean;
+  // Layer 3 (plan budget): epoch ms until which the pilot counts as budget-capped
+  // (last capped tick + window); 0 when never capped. plan_budget_exceeded is
+  // emitted once per episode, so the dashboard cannot infer a long episode from
+  // event recency and reads this sticky field instead. 0, not -Infinity, so it
+  // survives JSON serialization.
+  budgetCappedUntil: number;
 }
 
 // The ship-vitals subset of the last StatusSnapshot the loop fetched, flattened
@@ -220,6 +227,7 @@ interface ActionEventPayload {
   params?: unknown;
   outcome?: string;
   result?: string;
+  guard?: boolean; // set on our own pre-call refusals only (see the emit("action") site)
 }
 
 // NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD and
@@ -295,6 +303,12 @@ const FUEL_SIGHTING_LOOKBACK = MAX_STATION_SIGHTINGS;
 // distinct pairs the query itself scans.
 const ITEM_UNAVAILABLE_LOOKBACK = 50;
 
+// distress_signal cooldown (tracker Cringely/spacemolt#792): the game's own
+// number, "a 1-hour cooldown between calls" (docs/game-reference/upstream/
+// docs/missions.md:70, repeated at guides/fuel.md:237). Not a tunable: it is
+// the game's rule, and a longer guess would refuse a legal re-broadcast.
+const DISTRESS_COOLDOWN_MS = 60 * 60_000;
+
 // Deterministic server-failure retry (#431, live 2026-07-19: each travel 503
 // bought a full ~19.5k-char planner call whose new plan re-issued the
 // byte-identical step; second occurrence of the class after the 2026-07-13
@@ -336,6 +350,10 @@ const SEEN_NOTIFICATIONS_MAX = 500;
 // written before this cap may exceed it; trimming on load keeps the invariant
 // without any schema change -- goals stay a plain string[]).
 const MAX_GOALS = 5;
+// Registry actions whose repetition is itself the harm (ActionDef.oneShot,
+// Cringely/spacemolt#542). REGISTRY is a static array, so computing this once
+// at module load is exact (simplicity rule 5: the sole input is immutable).
+const ONE_SHOT_ACTIONS: ReadonlySet<string> = new Set(REGISTRY.filter((a) => a.oneShot).map((a) => a.name));
 
 // POI-extraction backstop (issue #253): cap on the learned incompatible-POI
 // map, oldest-evicted like MAX_GOALS. 32 because the memory only needs to
@@ -511,6 +529,9 @@ export class Agent {
   // that never validate (measured: 25 replans, 0 plans, fallback never
   // reached).
   private consecutivePrimaryFailures = 0;
+  // #538. Which planner the latest transient failure belonged to, so the
+  // success path can tell a recovery from a different planner covering for it.
+  private lastFailedPlanner: Planner | undefined;
   private stalled = false;
   private usingFallback = false;
   private claudeDisabled = false;
@@ -535,9 +556,13 @@ export class Agent {
   private repeatBreakFloorTs = Number.NEGATIVE_INFINITY;
 
   // Layer 3: throttle so plan_budget_exceeded is emitted once per over-budget
-  // episode, not once per capped tick. Cleared the moment the trailing window
-  // drains back under the ceiling and a replan is permitted again.
-  private planBudgetExceeded = false;
+  // episode, not once per capped tick or per replan. The episode ends only after
+  // a full window with no capped tick: a pilot saturated at the cap passes the
+  // gate each time one old wake ages out, replans, and is capped again on the
+  // next tick, so a flag cleared by that single pass re-armed the emit on every
+  // replan (Cringely/spacemolt#1151: 198 events/24h at a cap of 12). Simpler
+  // alternative rejected: a count-below-cap reset, which needs a new threshold.
+  private lastBudgetCapTs = Number.NEGATIVE_INFINITY;
 
   // Layer 4 (no-progress detector): the previous replan boundary's fingerprint
   // and a run-length count of identical ones. `stuck` is the sticky operator
@@ -1100,7 +1125,7 @@ export class Agent {
   // goals; this is the same shape for pinned operator ones.
   //
   // Pass 1 evicts oldest-first, skipping any text still in pinnedInstructions
-  // -- ordinary steers age out exactly as before. Only if pinned entries
+  // or standingGoals (#821) -- ordinary steers age out exactly as before. Only if pinned entries
   // ALONE still exceed `keep` (every unpinned steer already gone) does pass 2
   // evict the oldest pinned survivor too -- but visibly: the same
   // instruction_pin_changed{pinned:false} receipt an explicit revoke writes,
@@ -1110,12 +1135,23 @@ export class Agent {
   private evictOldestUnpinned(goals: string[], keep: number): string[] {
     const survivors = goals.slice();
     for (let i = 0; survivors.length > keep && i < survivors.length; ) {
-      if (this.pinnedInstructions.has(survivors[i]!)) { i++; continue; }
+      // Standing config goals are protected like pinned ones
+      // (Cringely/spacemolt#821). mergeStandingGoals restores a missing one
+      // through this very method, so an age-only pass let the restore of one
+      // standing goal evict another, and the two traded places every replan.
+      if (this.pinnedInstructions.has(survivors[i]!) || this.standingGoals.includes(survivors[i]!)) { i++; continue; }
       survivors.splice(i, 1);
     }
     while (survivors.length > keep) {
-      const text = survivors.shift();
-      if (text !== undefined && this.pinnedInstructions.delete(text)) {
+      // Pass 2 skips standing config goals too (#821, #170 round 2): they sit
+      // at the front, so a plain shift() evicted one, mergeStandingGoals
+      // restored it by evicting the next, and two milestones alternated every
+      // replan. Config max(5) means survivors > keep implies a non-standing
+      // (pinned) entry exists. -1 is unreachable, but break rather than spin.
+      const idx = survivors.findIndex((g) => !this.standingGoals.includes(g));
+      if (idx < 0) break;
+      const text = survivors.splice(idx, 1)[0]!;
+      if (this.pinnedInstructions.delete(text)) {
         try {
           this.emit("instruction_pin_changed", { text, pinned: false });
         } catch { /* telemetry is not the control path -- see instruct() */ }
@@ -1180,6 +1216,9 @@ export class Agent {
         backoffUntil: this.plannerBackoffUntil,
         consecutiveTransientFailures: this.consecutiveTransientFailures,
         stuck: this.stuck,
+        budgetCappedUntil: Number.isFinite(this.lastBudgetCapTs)
+          ? this.lastBudgetCapTs + (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000
+          : 0,
       },
       status: this.lastStatus
         ? {
@@ -1241,6 +1280,25 @@ export class Agent {
       // the same fail-toward-allowing-a-duplicate direction as the
       // cancel_order clear above.
       if (n.msg_type === "buy_filled") this.clearOpenBuyOrders(() => true);
+
+      // Release Layer 4's `unrecoverable` latch when a battle ends (issue
+      // Cringely/spacemolt#1150). A latch armed while every action was
+      // blocked "in_battle" holds a condition the game then lifts, but the
+      // fingerprint reads nothing about combat and an idle ship changes none
+      // of what it does read, so its only other exits (a differing
+      // fingerprint, an operator instruction) never fire: the corsair sat
+      // frozen 3 days after a stalemate. Dropping lastFingerprint makes the
+      // next replan boundary take the differing-fingerprint branch, which owns
+      // the rest of the reset (stuck, arm count, run length). The backoff the
+      // latch armed is dropped with it, but only while latched, so a transient
+      // planner-failure backoff is left alone. Rejected: an in-battle bit in
+      // the fingerprint (get_status carries no combat field, openapi
+      // GetStatusResponse, so it costs an extra call per tick) and a timed
+      // re-probe (a second latch-exit mechanism for the same condition).
+      if (n.msg_type === "battle_ended" && this.stuck) {
+        this.lastFingerprint = undefined;
+        this.plannerBackoffUntil = 0;
+      }
     }
   }
 
@@ -1604,8 +1662,10 @@ export class Agent {
       const windowMs = (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000;
       const maxPlans = this.config.maxPlansPerWindow ?? AGENT_DEFAULTS.maxPlansPerWindow;
       if (wake.reason !== "instruction" && this.store.countWakesSince(this.id, this.now() - windowMs) >= maxPlans) {
-        if (!this.planBudgetExceeded) {
-          this.planBudgetExceeded = true;
+        const cappedAt = this.now();
+        const newEpisode = cappedAt - this.lastBudgetCapTs > windowMs;
+        this.lastBudgetCapTs = cappedAt;
+        if (newEpisode) {
           this.emit("plan_budget_exceeded", {
             maxPlans,
             windowMinutes: this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes,
@@ -1616,7 +1676,6 @@ export class Agent {
         if (!reflexSpentTick && this.plan && this.planState === "running") await this.executeOne(status);
         return;
       }
-      this.planBudgetExceeded = false;
       // evaluateWake (wake.ts) returns "blocked"/"plan_done" only when no
       // instruction is queued, so a queued operator instruction always
       // bypasses this gate. See BLOCKED_THRASH_THRESHOLD's comment.
@@ -2482,6 +2541,24 @@ export class Agent {
     // PlanContext.instruction ONLY, never the persisted goals -- a transient
     // nudge, not a new standing goal.
     if (instruction && opts.persistInstruction !== false) {
+      // Supersession (Cringely/spacemolt#535): a newer operator steer replaces
+      // the older ones. Retirement used to depend on the planner reporting each
+      // steer done, one at a time, so after five steers to a stranded pilot
+      // three "jump and spend fuel" orders sat beside the "do NOT jump"
+      // correction that superseded them. Deterministic here, at intake, where
+      // "newer" is known. Config goals (agents.yaml) and pinned steers
+      // ("standing until revoked", #817) are not errands the newer steer
+      // replaces, and a pinned steer is itself additive: it supersedes nothing.
+      // Rejected alternative: an explicit replaces flag on the instruct body
+      // (the issue's option 2) -- a new API field for stacking nobody has used,
+      // and the default would still have to be replace-all.
+      if (!this.pinnedInstructions.has(instruction)) {
+        const retired = this.goals.filter((g) => !this.standingGoals.includes(g) && !this.pinnedInstructions.has(g));
+        if (retired.length) {
+          this.goals = this.goals.filter((g) => !retired.includes(g));
+          this.emit("instruction_superseded", { instruction, retired });
+        }
+      }
       this.goals.push(instruction);
       // Cap the retained history (issue #186): evict oldest so stale steers
       // age out instead of accumulating forever. See MAX_GOALS for the value
@@ -2490,6 +2567,16 @@ export class Agent {
       // eviction -- see evictOldestUnpinned for why and the visible-eviction
       // fallback when pinned entries alone fill the cap.
       if (this.goals.length > MAX_GOALS) this.goals = this.evictOldestUnpinned(this.goals, MAX_GOALS);
+      // When standing config goals plus pinned steers already fill the cap,
+      // pass 1 of the eviction can only drop the steer just pushed. Config
+      // and pinned goals outrank an errand, so the loss stands, but it must
+      // leave a receipt (PR #170 review): pushing the errand and evicting it
+      // is one step here, so this is the one site that knows it was the loser.
+      if (!this.goals.includes(instruction)) {
+        try {
+          this.emit("instruction_dropped", { instruction, reason: "goal cap full of standing and pinned goals" });
+        } catch { /* telemetry is not the control path -- see instruct() */ }
+      }
     }
     // Re-merge the standing config goals AFTER the push-side eviction above:
     // if the cap just pushed a standing goal off the front, this restores it
@@ -2572,7 +2659,8 @@ export class Agent {
       // Buyable-here surfacing (issue #93): fetched here, on the same
       // once-per-replan cadence as the mission listings above, gated tighter
       // (docked AND cargo aboard) — see gatherMarket.
-      const marketRows = await this.gatherMarket(statusSnap);
+      const openBuyOrders = this.openBuyOrders(statusSnap?.dockedAt);
+      const marketRows = await this.gatherMarket(statusSnap, openBuyOrders);
       // Remote-POI targeting fix (issue #176): the scannable entities at the
       // pilot's position -- fetched every replan, ungated, like the active
       // missions above (what is around you is a fact of your position, not of
@@ -2644,7 +2732,11 @@ export class Agent {
         // strand detector uses, over the same snapshot -- gates the digest's
         // fuel-acquisition briefing (exact catalog fuel ids + dock/buy/refuel).
         lowFuel: statusSnap ? this.fuelBelowReserve(statusSnap) : undefined,
+        // D1: the tank numbers behind the digest's fuel-availability line
+        // (full-tank and where-can-I-refuel), same snapshot as lowFuel above.
+        tank: statusSnap ? { fuel: statusSnap.fuel, maxFuel: statusSnap.maxFuel } : undefined,
         marketRows,
+        openBuyOrders,
         // Repeated-buy remainder (issue #669): the buy-side counterpart to
         // marketRows above, read fresh every replan off the docked station
         // (same status snapshot statusSummary is built from -- no extra
@@ -2730,7 +2822,14 @@ export class Agent {
       // structurally impossible: every plan reaching the retry gate below
       // has already failed (or passed) BOTH checks together, and the SAME
       // is true of the retried plan.
-      let admitted = admitPlan(plan, surroundings);
+      // Item ids the game itself reported this replan (#1152): the cargo and
+      // docked-market rows the planner was just shown. They outrank the
+      // vendored catalog at admission (normalize-plan.ts normalizePlanItems).
+      const liveItemIds = new Set<string>([
+        ...(ctx.cargo?.items ?? []).map((c) => c.itemId),
+        ...(ctx.marketRows ?? []).map((r) => r.itemId),
+      ]);
+      let admitted = admitPlan(plan, surroundings, liveItemIds);
       if (!admitted.ok) {
         // Routed into the same single-retry pattern every Planner
         // implementation already applies to JSON/schema validation
@@ -2755,13 +2854,19 @@ export class Agent {
         plan = PlanSchema.parse(rawRetry.plan);
         promptChars += rawRetry.promptChars;
         responseChars += rawRetry.responseChars;
-        admitted = admitPlan(plan, surroundings);
+        admitted = admitPlan(plan, surroundings, liveItemIds);
         if (!admitted.ok) {
           throw new Error(`plan admission failed after retry: ${admitted.error}`);
         }
       }
       plan = admitted.plan;
       rewrites = admitted.rewrites;
+      // The vendored catalog is behind the live game (#1152): surface it so
+      // `bun run scripts/refresh-catalog.ts` gets run. Bounded: the ids are
+      // game-reported text and the plan holds at most 30 steps.
+      if (admitted.catalogDrift?.length) {
+        this.emit("catalog_drift", { ids: admitted.catalogDrift.map((id) => clipUntrusted(id)) });
+      }
 
       // Fleet-gift id->username resolution (issue #788), the same name/id
       // failure class as the block above and handled the same deterministic way.
@@ -2828,7 +2933,16 @@ export class Agent {
       });
       if (rewrites.length) this.emit("plan_normalized", { rewrites });
 
-      if (this.consecutiveTransientFailures > 0 || this.stalled) {
+      // #538. A recovery is the planner that FAILED now working. consecutive-
+      // TransientFailures is shared across both planners, so a fallback success
+      // after a dead primary's failure used to read as a recovery on every cycle
+      // of the outage. Identity (not `=== this.planner`) keeps the fallback's own
+      // recovery after a subscription-limit latch announced. A formed stall is
+      // exempt from the identity check: any success ending it is a recovery of
+      // planning, and skipping the emit would leave `stalled` with no matching
+      // `planner_recovered`. A dead primary never sets `stalled` (each fallback
+      // success zeroes the shared counter), so this cannot re-open the flapping.
+      if (this.stalled || (this.consecutiveTransientFailures > 0 && planner === this.lastFailedPlanner)) {
         this.emit("planner_recovered", { afterFailures: this.consecutiveTransientFailures });
       }
       // #240. Only a PRIMARY success ends the endpoint-down state. `planner` is
@@ -3145,6 +3259,32 @@ export class Agent {
     const itemId = (params as { id?: unknown } | undefined)?.id;
     if (typeof itemId !== "string" || itemId.length === 0) return;
     this.emit("item_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
+  }
+
+  // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+  // #1025, #986, #949, #833): the digest-side read of the open-buy-order memory
+  // learnBuyOrderOpened/clearOpenBuyOrders maintain (#681). The planner posted
+  // bids for items nobody sells and never cancelled them because it was never
+  // told a bid existed, how old it was, or that cancel_order only works at the
+  // station holding the order. Same event stream the duplicate-order guard
+  // reads, so the digest and the guard cannot disagree about what is open.
+  // ageHours is event-ts to now: the latest buy_order event per key is the
+  // placement (a refused duplicate never emits one), and a partial fill is not
+  // distinguishable here, so the digest words it "no fill notification since".
+  // Oldest first; bounded by BUY_ORDER_OPEN_LOOKBACK distinct (station, item).
+  private openBuyOrders(dockedAt: string | null | undefined): OpenBuyOrder[] {
+    const now = this.now();
+    const out: OpenBuyOrder[] = [];
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "buy_order", "key", BUY_ORDER_OPEN_LOOKBACK)) {
+      const r = e.payload as { stationKey?: unknown; itemId?: unknown; open?: unknown };
+      if (r.open !== true || typeof r.stationKey !== "string" || typeof r.itemId !== "string") continue;
+      out.push({
+        itemId: r.itemId, stationKey: r.stationKey,
+        ageHours: Math.max(0, (now - e.ts) / 3_600_000),
+        here: r.stationKey === dockedAt,
+      });
+    }
+    return out.sort((a, b) => b.ageHours - a.ageHours);
   }
 
   // Repeated-buy remainder (issue #669, skeptic finding upheld on the
@@ -3508,8 +3648,16 @@ export class Agent {
     }
   }
 
-  private async gatherMarket(status: StatusSnapshot | null): Promise<MarketRow[] | undefined> {
-    if (!status?.docked || !status.cargo?.length || !this.api.getMarket) return undefined;
+  // gatherMarket's gate, extended for standing-bid depth (Cringely/spacemolt#918): it also opens for a
+  // docked pilot with an open bid AT THIS station, cargo or not. The digest's
+  // "is anyone selling this item here" clause reads these rows, and the pilots
+  // that bid (a scout with an empty hold) never passed the cargo gate. Bids
+  // held at other stations do not open it: the rows describe THIS market only.
+  private async gatherMarket(
+    status: StatusSnapshot | null, openBuyOrders: readonly OpenBuyOrder[] = [],
+  ): Promise<MarketRow[] | undefined> {
+    const bidHere = openBuyOrders.some((o) => o.here);
+    if (!status?.docked || (!status.cargo?.length && !bidHere) || !this.api.getMarket) return undefined;
     try {
       const rows = await this.api.getMarket();
       if (!rows.length) {
@@ -3688,6 +3836,7 @@ export class Agent {
     }
     if (e instanceof TransientPlannerError) {
       this.consecutiveTransientFailures++;
+      this.lastFailedPlanner = served;
       const backoffMs = Math.min(
         TRANSIENT_BACKOFF_BASE_MS * 2 ** (this.consecutiveTransientFailures - 1),
         TRANSIENT_BACKOFF_MAX_MS,
@@ -3706,6 +3855,60 @@ export class Agent {
     // validation on both the original attempt and its retry) -- existing
     // Plan-1 catch-all behavior, unchanged and not duplicated above.
     this.emit("planner_error", { message: e instanceof Error ? e.message : String(e) });
+  }
+
+  // distress_signal cooldown (tracker Cringely/spacemolt#792): whole minutes
+  // left on the game's one-hour cooldown (DISTRESS_COOLDOWN_MS), or undefined
+  // when this pilot has no distress call inside it. Read from the persisted
+  // event stream, so it survives a restart. Two producers count, because both
+  // put a signal out: a planner step that SUCCEEDED (outcome continue or
+  // plan_done -- a game refusal is `blocked` and proves nothing was sent), and
+  // the strand steward's direct call, which bypasses the executor and emits
+  // steward_distress instead. Our own guard refusals are `blocked` too, so
+  // they cannot slide the window: it always runs from the last real call.
+  // Not covered: a signal sent by the improv/MCP driver, which writes no such
+  // event. The game's own cooldown refusal still catches that one.
+  private distressCooldownMinutes(): number | undefined {
+    const now = this.now();
+    const since = now - DISTRESS_COOLDOWN_MS;
+    let last = -Infinity;
+    for (const e of this.store.eventsByTypeSince(this.id, "action", since)) {
+      const p = e.payload as ActionEventPayload | null;
+      if (p?.action === "distress_signal" && (p.outcome === "continue" || p.outcome === "plan_done")) {
+        last = Math.max(last, e.ts);
+      }
+    }
+    for (const e of this.store.eventsByTypeSince(this.id, "steward_distress", since)) {
+      last = Math.max(last, e.ts);
+    }
+    if (last === -Infinity) return undefined;
+    const left = Math.ceil((last + DISTRESS_COOLDOWN_MS - now) / 60_000);
+    return left > 0 ? left : undefined;
+  }
+
+  // in_battle memory (tracker Cringely/spacemolt#892). get_status carries no
+  // battle flag (V2GameState.player has none, openapi-v2.json), so the only
+  // evidence a pilot is in a battle is the game having just said so: a blocked
+  // action event whose result classifies as in_battle. The window is
+  // repeatBlockWindowMinutes, reused as the #669 repeated-buy memory reuses it:
+  // nothing signals the battle ended, so a bounded memory that fails toward
+  // re-allowing (one probe per window reaches the game and re-arms it if the
+  // fight goes on) beats a latch. Simpler alternative rejected: no window,
+  // cleared by a later success. Every action this memory blocks is one that
+  // cannot succeed meanwhile, so a latch would never clear.
+  //
+  // Only the GAME's refusal arms it. Our own refusals are guard-tagged blocked
+  // events and are skipped, so a planner that keeps retrying cannot slide the
+  // window forward (the PR #73 failure of the sibling guard). The query runs
+  // only for steps in IN_BATTLE_BLOCKED_ACTIONS.
+  private inBattleRecently(): boolean {
+    const windowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    return this.store.eventsByTypeSince(this.id, "action", this.now() - windowMs).some((e) => {
+      const p = e.payload as ActionEventPayload | null;
+      return p?.outcome === "blocked" && !p.guard && typeof p.result === "string"
+        && failureClass(p.result) === "in_battle";
+    });
   }
 
   // status is this tick's snapshot, already fetched in runOnce -- forwarded so
@@ -3802,6 +4005,7 @@ export class Agent {
       keepFuelAboveJumps: this.config.reflex?.keepFuelAboveJumps,
       keepFuelAbovePct:
         this.config.reflex?.keepFuelAbovePct ?? this.config.fuelReservePct ?? AGENT_DEFAULTS.fuelReservePct,
+      poiHasBase: this.currentPoiHasBase, // #1068: scopes the guard's no-remedy exemption
     };
     // Module-fitment telemetry (issues #757/#736). The guard refuses only a
     // PROVEN-absent module and deliberately lets an unreadable fit through
@@ -3829,6 +4033,8 @@ export class Agent {
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
       fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,
       this.config.selfDestructAuthorized,
+      step?.action === "distress_signal" ? this.distressCooldownMinutes() : undefined,
+      step && IN_BATTLE_BLOCKED_ACTIONS.has(step.action) ? this.inBattleRecently() : undefined,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of
@@ -3906,6 +4112,27 @@ export class Agent {
     // is in.
     this.learnStation(step?.action, result, status);
 
+    // One-shot steer retirement (Cringely/spacemolt#542): a successful
+    // oneShot action (self_destruct) spends the operator steer that ordered it,
+    // here at the seam that records the action, not on the planner volunteering
+    // instruction_done (it set none across four plans while the order destroyed
+    // every respawn ship). Success only: a refused or failed step leaves the
+    // order pending. Config goals and pinned rules are never spent, by the same
+    // exemption the instruction_done retirement above applies.
+    if (step && ONE_SHOT_ACTIONS.has(step.action) && (result.kind === "continue" || result.kind === "plan_done")) {
+      const spent = goalsNamingAction(this.goals, step.action)
+        .filter((g) => !this.standingGoals.includes(g) && !this.pinnedInstructions.has(g));
+      if (spent.length) {
+        this.goals = this.goals.filter((g) => !spent.includes(g));
+        // Persist now: a mid-plan oneShot leaves the plan row alive, and a
+        // restart before the next replan would reload the spent order.
+        this.store.saveGoals(this.id, this.goals);
+        for (const instruction of spent) {
+          this.emit("instruction_done", { instruction, reason: "one_shot_action", action: step.action });
+        }
+      }
+    }
+
     // Open-buy-order memory (issue #681): see learnBuyOrderOpened's own doc
     // comment. Same seam as learnStation directly above -- the action, the
     // outcome, and the pre-action station are all in hand here and nowhere
@@ -3926,7 +4153,24 @@ export class Agent {
     // or "all"/"*" -- see clearOpenBuyOrders's doc comment for why matching
     // the exact order is not available, and why over-clearing at this
     // station is the safe direction.
-    if (step?.action === "cancel_order" && (result.kind === "continue" || result.kind === "plan_done")) {
+    //
+    // A GAME-refused cancel with `no_orders` closes them too: the game saying
+    // this station holds none of our orders is the same fact the success branch
+    // acts on. A bid that fills at placement (markets.md, "Your buy order fills
+    // instantly at placement") is recorded open by learnBuyOrderOpened but never
+    // rests in the book, so without this clear the digest's STALE line tells
+    // the planner to cancel it on every replan and the cancel fails every time
+    // (the #833 loop at the right station). `guard` excludes our own pre-call
+    // refusals, whose text could name the code without the game having said it.
+    // Matched with `.includes` on the leading `no_orders:` code, the same
+    // convention learnItemUnavailable uses (the transport buckets terminal game
+    // errors as command_error, the specific code lives in the message text).
+    const cancelledNothingLeft =
+      result.kind === "blocked" && !result.guard && result.reason.includes("no_orders");
+    if (
+      step?.action === "cancel_order" &&
+      (result.kind === "continue" || result.kind === "plan_done" || cancelledNothingLeft)
+    ) {
       const stationKey = status?.dockedAt;
       if (stationKey) this.clearOpenBuyOrders((r) => r.stationKey === stationKey);
     }
