@@ -44,6 +44,12 @@ export interface PlannerHealth {
   // replan boundary observes a differing fingerprint, so the operator sees the
   // agent is stuck rather than merely momentarily quiet under backoff.
   stuck: boolean;
+  // Layer 3 (plan budget): epoch ms until which the pilot counts as budget-capped
+  // (last capped tick + window); 0 when never capped. plan_budget_exceeded is
+  // emitted once per episode, so the dashboard cannot infer a long episode from
+  // event recency and reads this sticky field instead. 0, not -Infinity, so it
+  // survives JSON serialization.
+  budgetCappedUntil: number;
 }
 
 // The ship-vitals subset of the last StatusSnapshot the loop fetched, flattened
@@ -538,9 +544,13 @@ export class Agent {
   private repeatBreakFloorTs = Number.NEGATIVE_INFINITY;
 
   // Layer 3: throttle so plan_budget_exceeded is emitted once per over-budget
-  // episode, not once per capped tick. Cleared the moment the trailing window
-  // drains back under the ceiling and a replan is permitted again.
-  private planBudgetExceeded = false;
+  // episode, not once per capped tick or per replan. The episode ends only after
+  // a full window with no capped tick: a pilot saturated at the cap passes the
+  // gate each time one old wake ages out, replans, and is capped again on the
+  // next tick, so a flag cleared by that single pass re-armed the emit on every
+  // replan (Cringely/spacemolt#1151: 198 events/24h at a cap of 12). Simpler
+  // alternative rejected: a count-below-cap reset, which needs a new threshold.
+  private lastBudgetCapTs = Number.NEGATIVE_INFINITY;
 
   // Layer 4 (no-progress detector): the previous replan boundary's fingerprint
   // and a run-length count of identical ones. `stuck` is the sticky operator
@@ -1183,6 +1193,9 @@ export class Agent {
         backoffUntil: this.plannerBackoffUntil,
         consecutiveTransientFailures: this.consecutiveTransientFailures,
         stuck: this.stuck,
+        budgetCappedUntil: Number.isFinite(this.lastBudgetCapTs)
+          ? this.lastBudgetCapTs + (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000
+          : 0,
       },
       status: this.lastStatus
         ? {
@@ -1626,8 +1639,10 @@ export class Agent {
       const windowMs = (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000;
       const maxPlans = this.config.maxPlansPerWindow ?? AGENT_DEFAULTS.maxPlansPerWindow;
       if (wake.reason !== "instruction" && this.store.countWakesSince(this.id, this.now() - windowMs) >= maxPlans) {
-        if (!this.planBudgetExceeded) {
-          this.planBudgetExceeded = true;
+        const cappedAt = this.now();
+        const newEpisode = cappedAt - this.lastBudgetCapTs > windowMs;
+        this.lastBudgetCapTs = cappedAt;
+        if (newEpisode) {
           this.emit("plan_budget_exceeded", {
             maxPlans,
             windowMinutes: this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes,
@@ -1638,7 +1653,6 @@ export class Agent {
         if (!reflexSpentTick && this.plan && this.planState === "running") await this.executeOne(status);
         return;
       }
-      this.planBudgetExceeded = false;
       // evaluateWake (wake.ts) returns "blocked"/"plan_done" only when no
       // instruction is queued, so a queued operator instruction always
       // bypasses this gate. See BLOCKED_THRASH_THRESHOLD's comment.

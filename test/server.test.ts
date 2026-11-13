@@ -57,7 +57,7 @@ describe("GET /api/agents", () => {
     expect(body[0]!.goals).toEqual([]);
     expect(body[0]!.plannerHealth).toEqual({
       stalled: false, usingFallback: false, claudeDisabled: false,
-      backoffUntil: 0, consecutiveTransientFailures: 0, stuck: false,
+      backoffUntil: 0, consecutiveTransientFailures: 0, stuck: false, budgetCappedUntil: 0,
     });
   });
 
