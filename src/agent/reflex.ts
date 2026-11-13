@@ -101,18 +101,18 @@ export function fuelUrgent(
 }
 
 // Cringely/spacemolt#1068: the mine fuel-floor guard (executor.ts) exists to
-// push the pilot toward fuel (refuel, or travel/jump to a station). When the
-// ship cannot jump (game: Fuel == 0 returns no_fuel, fuel.md "Stranded") and
-// holds no fuel cell to crack, neither remedy exists and `mine` is the only
-// income left, so blocking it deadlocks the pilot (corsair, ~23.5h). Unknown
-// cargo reads as "no cell" and unmeasured fuelPerJump as "fuel <= 0 only":
-// both fail open toward admitting, the guard's own convention.
-export function fuelRemedyUnavailable(
-  status: Pick<StatusSnapshot, "fuel" | "cargo">, fuelPerJump: number | undefined,
-): boolean {
-  const cannotJump = status.fuel <= 0 || (fuelPerJump != null && fuelPerJump > 0 && status.fuel < fuelPerJump);
+// push the pilot toward fuel (refuel, or travel/jump to a station). At
+// Fuel == 0 the game returns no_fuel on travel and jump (fuel.md "Stranded",
+// travel.md Fuel), and with no fuel cell to crack there is no remedy left, so
+// blocking `mine` only deadlocks the pilot (corsair, ~23.5h). Keyed on
+// fuel <= 0 ONLY, not "below one jump": in-system travel costs about
+// distance * 0.07 against 1.0 for a jump (fuel.md), so a ship that cannot jump
+// can often still travel_to a station, which is the guard's own steer.
+// Unknown cargo reads as "no cell": fails open toward admitting, the guard's
+// convention.
+export function fuelRemedyUnavailable(status: Pick<StatusSnapshot, "fuel" | "cargo">): boolean {
   const hasCell = status.cargo?.some((i) => i.itemId.includes("fuel_cell") && i.quantity > 0) ?? false;
-  return cannotJump && !hasCell;
+  return status.fuel <= 0 && !hasCell;
 }
 
 export function evaluateReflex(

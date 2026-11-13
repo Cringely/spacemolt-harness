@@ -1596,7 +1596,7 @@ function orderCreditBlock(
 export async function executeTick(
   api: GameApi, plan: Plan, cursor: PlanCursor, tickStatus?: StatusSnapshot | null,
   learnedSparse?: LearnedSparseRule[], buyOrderAlreadyOpen?: boolean,
-  fuelReserveConfig?: { keepFuelAboveJumps?: number; keepFuelAbovePct?: number },
+  fuelReserveConfig?: { keepFuelAboveJumps?: number; keepFuelAbovePct?: number; poiHasBase?: boolean },
   fuelPerJump?: number,
   // Issue #669: appended at the end (not slotted alongside buyOrderAlreadyOpen
   // above) so every existing positional call site -- dozens across test/ --
@@ -1741,9 +1741,15 @@ export async function executeTick(
       preStatus.fuel, preStatus.maxFuel, fuelPerJump,
       fuelReserveConfig?.keepFuelAboveJumps, fuelReserveConfig?.keepFuelAbovePct,
     ) &&
-    // #1068: a ship that can neither jump nor crack a cell has no fuel remedy
-    // for this block to steer toward -- mining is its only way out, so admit.
-    !fuelRemedyUnavailable(preStatus, fuelPerJump)
+    // #1068: a ship at 0 fuel with no cell has no remedy for this block to
+    // steer toward, so at a POI with a base mining (then dock and sell) is its
+    // only way out -- admit. Scoped to a base POI on purpose: with no base the
+    // ore cannot be sold without moving, and an admitted mine returns
+    // `continue`, which resets agent.ts's fuelBlockedMoves so isStranded
+    // (stall-monitor.ts) never reaches its threshold and the distress/alert
+    // ladder goes silent. Blocking there keeps the #690 strand evidence
+    // accruing. poiHasBase unset reads false: fail toward the strand ladder.
+    !(fuelReserveConfig?.poiHasBase && fuelRemedyUnavailable(preStatus))
   ) {
     const reason =
       `fuel ${preStatus.fuel}/${preStatus.maxFuel} is at or below the configured reserve floor -- ` +
