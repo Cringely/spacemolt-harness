@@ -408,6 +408,35 @@ export const REGISTRY: ActionDef[] = [
     params: none },
   { tool: "spacemolt_salvage", name: "tow", kind: "mutation", eventLabel: "Tow a wreck",
     params: z.object({ id: z.string() }).strict() },
+  // --- battle escape hatch (Cringely/spacemolt#1018) ---
+  // The game's own in_battle refusal reads "use the battle command to fight or
+  // flee", and until now `attack` was the only registered combat action, so a
+  // pilot in a fight that attack could not win (or that timed out) had no way
+  // out and no way to read the fight. Registered: the status read, retreat, and
+  // stance. The rest of the tool (advance/engage/target/reload/log/summary) is
+  // the tactical suite and stays unwired.
+  // VERIFIED against the vendored OpenAPI (docs/game-reference/upstream/
+  // openapi-v2.json) and test/fixtures/openapi-slim.json: /spacemolt_battle/
+  // status properties [], "Works as a query (no tick cost)" -> kind:"query";
+  // /retreat properties [] ("Move one zone back"); /stance properties [id],
+  // required [id], id enum fire|evade|brace|flee, example body {"id":"fire"}.
+  // The prose says a `stance` field but the request schema, the example and
+  // the conformance fixture all say `id`, so `id` it is. flee is the
+  // speed-dependent 3-tick disengage (upstream/docs/combat.md "Escape and
+  // Tackle"); retreat steps one zone out.
+  // The issue calls the read `get_battle_status`; no such route exists in the
+  // spec -- the wire route is spacemolt_battle/status, so that is the name.
+  // retreat and stance are kind:"mutation" although the spec carries no
+  // x-is-mutation on them (the one place we depart from "the flag is the
+  // authority for kind", see estimate_purchase below): PlanSchema (plan.ts)
+  // admits mutations only, and a query is structurally unplannable, which is
+  // the exact gap this closes. Cost of being wrong: if the game does not
+  // tick-limit them, they merely pace one per tick like any other plan step.
+  // status stays a query: harness-side gather, not a plan step.
+  { tool: "spacemolt_battle", name: "status", kind: "query", eventLabel: "Battle status", params: none },
+  { tool: "spacemolt_battle", name: "retreat", kind: "mutation", eventLabel: "Retreat one zone", params: none },
+  { tool: "spacemolt_battle", name: "stance", kind: "mutation", eventLabel: "Set battle stance",
+    params: z.object({ id: z.enum(["fire", "evade", "brace", "flee"]) }).strict() },
   // --- social (Task: social capabilities) ---
   { tool: "spacemolt_social", name: "chat", kind: "mutation", eventLabel: "Send chat message",
     // target is the CHANNEL, now a VERIFIED enum (CHAT_CHANNELS above) -- not

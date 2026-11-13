@@ -7,7 +7,7 @@
 
 # SpaceMolt command index
 
-Every action the game exposes, one line each. Game API v2.0.0; 268 actions across 21 tools. Our harness registers **63**; **204 are unregistered** — the game can do them and our pilot cannot.
+Every action the game exposes, one line each. Game API v2.0.0; 268 actions across 21 tools. Our harness registers **66**; **201 are unregistered** — the game can do them and our pilot cannot.
 
 **Columns.** ✅ = registered in `src/registry/actions.ts` (our pilot can call it). ⬜ = the game supports it and we never wired it — that column *is* the capability-gap list. 🔌 = transport plumbing: `src/client/http.ts` calls it directly to open the session, so it can never be a registry action and is not a gap. It is the only route excluded, and it is excluded because there is a real call site — an endpoint we simply don't use (`notifications`, `agentlogs`) is an unregistered capability, not plumbing, and stays ⬜. `M` = mutation (costs a tick, ~10s, 1 per tick). `Q` = query (free, unlimited).
 
@@ -124,7 +124,7 @@ Mechanics: [accounts](upstream/docs/accounts.md) · [connections](upstream/docs/
 
 ## `spacemolt_battle`
 
-9 actions · 0 registered · 9 unregistered
+9 actions · 3 registered · 6 unregistered
 Mechanics: [combat](upstream/docs/combat.md) · [death](upstream/docs/death.md)
 
 |  | Action | | What it does |
@@ -133,9 +133,9 @@ Mechanics: [combat](upstream/docs/combat.md) · [death](upstream/docs/death.md)
 | ⬜ | `engage(side_id?)` | Q | Manage your battle — move, change stance, target enemies, or join a fight |
 | ⬜ | `log(id, limit?, tick_end?, tick_start?)` | Q | View the tick-by-tick combat replay of a battle by ID |
 | ⬜ | `reload(id, target?)` | M | Reload a weapon's magazine from ammo in cargo |
-| ⬜ | `retreat()` | Q | Manage your battle — move, change stance, target enemies, or join a fight |
-| ⬜ | `stance(id)` | Q | Manage your battle — move, change stance, target enemies, or join a fight |
-| ⬜ | `status()` | Q | View current battle status |
+| ✅ | `retreat()` | Q | Manage your battle — move, change stance, target enemies, or join a fight |
+| ✅ | `stance(id)` | Q | Manage your battle — move, change stance, target enemies, or join a fight |
+| ✅ | `status()` | Q | View current battle status |
 | ⬜ | `summary(id)` | Q | View the aggregate result of a battle by ID |
 | ⬜ | `target(id)` | Q | Manage your battle — move, change stance, target enemies, or join a fight |
 

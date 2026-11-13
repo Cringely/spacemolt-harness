@@ -331,6 +331,61 @@ describe("registry", () => {
       expect(view.params.safeParse({ station_id: "st_1", bogus: true }).success).toBe(false); // strict
     });
   });
+
+  // Battle escape hatch (Cringely/spacemolt#1018; corsair in_battle reports
+  // #819/#830/#904/#969): the game's own in_battle error says "use the battle
+  // command to fight or flee" and none of it was registered, so a pilot in a
+  // fight had attack as its only lever. VERIFIED against the vendored OpenAPI
+  // (docs/game-reference/upstream/openapi-v2.json, spacemolt_battle tool):
+  // /status properties [] ("Works as a query (no tick cost)"), /retreat
+  // properties [] ("Move one zone back"), /stance properties [id] required [id],
+  // id enum fire|evade|brace|flee, example body {"id":"fire"} (the prose says a
+  // `stance` field, the request schema says `id`; the schema is what validates).
+  describe("battle", () => {
+    test("status is a free query with no params", () => {
+      const a = getAction("status");
+      expect(a.tool).toBe("spacemolt_battle");
+      expect(a.kind).toBe("query");
+      expect(a.params.safeParse({}).success).toBe(true);
+      expect(a.params.safeParse({ id: "x" }).success).toBe(false);
+    });
+
+    // retreat/stance are kind "mutation" although the spec carries no
+    // x-is-mutation on them: PlanSchema admits mutations only, and a query the
+    // planner cannot plan leaves a trapped pilot with no way to flee.
+    test("retreat is a plannable mutation with no params", () => {
+      const a = getAction("retreat");
+      expect(a.tool).toBe("spacemolt_battle");
+      expect(a.kind).toBe("mutation");
+      expect(a.params.safeParse({}).success).toBe(true);
+      expect(a.params.safeParse({ id: "x" }).success).toBe(false);
+    });
+
+    test("stance requires id in fire|evade|brace|flee", () => {
+      const a = getAction("stance");
+      expect(a.tool).toBe("spacemolt_battle");
+      expect(a.kind).toBe("mutation");
+      for (const s of ["fire", "evade", "brace", "flee"]) {
+        expect(a.params.safeParse({ id: s }).success).toBe(true);
+      }
+      expect(a.params.safeParse({}).success).toBe(false);
+      expect(a.params.safeParse({ id: "run" }).success).toBe(false);
+      expect(a.params.safeParse({ stance: "flee" }).success).toBe(false); // prose name, not the schema field
+      expect(a.params.safeParse({ id: "flee", extra: 1 }).success).toBe(false);
+    });
+
+    test("a plan can flee and retreat but cannot plan the status query", () => {
+      const plan = PlanSchema.parse({
+        goal: "get out of the fight",
+        steps: [
+          { action: "stance", params: { id: "flee" } },
+          { action: "retreat", params: {} },
+        ],
+      });
+      expect(plan.steps.length).toBe(2);
+      expect(() => PlanSchema.parse({ goal: "x", steps: [{ action: "status", params: {} }] })).toThrow();
+    });
+  });
 });
 
 describe("plan schema", () => {
