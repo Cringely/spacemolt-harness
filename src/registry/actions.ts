@@ -23,6 +23,12 @@ const none = z.object({}).strict();
 // (one player, needs target_id), emergency (distress/help).
 export const CHAT_CHANNELS = ["local", "system", "faction", "private", "emergency"] as const;
 
+// The four battle stances (spacemolt_battle/stance `id`). SSOT for the registry
+// enum below and the planner digest (digest.ts), which must NAME them because
+// ACTION_VOCAB renders `stance(id:string)` with no enum values -- the same gap
+// chat had. `flee` is the escape: 3 ticks of it disengages (speed-dependent).
+export const BATTLE_STANCES = ["fire", "evade", "brace", "flee"] as const;
+
 // The catalog route (issue #219) is the one game endpoint with NO action
 // segment -- the OpenAPI path is bare `/api/v2/spacemolt_catalog`. Its registry
 // name is therefore "", and this constant is how call sites say that on
@@ -414,6 +420,35 @@ export const REGISTRY: ActionDef[] = [
     params: none },
   { tool: "spacemolt_salvage", name: "tow", kind: "mutation", eventLabel: "Tow a wreck",
     params: z.object({ id: z.string() }).strict() },
+  // --- battle escape hatch (Cringely/spacemolt#1018) ---
+  // The game's own in_battle refusal reads "use the battle command to fight or
+  // flee", and until now `attack` was the only registered combat action, so a
+  // pilot in a fight that attack could not win (or that timed out) had no way
+  // out. Registered: stance only. The rest of the tool stays unwired on
+  // purpose: `status` is a query and a query is unplannable (PlanSchema admits
+  // mutations only) with no gather to call it, so registering it would add a
+  // dead entry; `retreat` steps one zone out, which is not an escape (both
+  // ships start at Outer, escape is 3 ticks of `flee` stance --
+  // upstream/docs/combat.md "Battle Zones", "Escape and Tackle"), and a planner
+  // shown a bare retreat() next to a "fight or flee" error could pick it as
+  // the flee lever. advance/engage/target/reload/log/summary are the tactical
+  // suite. Re-add status with the gather that reads it, retreat with a digest
+  // line that calls it positional.
+  // VERIFIED against the vendored OpenAPI (docs/game-reference/upstream/
+  // openapi-v2.json) and test/fixtures/openapi-slim.json: /spacemolt_battle/
+  // stance properties [id], required [id], id enum fire|evade|brace|flee,
+  // example body {"id":"fire"}. The prose says a `stance` field but the request
+  // schema, the example and the conformance fixture all say `id`, so `id` it
+  // is. The enum comes from the older vendored spec: the newer fixture carries
+  // no enums, so the value set is unconfirmed live.
+  // stance is kind:"mutation" although the spec carries no x-is-mutation on it
+  // (the one place we depart from "the flag is the authority for kind", see
+  // estimate_purchase below): PlanSchema (plan.ts) admits mutations only, and
+  // a query is structurally unplannable, which is the exact gap this closes.
+  // Cost of being wrong: if the game does not tick-limit it, it merely paces
+  // one per tick like any other plan step.
+  { tool: "spacemolt_battle", name: "stance", kind: "mutation", eventLabel: "Set battle stance",
+    params: z.object({ id: z.enum(BATTLE_STANCES) }).strict() },
   // --- social (Task: social capabilities) ---
   { tool: "spacemolt_social", name: "chat", kind: "mutation", eventLabel: "Send chat message",
     // target is the CHANNEL, now a VERIFIED enum (CHAT_CHANNELS above) -- not
