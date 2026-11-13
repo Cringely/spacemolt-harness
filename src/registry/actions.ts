@@ -4,7 +4,12 @@ export interface ActionDef {
   tool: string; // API tool group: "spacemolt" | "spacemolt_auth"
   name: string; // action name == API path segment
   kind: "mutation" | "query";
-  params: z.ZodTypeAny;
+  // `ZodType<any>`, not zod 4's `ZodTypeAny` (= ZodType<unknown>): zod 3's
+  // ZodTypeAny had an `any` output, and PlanStep (plan.ts) is a union of these,
+  // so the executor/agent/normalizer all read `step.action` / `step.params`
+  // off an `any`. Narrowing it to unknown would force a typed plan-step model
+  // across ~100 sites; that is a refactor, not a dependency bump.
+  params: z.ZodType<any>;
   eventLabel: string; // human label for dashboard event feed
 }
 
@@ -301,9 +306,10 @@ export const REGISTRY: ActionDef[] = [
   // shape we have no captured example of -- no load-bearing unknowns. Rejected
   // alternative: five independently-optional fields with exclusivity left to
   // the executor, which would let a malformed deposit{} reach the game and
-  // spend the tick. The refinement wraps the object in a ZodEffects, so the two
-  // shape-readers (digest/ollama vocabulary, the conformance test) go through
-  // paramsObject() in registry/params-shape.ts.
+  // spend the tick. The two shape-readers (digest/ollama vocabulary, the
+  // conformance test) go through paramsObject() in registry/params-shape.ts.
+  // (Under zod 3 the refinement wrapped the object in a ZodEffects and
+  // paramsObject unwrapped it. zod 4 keeps the ZodObject, so it is a pass-through.)
   //
   // The gift itself is bounded in two places, split by what each place can
   // know. HOW MUCH is right here, `.max(GIFT_CREDIT_CEILING)` on `credits`,
@@ -324,7 +330,7 @@ export const REGISTRY: ActionDef[] = [
     }).strict().superRefine((v, ctx) => {
       const item = v.item_id !== undefined || v.quantity !== undefined;
       const gift = v.target !== undefined || v.credits !== undefined || v.message !== undefined;
-      const fail = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+      const fail = (message: string) => ctx.addIssue({ code: "custom", message });
       // Each message is written as a correction the planner can act on, the
       // same way the executor's guard reasons are: a plan rejected here comes
       // back to the planner as this text (planner/parse.ts, planWithSingleRetry).
