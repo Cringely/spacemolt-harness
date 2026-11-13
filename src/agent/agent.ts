@@ -1244,6 +1244,25 @@ export class Agent {
       // the same fail-toward-allowing-a-duplicate direction as the
       // cancel_order clear above.
       if (n.msg_type === "buy_filled") this.clearOpenBuyOrders(() => true);
+
+      // Release Layer 4's `unrecoverable` latch when a battle ends (issue
+      // Cringely/spacemolt#1150). A latch armed while every action was
+      // blocked "in_battle" holds a condition the game then lifts, but the
+      // fingerprint reads nothing about combat and an idle ship changes none
+      // of what it does read, so its only other exits (a differing
+      // fingerprint, an operator instruction) never fire: the corsair sat
+      // frozen 3 days after a stalemate. Dropping lastFingerprint makes the
+      // next replan boundary take the differing-fingerprint branch, which owns
+      // the rest of the reset (stuck, arm count, run length). The backoff the
+      // latch armed is dropped with it, but only while latched, so a transient
+      // planner-failure backoff is left alone. Rejected: an in-battle bit in
+      // the fingerprint (get_status carries no combat field, openapi
+      // GetStatusResponse, so it costs an extra call per tick) and a timed
+      // re-probe (a second latch-exit mechanism for the same condition).
+      if (n.msg_type === "battle_ended" && this.stuck) {
+        this.lastFingerprint = undefined;
+        this.plannerBackoffUntil = 0;
+      }
     }
   }
 
