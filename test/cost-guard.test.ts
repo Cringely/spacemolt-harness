@@ -191,7 +191,7 @@ describe("Layer 3: per-agent rolling plan-budget ceiling", () => {
     };
     const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => now });
     return {
-      store, agent,
+      store, agent, now: () => now,
       setFuel: (f: number) => { fuel = f; },
       tick: async () => { now += 60_000; await agent.runOnce(); },
     };
@@ -200,6 +200,7 @@ describe("Layer 3: per-agent rolling plan-budget ceiling", () => {
 
   test("a pilot saturated at the cap emits plan_budget_exceeded once, not once per replan", async () => {
     const f = saturatedFixture(5, 60);
+    expect(f.agent.snapshot().plannerHealth.budgetCappedUntil).toBe(0); // never capped: finite, JSON-safe
     // A low_fuel wake every 5th minute: the trickle of a live pilot (plan_done
     // wakes ~5 min apart), which is what keeps the gate flipping open one aged-
     // out wake at a time. 200 minutes = 3+ windows at a cap of 5 per 60.
@@ -207,6 +208,9 @@ describe("Layer 3: per-agent rolling plan-budget ceiling", () => {
     const wakes = f.store.recentEvents("a1", 10_000).filter((e) => e.type === "wake").length;
     expect(wakes).toBeGreaterThan(5 * 2); // replanning kept resuming as wakes aged out
     expect(budgetEvents(f.store).length).toBe(1);
+    // The single event is long past the dashboard's 30-minute recency window, so
+    // the THROTTLED banner must read the sticky snapshot field instead.
+    expect(f.agent.snapshot().plannerHealth.budgetCappedUntil).toBeGreaterThan(f.now());
   });
 
   test("a new episode after a full window with no capped tick emits again", async () => {

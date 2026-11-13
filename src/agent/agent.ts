@@ -44,6 +44,12 @@ export interface PlannerHealth {
   // replan boundary observes a differing fingerprint, so the operator sees the
   // agent is stuck rather than merely momentarily quiet under backoff.
   stuck: boolean;
+  // Layer 3 (plan budget): epoch ms until which the pilot counts as budget-capped
+  // (last capped tick + window); 0 when never capped. plan_budget_exceeded is
+  // emitted once per episode, so the dashboard cannot infer a long episode from
+  // event recency and reads this sticky field instead. 0, not -Infinity, so it
+  // survives JSON serialization.
+  budgetCappedUntil: number;
 }
 
 // The ship-vitals subset of the last StatusSnapshot the loop fetched, flattened
@@ -1187,6 +1193,9 @@ export class Agent {
         backoffUntil: this.plannerBackoffUntil,
         consecutiveTransientFailures: this.consecutiveTransientFailures,
         stuck: this.stuck,
+        budgetCappedUntil: Number.isFinite(this.lastBudgetCapTs)
+          ? this.lastBudgetCapTs + (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000
+          : 0,
       },
       status: this.lastStatus
         ? {
