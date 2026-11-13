@@ -359,6 +359,13 @@ export class Store {
       .run(agentId, JSON.stringify(plan), JSON.stringify(goals));
   }
 
+  // Goals only, cursor and plan untouched. savePlan resets the cursor to step
+  // 0, which would re-run a half-finished plan; a retired steer must reach the
+  // row without that side effect. A no-op when no plan row exists.
+  saveGoals(agentId: string, goals: string[]): void {
+    this.db.query("UPDATE plans SET goals = ? WHERE agent_id = ?").run(JSON.stringify(goals), agentId);
+  }
+
   saveCursor(agentId: string, cursor: PlanCursor): void {
     this.db
       .query("UPDATE plans SET step = ?, iteration = ? WHERE agent_id = ?")

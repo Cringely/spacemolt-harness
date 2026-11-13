@@ -5,7 +5,8 @@ import type {
   Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
   FleetDistress, OpenBuyOrder,
 } from "../planner/types";
-import { goalPurchaseCandidates } from "./goal-items";
+import { goalPurchaseCandidates, goalsNamingAction } from "./goal-items";
+import { REGISTRY } from "../registry/actions";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
 import { summarizeStatus, clipPlanContext, clipUntrusted, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
 import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
@@ -342,6 +343,10 @@ const SEEN_NOTIFICATIONS_MAX = 500;
 // written before this cap may exceed it; trimming on load keeps the invariant
 // without any schema change -- goals stay a plain string[]).
 const MAX_GOALS = 5;
+// Registry actions whose repetition is itself the harm (ActionDef.oneShot,
+// Cringely/spacemolt#542). REGISTRY is a static array, so computing this once
+// at module load is exact (simplicity rule 5: the sole input is immutable).
+const ONE_SHOT_ACTIONS: ReadonlySet<string> = new Set(REGISTRY.filter((a) => a.oneShot).map((a) => a.name));
 
 // POI-extraction backstop (issue #253): cap on the learned incompatible-POI
 // map, oldest-evicted like MAX_GOALS. 32 because the memory only needs to
@@ -1113,7 +1118,7 @@ export class Agent {
   // goals; this is the same shape for pinned operator ones.
   //
   // Pass 1 evicts oldest-first, skipping any text still in pinnedInstructions
-  // -- ordinary steers age out exactly as before. Only if pinned entries
+  // or standingGoals (#821) -- ordinary steers age out exactly as before. Only if pinned entries
   // ALONE still exceed `keep` (every unpinned steer already gone) does pass 2
   // evict the oldest pinned survivor too -- but visibly: the same
   // instruction_pin_changed{pinned:false} receipt an explicit revoke writes,
@@ -1123,12 +1128,23 @@ export class Agent {
   private evictOldestUnpinned(goals: string[], keep: number): string[] {
     const survivors = goals.slice();
     for (let i = 0; survivors.length > keep && i < survivors.length; ) {
-      if (this.pinnedInstructions.has(survivors[i]!)) { i++; continue; }
+      // Standing config goals are protected like pinned ones
+      // (Cringely/spacemolt#821). mergeStandingGoals restores a missing one
+      // through this very method, so an age-only pass let the restore of one
+      // standing goal evict another, and the two traded places every replan.
+      if (this.pinnedInstructions.has(survivors[i]!) || this.standingGoals.includes(survivors[i]!)) { i++; continue; }
       survivors.splice(i, 1);
     }
     while (survivors.length > keep) {
-      const text = survivors.shift();
-      if (text !== undefined && this.pinnedInstructions.delete(text)) {
+      // Pass 2 skips standing config goals too (#821, #170 round 2): they sit
+      // at the front, so a plain shift() evicted one, mergeStandingGoals
+      // restored it by evicting the next, and two milestones alternated every
+      // replan. Config max(5) means survivors > keep implies a non-standing
+      // (pinned) entry exists. -1 is unreachable, but break rather than spin.
+      const idx = survivors.findIndex((g) => !this.standingGoals.includes(g));
+      if (idx < 0) break;
+      const text = survivors.splice(idx, 1)[0]!;
+      if (this.pinnedInstructions.delete(text)) {
         try {
           this.emit("instruction_pin_changed", { text, pinned: false });
         } catch { /* telemetry is not the control path -- see instruct() */ }
@@ -2518,6 +2534,24 @@ export class Agent {
     // PlanContext.instruction ONLY, never the persisted goals -- a transient
     // nudge, not a new standing goal.
     if (instruction && opts.persistInstruction !== false) {
+      // Supersession (Cringely/spacemolt#535): a newer operator steer replaces
+      // the older ones. Retirement used to depend on the planner reporting each
+      // steer done, one at a time, so after five steers to a stranded pilot
+      // three "jump and spend fuel" orders sat beside the "do NOT jump"
+      // correction that superseded them. Deterministic here, at intake, where
+      // "newer" is known. Config goals (agents.yaml) and pinned steers
+      // ("standing until revoked", #817) are not errands the newer steer
+      // replaces, and a pinned steer is itself additive: it supersedes nothing.
+      // Rejected alternative: an explicit replaces flag on the instruct body
+      // (the issue's option 2) -- a new API field for stacking nobody has used,
+      // and the default would still have to be replace-all.
+      if (!this.pinnedInstructions.has(instruction)) {
+        const retired = this.goals.filter((g) => !this.standingGoals.includes(g) && !this.pinnedInstructions.has(g));
+        if (retired.length) {
+          this.goals = this.goals.filter((g) => !retired.includes(g));
+          this.emit("instruction_superseded", { instruction, retired });
+        }
+      }
       this.goals.push(instruction);
       // Cap the retained history (issue #186): evict oldest so stale steers
       // age out instead of accumulating forever. See MAX_GOALS for the value
@@ -2526,6 +2560,16 @@ export class Agent {
       // eviction -- see evictOldestUnpinned for why and the visible-eviction
       // fallback when pinned entries alone fill the cap.
       if (this.goals.length > MAX_GOALS) this.goals = this.evictOldestUnpinned(this.goals, MAX_GOALS);
+      // When standing config goals plus pinned steers already fill the cap,
+      // pass 1 of the eviction can only drop the steer just pushed. Config
+      // and pinned goals outrank an errand, so the loss stands, but it must
+      // leave a receipt (PR #170 review): pushing the errand and evicting it
+      // is one step here, so this is the one site that knows it was the loser.
+      if (!this.goals.includes(instruction)) {
+        try {
+          this.emit("instruction_dropped", { instruction, reason: "goal cap full of standing and pinned goals" });
+        } catch { /* telemetry is not the control path -- see instruct() */ }
+      }
     }
     // Re-merge the standing config goals AFTER the push-side eviction above:
     // if the cap just pushed a standing goal off the front, this restores it
@@ -4004,6 +4048,27 @@ export class Agent {
     // already fetched in runOnce -- no extra call) names the system the station
     // is in.
     this.learnStation(step?.action, result, status);
+
+    // One-shot steer retirement (Cringely/spacemolt#542): a successful
+    // oneShot action (self_destruct) spends the operator steer that ordered it,
+    // here at the seam that records the action, not on the planner volunteering
+    // instruction_done (it set none across four plans while the order destroyed
+    // every respawn ship). Success only: a refused or failed step leaves the
+    // order pending. Config goals and pinned rules are never spent, by the same
+    // exemption the instruction_done retirement above applies.
+    if (step && ONE_SHOT_ACTIONS.has(step.action) && (result.kind === "continue" || result.kind === "plan_done")) {
+      const spent = goalsNamingAction(this.goals, step.action)
+        .filter((g) => !this.standingGoals.includes(g) && !this.pinnedInstructions.has(g));
+      if (spent.length) {
+        this.goals = this.goals.filter((g) => !spent.includes(g));
+        // Persist now: a mid-plan oneShot leaves the plan row alive, and a
+        // restart before the next replan would reload the spent order.
+        this.store.saveGoals(this.id, this.goals);
+        for (const instruction of spent) {
+          this.emit("instruction_done", { instruction, reason: "one_shot_action", action: step.action });
+        }
+      }
+    }
 
     // Open-buy-order memory (issue #681): see learnBuyOrderOpened's own doc
     // comment. Same seam as learnStation directly above -- the action, the

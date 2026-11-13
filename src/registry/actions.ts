@@ -11,6 +11,11 @@ export interface ActionDef {
   // across ~100 sites; that is a refactor, not a dependency bump.
   params: z.ZodType<any>;
   eventLabel: string; // human label for dashboard event feed
+  // Repetition is itself the harm (Cringely/spacemolt#542). A successful call
+  // spends the operator steer that ordered it: agent.ts drops the goal naming
+  // the action in the same tick, so a respawn cannot re-fire it. Only
+  // self_destruct today; set it where a repeat costs more than the first call.
+  oneShot?: boolean;
 }
 
 const none = z.object({}).strict();
@@ -417,7 +422,7 @@ export const REGISTRY: ActionDef[] = [
   { tool: "spacemolt", name: "distress_signal", kind: "mutation", eventLabel: "Broadcast distress signal",
     params: z.object({ distress_type: z.enum(["fuel", "repair", "combat"]) }).strict() },
   { tool: "spacemolt", name: "self_destruct", kind: "mutation", eventLabel: "Self-destruct (respawn home)",
-    params: none },
+    params: none, oneShot: true },
   { tool: "spacemolt_salvage", name: "tow", kind: "mutation", eventLabel: "Tow a wreck",
     params: z.object({ id: z.string() }).strict() },
   // --- battle escape hatch (Cringely/spacemolt#1018) ---
