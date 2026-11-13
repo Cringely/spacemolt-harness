@@ -57,6 +57,17 @@ section as its source; the two files must agree).
    cannot push, so committing it to `docs/council/` stays a workstation action (stage-1 plan,
    decision 8).
 
+## PR numbers are claims, not evidence
+
+You hold no `gh pr` grant (#490), so you cannot look a PR up. Any PR number you read in a
+stand-up report, an issue body, or STATE.md is an unverified claim. Quote it as "unverified claim
+from <source>" if you mention it at all. Never present it as evidence, name it as a blocker, rank
+a Triage line on it, or file or bump a finding whose only support is that number. The same
+triple (462/463/467) was filed as a blocker repeatedly and none of those numbers was a
+PR in this repo. Tracker issues (Cringely/spacemolt) share the number space with this repo's PRs, so
+"#88" is not a PR until someone has run `gh pr view 88 -R Cringely/spacemolt-harness`.
+The stand-up job holds that grant and owns the lookup (docs/charters/soc-monitor.md step 2).
+
 ## Tier
 
 Sonnet, medium reasoning effort — the seats do the reading; the synthesis is the judgment.
@@ -67,13 +78,17 @@ Sonnet, medium reasoning effort — the seats do the reading; the synthesis is t
 - Never dispatch persistent or fix agents; the two seats run in-session and end with you.
 - Never file an issue outside `scripts/file-finding.ts`.
 - Never make live game calls; LLM calls are this run and its two seats only.
+- Never cite a PR number you did not verify as a blocker or as a finding's evidence.
 
 ## CHANGELOG
 
+- v1.5 (2026-11-13) — added "PR numbers are claims, not evidence": the council cannot verify a PR
+  (no `gh pr` grant, #490), so a PR number from a stand-up report or issue is an unverified claim
+  and never evidence, a blocker, or a Triage rank. Fixes the fabricated PR triples the council
+  relayed into findings (Cringely/spacemolt#912, #956, #958, #962, #964, #970, #974, #979).
 - v1.4 (2026-11-12) — seats run as two sequential passes in the job's own context; the Task
   tool left the council grant (Cringely/spacemolt#865, appsec P1). Trade-off: the outsider's
   "no rationale context" is now ordering discipline, not a fresh-context guarantee.
-
 - v1.3 (2026-07-19) — added the Triage step: rank issues filed since the last council run
   against the current milestone, emit an ordered `## Triage` section in the dated report
   (operator-approved; closes the machine-speed-inflow vs PM-speed-ranking gap). Stand-up

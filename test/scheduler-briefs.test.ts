@@ -101,4 +101,54 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
     expect(charter).toContain("bun scripts/strategy-store.ts steer");
     expect(charter).toContain("POST /api/store/:agentId/steer");
   });
+
+  // Catches (Cringely/spacemolt#912, #956, #958, #962, #964, #970, #974, #979,
+  // #886, #1048, #1056): the stand-up citing a PR number it never looked up. The
+  // same fabricated triple (462/463/467) was filed as a "blocker" at least four
+  // times, and the tracker's own issues #88/#89/#91 were once read as PRs. The
+  // charter is inlined verbatim into the spawn, so these pins are the only thing
+  // standing between that text and a silent revert. Instruction body only: a
+  // CHANGELOG may name the rule as history.
+  describe("PR claims are verified before they are cited", () => {
+    const instructions = (path: string) =>
+      readFileSync(join(root, path), "utf8").split(/^## CHANGELOG/m)[0]!;
+
+    // The `-R` is load-bearing: the tracker repo shares number space with the
+    // code repo, so a bare `gh pr view 88` from the wrong cwd answers for the
+    // wrong repo (or not at all).
+    test("soc-monitor requires a same-cycle gh pr view against the harness repo, open state only", () => {
+      const c = instructions("docs/charters/soc-monitor.md");
+      expect(c).toMatch(/gh pr view <N> -R Cringely\/spacemolt-harness/);
+      expect(c).toMatch(/state.*`OPEN`/s);
+      expect(c).toMatch(/THIS cycle/);
+    });
+
+    // Catches (#886): a PR that merged or closed since the claim was made.
+    test("soc-monitor drops a claim whose PR is missing, merged or closed", () => {
+      const c = instructions("docs/charters/soc-monitor.md");
+      expect(c).toMatch(/`MERGED`|MERGED/);
+      expect(c).toMatch(/Could not resolve to a PullRequest/);
+    });
+
+    // Catches (#1048, #1056): GitHub computes mergeability lazily, so UNKNOWN is
+    // the never-queried population and must not be read as merge-ready.
+    test("soc-monitor does not treat mergeable UNKNOWN as merge-ready", () => {
+      const c = instructions("docs/charters/soc-monitor.md");
+      expect(c).toMatch(/UNKNOWN[^\n]*NOT merge-ready/);
+      expect(c).toContain("MERGEABLE");
+    });
+
+    // The council holds no gh pr grant (#490), so it cannot verify a PR and its
+    // brief must say to treat the number as a claim. Pairing the prose with the
+    // grant keeps them agreeing: if a gh pr grant is ever added, the sentence
+    // "you hold no gh pr grant" becomes false and this fails until the brief
+    // is rewritten to require the lookup instead.
+    test("council brief treats a PR number as an unverified claim and the job holds no gh pr grant", () => {
+      const b = instructions("docs/briefs/council-review.md");
+      expect(b).toMatch(/PR number[\s\S]{0,120}unverified claim/i);
+      expect(b).toMatch(/hold no `gh pr` grant/);
+      const council = JOBS.find((j) => j.id === "council")!;
+      expect(council.allowedTools.some((t) => t.startsWith("Bash(gh pr"))).toBe(false);
+    });
+  });
 });
