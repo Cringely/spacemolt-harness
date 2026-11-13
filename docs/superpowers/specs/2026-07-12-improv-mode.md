@@ -69,6 +69,26 @@ Resources / survival:
   ship-to-ship transfer attempt and blocked. (Also a §5 deterministic backstop: in plan-then-execute
   the executor blocks a non-"fleet" `target` before the call when no utility module is fitted,
   issue #595.)
+- Check the tank before you refuel: a refill with the tank already at maximum is a guaranteed
+  `tank_full` refusal and a wasted action (99 of them fleet-wide in 72h, tracker
+  Cringely/spacemolt#995). Compare `ship.fuel` with `ship.max_fuel` first and move on if they
+  match. (Also a §5 deterministic backstop: in plan-then-execute the executor advances past a
+  tank-refill step when this tick's status reads the tank full.)
+- `espionage` needs faction membership plus a faction-built Espionage HQ. With no `faction_id`
+  on your player block it is refused every time, and no action you have can join a faction, so
+  pick another goal (tracker Cringely/spacemolt#1004). (Also a §5 deterministic backstop: the
+  executor blocks espionage when status shows no faction.)
+- `distress_signal` allows one active signal and a one-hour cooldown between calls, and nothing
+  in `get_status` shows either. Remember when you last sent one, including a mayday the harness
+  sent for you, and do not send another inside the hour: the game answers `cooldown` or
+  `already_active` and the wait is lost (67 refused retries in one 72h window, tracker
+  Cringely/spacemolt#792). (Also a §5 deterministic backstop for plan-then-execute pilots.)
+- Once the game rejects an action with `in_battle`, movement, `scan` and `distress_signal`
+  stay refused until the battle ends, and `get_status` does not say when that is. Stop
+  retrying them and either fight or wait; `use_item` and `reload` still work mid-battle (26
+  rejected actions in 72h, tracker Cringely/spacemolt#892). (Also a §5 deterministic backstop:
+  the executor refuses those actions for a short window after the game's own `in_battle`
+  answer.)
 - Before you plan a `refuel`, check that a fuel source exists and the tank is not full. At a
   station, `get_system`'s `fuel_reserve` for your POI is the station tank: 0 means a station
   refuel fails with `station_fuel_empty`, and it then works only by cracking `fuel_cell` items

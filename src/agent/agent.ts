@@ -9,7 +9,7 @@ import { goalPurchaseCandidates, goalsNamingAction } from "./goal-items";
 import { REGISTRY } from "../registry/actions";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
 import { summarizeStatus, clipPlanContext, clipUntrusted, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
-import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
+import { executeTick, miningEquipmentKey, classifyGameError, IN_BATTLE_BLOCKED_ACTIONS, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
   knownStationSystems, rememberStation,
@@ -227,6 +227,7 @@ interface ActionEventPayload {
   params?: unknown;
   outcome?: string;
   result?: string;
+  guard?: boolean; // set on our own pre-call refusals only (see the emit("action") site)
 }
 
 // NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD and
@@ -301,6 +302,12 @@ const FUEL_SIGHTING_LOOKBACK = MAX_STATION_SIGHTINGS;
 // the query site, not by this constant; this constant only caps how many
 // distinct pairs the query itself scans.
 const ITEM_UNAVAILABLE_LOOKBACK = 50;
+
+// distress_signal cooldown (tracker Cringely/spacemolt#792): the game's own
+// number, "a 1-hour cooldown between calls" (docs/game-reference/upstream/
+// docs/missions.md:70, repeated at guides/fuel.md:237). Not a tunable: it is
+// the game's rule, and a longer guess would refuse a legal re-broadcast.
+const DISTRESS_COOLDOWN_MS = 60 * 60_000;
 
 // Deterministic server-failure retry (#431, live 2026-07-19: each travel 503
 // bought a full ~19.5k-char planner call whose new plan re-issued the
@@ -3850,6 +3857,60 @@ export class Agent {
     this.emit("planner_error", { message: e instanceof Error ? e.message : String(e) });
   }
 
+  // distress_signal cooldown (tracker Cringely/spacemolt#792): whole minutes
+  // left on the game's one-hour cooldown (DISTRESS_COOLDOWN_MS), or undefined
+  // when this pilot has no distress call inside it. Read from the persisted
+  // event stream, so it survives a restart. Two producers count, because both
+  // put a signal out: a planner step that SUCCEEDED (outcome continue or
+  // plan_done -- a game refusal is `blocked` and proves nothing was sent), and
+  // the strand steward's direct call, which bypasses the executor and emits
+  // steward_distress instead. Our own guard refusals are `blocked` too, so
+  // they cannot slide the window: it always runs from the last real call.
+  // Not covered: a signal sent by the improv/MCP driver, which writes no such
+  // event. The game's own cooldown refusal still catches that one.
+  private distressCooldownMinutes(): number | undefined {
+    const now = this.now();
+    const since = now - DISTRESS_COOLDOWN_MS;
+    let last = -Infinity;
+    for (const e of this.store.eventsByTypeSince(this.id, "action", since)) {
+      const p = e.payload as ActionEventPayload | null;
+      if (p?.action === "distress_signal" && (p.outcome === "continue" || p.outcome === "plan_done")) {
+        last = Math.max(last, e.ts);
+      }
+    }
+    for (const e of this.store.eventsByTypeSince(this.id, "steward_distress", since)) {
+      last = Math.max(last, e.ts);
+    }
+    if (last === -Infinity) return undefined;
+    const left = Math.ceil((last + DISTRESS_COOLDOWN_MS - now) / 60_000);
+    return left > 0 ? left : undefined;
+  }
+
+  // in_battle memory (tracker Cringely/spacemolt#892). get_status carries no
+  // battle flag (V2GameState.player has none, openapi-v2.json), so the only
+  // evidence a pilot is in a battle is the game having just said so: a blocked
+  // action event whose result classifies as in_battle. The window is
+  // repeatBlockWindowMinutes, reused as the #669 repeated-buy memory reuses it:
+  // nothing signals the battle ended, so a bounded memory that fails toward
+  // re-allowing (one probe per window reaches the game and re-arms it if the
+  // fight goes on) beats a latch. Simpler alternative rejected: no window,
+  // cleared by a later success. Every action this memory blocks is one that
+  // cannot succeed meanwhile, so a latch would never clear.
+  //
+  // Only the GAME's refusal arms it. Our own refusals are guard-tagged blocked
+  // events and are skipped, so a planner that keeps retrying cannot slide the
+  // window forward (the PR #73 failure of the sibling guard). The query runs
+  // only for steps in IN_BATTLE_BLOCKED_ACTIONS.
+  private inBattleRecently(): boolean {
+    const windowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    return this.store.eventsByTypeSince(this.id, "action", this.now() - windowMs).some((e) => {
+      const p = e.payload as ActionEventPayload | null;
+      return p?.outcome === "blocked" && !p.guard && typeof p.result === "string"
+        && failureClass(p.result) === "in_battle";
+    });
+  }
+
   // status is this tick's snapshot, already fetched in runOnce -- forwarded so
   // executeTick's inTransit guard (SM-11) and travel_to/sell pre-snapshots
   // reuse it instead of paying for a second get_status. May be null if the
@@ -3972,6 +4033,8 @@ export class Agent {
       this.api, this.plan!, this.cursor, status, this.currentSparseRules(), buyOrderAlreadyOpen,
       fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,
       this.config.selfDestructAuthorized,
+      step?.action === "distress_signal" ? this.distressCooldownMinutes() : undefined,
+      step && IN_BATTLE_BLOCKED_ACTIONS.has(step.action) ? this.inBattleRecently() : undefined,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of
