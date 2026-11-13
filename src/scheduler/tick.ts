@@ -20,7 +20,7 @@ import { runJob, type Spawner } from "./spawn";
 import { stewardPrInFlight } from "./steward-standdown";
 import { acquireLock, loadAnchors, releaseLock, saveAnchors, stopRequested, type JobId } from "./state";
 import { pollUsage, USAGE_POLL_SKIPPED, type UsageFetcher, type UsagePollResult } from "./usage-poll";
-import { reapStaleWorktrees } from "./worktree";
+import { reapStaleWorktrees, type CommandRunner } from "./worktree";
 
 // Re-exported so scripts/scheduler.ts's existing `import type { GitRunner }
 // from "../src/scheduler/tick"` keeps working — the interfaces now live in
@@ -39,6 +39,8 @@ export interface TickDeps {
   checkoutDir: string;
   secretsDir: string;
   gitRunner: GitRunner;
+  /** Passed through to runJob: installs locked deps in each job worktree. */
+  commandRunner: CommandRunner;
   spawner: Spawner;
   /** Stage-4 usage-endpoint capture (#183). Optional: when absent the poll is
    *  skipped entirely — production wires the real fetcher (scripts/scheduler.ts),
@@ -285,6 +287,7 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
         clock: deps.clock,
         stateDir: deps.stateDir,
         gitRunner: deps.gitRunner,
+        commandRunner: deps.commandRunner,
         pinnedSha: resolvePinnedSha(),
         secretsDir: deps.secretsDir,
         ...(deps.waitTimeout ? { waitTimeout: deps.waitTimeout } : {}),

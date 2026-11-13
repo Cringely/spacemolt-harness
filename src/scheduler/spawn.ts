@@ -19,7 +19,7 @@ import type { GitRunner } from "./git";
 import type { JobDef } from "./jobs";
 import { POLICY_PATHS } from "./policy-paths";
 import { loadAnchors, saveAnchors } from "./state";
-import { createJobWorktree, removeJobWorktree } from "./worktree";
+import { createJobWorktree, installJobDependencies, removeJobWorktree, type CommandRunner } from "./worktree";
 
 export interface SpawnHandle {
   // stdout is the child's captured output — the `claude -p --output-format json`
@@ -103,6 +103,8 @@ export interface RunDeps {
   stateDir: string;
   /** The one seam runJob uses to create/destroy its ephemeral worktree (#585) — no direct filesystem git calls here. */
   gitRunner: GitRunner;
+  /** Runs the dependency install inside the fresh worktree, before the job spawns. Required (not optional): an absent installer would silently restore the no-node_modules spawn. */
+  commandRunner: CommandRunner;
   /** Commit every job this tick is pinned to (tick.ts reads it once per tick from origin/main). */
   pinnedSha: string;
   secretsDir: string;
@@ -318,6 +320,9 @@ export async function runJob(job: JobDef, deps: RunDeps): Promise<RunOutcome> {
     // creation failure is caught below exactly like a charter-read failure
     // (never a throw out of runJob), so no separate error path is needed.
     worktreePath = createJobWorktree(deps.gitRunner, deps.stateDir, cycleId, deps.pinnedSha);
+    // A fresh worktree has no node_modules; install the locked deps before
+    // anything spawns (see worktree.ts). Throws → recorded as a job failure.
+    installJobDependencies(deps.commandRunner, worktreePath);
     // Charter read failure is a job failure, recorded, never a throw — a
     // charterless spawn would run an unarmed identity at full cadence.
     const charterText = readFileSync(join(worktreePath, job.charterPath), "utf8");
