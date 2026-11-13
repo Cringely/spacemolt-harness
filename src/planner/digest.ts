@@ -884,7 +884,16 @@ export function buildDigest(ctx: PlanContext): string {
     // position; this line is that model, and the executor's target-locality
     // guard is the deterministic backstop. Gated on ctx.surroundings like the
     // lines above because it refers to the POIs list rendered there.
-    lines.push(`The POIs above are ONLY the POIs of the system you are in RIGHT NOW; a step's id is resolved when that step RUNS, not when you write it. Your plan executes over many ticks from a MOVING position: after a travel_to or jump step you are in a DIFFERENT system where none of the POI ids above exist. So never place a travel{id} for one of the POIs above AFTER a step that leaves this system (a guaranteed error, not a round trip) -- end the plan when you arrive and plan the next leg from the new system's own POI list.`);
+    // Cringely/spacemolt#1151: "end the plan when you arrive" contradicts the
+    // Known stations line (reaching one is THREE steps), and the planner obeyed
+    // the broader sentence -- 80 of 287 miner plans in 24h were a bare travel_to,
+    // each costing a full replan for the dock leg. A Known station's POI id is a
+    // receipt from a past dock, not an id from the wrong system, so it is exempt.
+    // Gated on a listed stationPoiId: with none, the original rule stands.
+    const stationExemption = ctx.knownStations?.some((s) => s.stationPoiId)
+      ? `, EXCEPT a Known station system listed with its station POI: that id is a receipt from a past dock, so reach it in ONE plan (travel_to, then travel{id=<that station POI>}, then dock) rather than stopping at the system`
+      : "";
+    lines.push(`The POIs above are ONLY the POIs of the system you are in RIGHT NOW; a step's id is resolved when that step RUNS, not when you write it. Your plan executes over many ticks from a MOVING position: after a travel_to or jump step you are in a DIFFERENT system where none of the POI ids above exist. So never place a travel{id} for one of the POIs above AFTER a step that leaves this system (a guaranteed error, not a round trip) -- end the plan when you arrive and plan the next leg from the new system's own POI list${stationExemption}.`);
   }
   return lines.join("\n");
 }
