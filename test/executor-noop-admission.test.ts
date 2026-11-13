@@ -137,3 +137,41 @@ describe("distress_signal on cooldown (#792)", () => {
     expect(calls).toEqual(["refuel"]);
   });
 });
+
+describe("actions the game rejects with in_battle (#892)", () => {
+  // The four named in the tracker issue's 72h sample: distress_signal, jump,
+  // scan, travel_to. agent.ts decides whether a battle is on (see
+  // test/agent-in-battle-guard.test.ts for the producing seam) and hands the
+  // executor a boolean.
+  const steps: Array<[string, Plan]> = [
+    ["distress_signal", { goal: "g", steps: [{ action: "distress_signal", params: { distress_type: "combat" } }] }],
+    ["jump", { goal: "g", steps: [{ action: "jump", params: { id: "sys_b" } }] }],
+    ["scan", { goal: "g", steps: [{ action: "scan", params: { id: "p1" } }] }],
+    ["travel_to", { goal: "g", steps: [{ action: "travel_to", params: { system_id: "sys_b" } }] }],
+  ];
+  const run = (api: GameApi, plan: Plan, inBattle: boolean | undefined) =>
+    executeTick(
+      api, plan, { step: 0, iteration: 0 }, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, inBattle,
+    );
+
+  for (const [name, plan] of steps) {
+    test(`${name} is refused before the game while a battle is on, in prose`, async () => {
+      const { api, calls } = stubApi(status({ docked: false }));
+      const r = await run(api, plan, true);
+      expect(calls).toEqual([]);
+      expect(r.kind).toBe("blocked");
+      if (r.kind !== "blocked") throw new Error("unreachable");
+      expect(r.guard).toBe(true);
+      expect(r.reason).toContain(name);
+      expect(r.reason).not.toMatch(/\w+\{/);
+    });
+  }
+
+  test("a combat action is never refused: it is how the battle ends", async () => {
+    const attack: Plan = { goal: "g", steps: [{ action: "attack", params: { id: "pirate_1" } }] };
+    const { api, calls } = stubApi(status({ docked: false }));
+    await run(api, attack, true);
+    expect(calls).toEqual(["attack"]);
+  });
+});

@@ -1562,6 +1562,16 @@ function orderCreditBlock(
 }
 
 /**
+ * Plan actions the game has been seen to reject with in_battle (tracker
+ * Cringely/spacemolt#892, the 72h sample: distress_signal, jump, scan,
+ * travel_to). Evidence-bound on purpose, see the guard in executeTick. Shared
+ * with agent.ts so it only pays for the battle read on a step that could use it.
+ */
+export const IN_BATTLE_BLOCKED_ACTIONS: ReadonlySet<string> = new Set([
+  "distress_signal", "jump", "scan", "travel_to",
+]);
+
+/**
  * Runs exactly one game mutation and reports where the plan stands.
  *
  * `tickStatus` is this tick's status snapshot, already fetched by the caller
@@ -1615,6 +1625,10 @@ export async function executeTick(
   // agent.ts (this file is store-free and clockless). Undefined or <= 0: no
   // cooldown on record.
   distressCooldownMinutes?: number,
+  // Tracker Cringely/spacemolt#892: appended at the end for the same reason.
+  // True when agent.ts holds a recent game-confirmed in_battle refusal for
+  // this pilot. Plain data: this file stays store-free and clockless.
+  inBattle?: boolean,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1701,6 +1715,27 @@ export async function executeTick(
       "espionage refused: you are not in any faction, and espionage is a faction command that needs " +
       "membership plus a faction-built Espionage HQ. Joining a faction is not something a plan can do " +
       "from here, so choose a goal that does not depend on it.",
+    );
+  }
+
+  // in_battle guard (tracker Cringely/spacemolt#892: 26 corsair actions in
+  // 72h rejected with "in_battle: cannot perform this action while in combat.
+  // Use the battle command to fight or flee."). Invariant: an action the game
+  // has been seen to reject with in_battle is not SUBMITTED while that
+  // rejection is still fresh. get_status carries no battle flag, so `inBattle`
+  // is the pilot's own recent refusal, windowed in agent.ts (see
+  // inBattleRecently there).
+  //
+  // The set is exactly the four the tracker evidence names, not "every
+  // non-combat action": the game does not publish the full blocked list
+  // (use_item and reload are documented as working mid-battle), and a guess
+  // wider than the evidence would refuse something that works. attack and the
+  // other combat actions are never here, since they are how a battle ends.
+  if (inBattle && IN_BATTLE_BLOCKED_ACTIONS.has(step.action)) {
+    return guardBlock(
+      `${step.action} refused: a battle is under way (the game recently rejected an action with in_battle), ` +
+      `and movement, scanning and distress calls stay blocked until it ends. ` +
+      `Only combat actions can resolve it, so fight or wait it out.`,
     );
   }
 

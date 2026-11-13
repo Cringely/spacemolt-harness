@@ -8,7 +8,7 @@ import type {
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
 import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
-import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
+import { executeTick, miningEquipmentKey, classifyGameError, IN_BATTLE_BLOCKED_ACTIONS, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
   knownStationSystems, rememberStation,
@@ -220,6 +220,7 @@ interface ActionEventPayload {
   params?: unknown;
   outcome?: string;
   result?: string;
+  guard?: boolean; // set on our own pre-call refusals only (see the emit("action") site)
 }
 
 // NO_PROGRESS_REPLANS, STRAND_FUEL_BLOCK_THRESHOLD and
@@ -3743,6 +3744,31 @@ export class Agent {
     return left > 0 ? left : undefined;
   }
 
+  // in_battle memory (tracker Cringely/spacemolt#892). get_status carries no
+  // battle flag (V2GameState.player has none, openapi-v2.json), so the only
+  // evidence a pilot is in a battle is the game having just said so: a blocked
+  // action event whose result classifies as in_battle. The window is
+  // repeatBlockWindowMinutes, reused as the #669 repeated-buy memory reuses it:
+  // nothing signals the battle ended, so a bounded memory that fails toward
+  // re-allowing (one probe per window reaches the game and re-arms it if the
+  // fight goes on) beats a latch. Simpler alternative rejected: no window,
+  // cleared by a later success. Every action this memory blocks is one that
+  // cannot succeed meanwhile, so a latch would never clear.
+  //
+  // Only the GAME's refusal arms it. Our own refusals are guard-tagged blocked
+  // events and are skipped, so a planner that keeps retrying cannot slide the
+  // window forward (the PR #73 failure of the sibling guard). The query runs
+  // only for steps in IN_BATTLE_BLOCKED_ACTIONS.
+  private inBattleRecently(): boolean {
+    const windowMs =
+      (this.config.repeatBlockWindowMinutes ?? AGENT_DEFAULTS.repeatBlockWindowMinutes) * 60_000;
+    return this.store.eventsByTypeSince(this.id, "action", this.now() - windowMs).some((e) => {
+      const p = e.payload as ActionEventPayload | null;
+      return p?.outcome === "blocked" && !p.guard && typeof p.result === "string"
+        && failureClass(p.result) === "in_battle";
+    });
+  }
+
   // status is this tick's snapshot, already fetched in runOnce -- forwarded so
   // executeTick's inTransit guard (SM-11) and travel_to/sell pre-snapshots
   // reuse it instead of paying for a second get_status. May be null if the
@@ -3865,6 +3891,7 @@ export class Agent {
       fuelReserveConfig, fuelPerJump, itemUnavailableAtStation, this.fleetUsernames,
       this.config.selfDestructAuthorized,
       step?.action === "distress_signal" ? this.distressCooldownMinutes() : undefined,
+      step && IN_BATTLE_BLOCKED_ACTIONS.has(step.action) ? this.inBattleRecently() : undefined,
     );
 
     // #431: a transient server failure (HTTP 5xx / network / open breaker) of
