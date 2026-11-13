@@ -1610,6 +1610,11 @@ export async function executeTick(
   // Issue #705: appended at the end for the same reason -- every existing
   // positional call site keeps its argument list unaffected.
   selfDestructAuthorized?: boolean,
+  // Tracker Cringely/spacemolt#792: appended at the end for the same reason.
+  // Whole minutes left on the distress_signal cooldown, plain data computed in
+  // agent.ts (this file is store-free and clockless). Undefined or <= 0: no
+  // cooldown on record.
+  distressCooldownMinutes?: number,
 ): Promise<StepResult> {
   const step = plan.steps[cursor.step];
   if (!step) return { kind: "plan_done" };
@@ -1696,6 +1701,29 @@ export async function executeTick(
       "espionage refused: you are not in any faction, and espionage is a faction command that needs " +
       "membership plus a faction-built Espionage HQ. Joining a faction is not something a plan can do " +
       "from here, so choose a goal that does not depend on it.",
+    );
+  }
+
+  // distress_signal cooldown guard (tracker Cringely/spacemolt#792: 43 corsair
+  // + 24 scout failed retries in one window, answered "cooldown: Distress
+  // signal on cooldown. Try again in Nm0s." or "already_active"). Invariant: a
+  // distress_signal is never SUBMITTED inside the one-hour cooldown that
+  // follows this pilot's own last one (missions.md:70, "one active distress
+  // signal at a time, a 1-hour cooldown between calls"). get_status carries no
+  // distress flag, so the only source is the pilot's own history, which
+  // agent.ts reduces to a minutes-left number (distressCooldownMinutes).
+  //
+  // Scope on purpose: the documented 1-hour cooldown only. An active signal
+  // can outlive it (its missions expire in 3 hours), and past the hour the
+  // call goes to the game once more and learns already_active there, because
+  // blocking on a guessed 3-hour life would refuse a re-broadcast after an
+  // early rescue. A block, with the wait in prose: the planner should spend
+  // its steps on something else, not on this call.
+  if (step.action === "distress_signal" && distressCooldownMinutes !== undefined && distressCooldownMinutes > 0) {
+    return guardBlock(
+      `distress_signal refused: your last one went out within the past hour and the game allows one ` +
+      `every 60 minutes, with about ${distressCooldownMinutes} minutes left. Spend the wait on other ` +
+      `income or on moving toward fuel.`,
     );
   }
 

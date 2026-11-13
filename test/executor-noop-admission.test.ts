@@ -97,3 +97,43 @@ describe("espionage while unaffiliated (#1004)", () => {
     expect(calls).toEqual(["espionage"]);
   });
 });
+
+describe("distress_signal on cooldown (#792)", () => {
+  // missions.md:70: "one active distress signal at a time, a 1-hour cooldown
+  // between calls". The executor is store-free; agent.ts hands it the minutes
+  // left (see test/agent-distress-cooldown.test.ts for the producing seam).
+  const plan: Plan = { goal: "sos", steps: [{ action: "distress_signal", params: { distress_type: "fuel" } }] };
+  const run = (api: GameApi, minutes: number | undefined) =>
+    executeTick(
+      api, plan, { step: 0, iteration: 0 }, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, minutes,
+    );
+
+  test("minutes left on the cooldown refuse the call before the game, naming the wait in prose", async () => {
+    const { api, calls } = stubApi(status({ docked: false }));
+    const r = await run(api, 42);
+    expect(calls).toEqual([]);
+    expect(r.kind).toBe("blocked");
+    if (r.kind !== "blocked") throw new Error("unreachable");
+    expect(r.guard).toBe(true);
+    expect(r.reason).toContain("42 minutes");
+    expect(r.reason).not.toMatch(/\w+\{/);
+  });
+
+  test("no cooldown on record, or an expired one, reaches the game", async () => {
+    for (const minutes of [undefined, 0]) {
+      const { api, calls } = stubApi(status({ docked: false }));
+      await run(api, minutes);
+      expect(calls).toEqual(["distress_signal"]);
+    }
+  });
+
+  test("the guard is scoped to distress_signal: another step ignores the cooldown", async () => {
+    const { api, calls } = stubApi(status({ fuel: 10 }));
+    await executeTick(
+      api, { goal: "fill", steps: [{ action: "refuel", params: {} }] }, { step: 0, iteration: 0 },
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 42,
+    );
+    expect(calls).toEqual(["refuel"]);
+  });
+});
