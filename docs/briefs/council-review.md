@@ -26,7 +26,11 @@ not the capability-(b) agent dispatch the D1 gate keeps off.
 ## Triage — re-rank the backlog inflow (added v1.3)
 
 Issues now arrive machine-speed (strategy/council/steward file autonomously) while ranking was
-PM-speed only; this step closes that gap. After the two seats return, list the issues OPENED OR
+PM-speed only; this step closes that gap. First find the previous report's date:
+`bun scripts/read-latest-report.ts --glob '*-council-review.md'`, the WHOLE command on ONE LINE. It
+prints `FOUND <file> mtime=<ISO8601>` then the report, or the literal `NO_MATCHING_REPORT_FOUND`
+(then use the last 48 hours). You have no `ls`/`find`/`printenv` grant, and a denial from any
+other lookup is not evidence that no report exists. After the two seats return, list the issues OPENED OR
 REOPENED since the previous council report (`gh issue list --search "created:>=<prev-report-date>"`,
 plus any the seats flagged), and rank the top items against the current milestone
 (`docs/milestones.md`) and the simplicity rules. Output: a `## Triage` section in the dated
@@ -40,8 +44,9 @@ section as its source; the two files must agree).
 
 1. **Findings → backlog issues**, filed ONLY via `bun scripts/file-finding.ts --dedup-key
    <stable-key> --title <title> --body-b64 <base64>` — the WHOLE command on ONE LINE, your
-   finding body base64-encoded as the `--body-b64` value (no heredoc, no pipe, no newline in
-   the command: a headless job's permission layer denies a multi-line Bash command). The
+   finding body base64-encoded as the `--body-b64` value with the encoding method the work
+   order names (no heredoc, no pipe, no newline in this command: a headless job's permission
+   layer denies a multi-line Bash command). The
    mechanical filer enforces the #114 verdict-(a) conditions (dedup incl. recently-closed,
    machine-filed label + provenance, bump-not-refile, per-cycle cap). Never `gh issue create`
    directly.
@@ -50,9 +55,8 @@ section as its source; the two files must agree).
    report body base64-encoded as the `--body-b64` value (same one-line rule). It lands under
    `$SCHEDULER_STATE_DIR/reports/` and the jailed writer accepts nothing outside it (you have
    no plain file-write tool). Contents: outsider verdict, insider verdict, synthesis, findings
-   filed (with issue numbers). FLAG the report for PM pickup in your final output — your PAT
-   cannot push, so committing it to `docs/council/` stays a workstation action (stage-1 plan,
-   decision 8).
+   filed (with issue numbers). That directory is the record: nothing is committed or picked up
+   from it (your PAT cannot push, stage-1 plan, decision 8).
 
 ## Tier
 
@@ -67,6 +71,10 @@ Sonnet, medium reasoning effort — the seats do the reading; the synthesis is t
 
 ## CHANGELOG
 
+- v1.4 (2026-11-13) — Triage names `bun scripts/read-latest-report.ts` as the way to find the
+  previous report's date (the job now holds that grant). Findings and the report encode their
+  body with the work order's single base64 method. Dropped the PM-pickup / `docs/council/`
+  commit expectation: the state-dir report is the record (operator default).
 - v1.3 (2026-07-19) — added the Triage step: rank issues filed since the last council run
   against the current milestone, emit an ordered `## Triage` section in the dated report
   (operator-approved; closes the machine-speed-inflow vs PM-speed-ranking gap). Stand-up

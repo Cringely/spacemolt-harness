@@ -1342,3 +1342,15 @@ The accepted cost is blast radius. A stolen `store_bearer` used to buy event rea
 - *(F) Require identical segment sets instead of a veto [rejected].* Keeps 4 of 42 snapshot pairs and still misses ids the key parser drops as durations (synthesis).
 
 **Decision.** (D). A fourth tier, `findTitleMatch`, runs only after every minted-key tier misses, so a keyed home still wins. It applies the ceremony's predicate (its similarity test) to open issues, then `titlesNameDifferentEntities` vetoes any pair where a fleet pilot id, a registered game action or a scheduler job id appears in only one title. A match bumps the lowest-numbered issue with the full finding, and an unreadable backlog falls back to create. Replayed over the 2026-09-22 snapshot, 28 of 306 duplicates bump, with zero cross-pilot, cross-action or cross-job merges. The veto refused four true bumps, which the ceremony still sees. Ablated: removing the veto bumps the pilot twin, and each word list reddens its own case (PR #147 fix round).
+
+## 2026-11-13 - One granted base64 method for every job, and council reads its own reports (Cringely/spacemolt#798, #717)
+
+**Context.** Every job's work order demands a base64 flag (`--body-b64`, `--text-b64`, `--semantic-b64`), because a headless job's permission layer splits a command on newlines and denies a heredoc body. But no job's closed tool list granted any command that produces base64, so agents hand-encoded (one slipped character filed a garbled body, #980) or rediscovered a workaround per cycle (#905, #1002, #1123, ten-plus duplicate issues). Council's brief also told it to find the previous report's date with no command able to do that (#717).
+
+**Options.**
+- *(A) A plain-text flag on the scripts [rejected].* Untrusted text would reach a script unencoded, as shell text.
+- *(B) Borrow `gh issue list --jq @base64` (#1002) [rejected].* Only jobs holding a gh grant could use it.
+- *(C) A new `scripts/body-encode.ts` [deferred].* Adds a script and a grant per job for what two stock commands already do.
+- *(D) `printf '%b' '<text>' | base64 -w 0`, each stage granted [CHOSEN].* Fits the one-line rule, and the space in `-w 0` is the form that ran headless (#905).
+
+**Decision.** (D). `ENCODE_GRANTS` (`jobs.ts`) goes to all five jobs, `ENCODE_HOWTO` (`spawn.ts`) names the one command, and a test matches each pipe stage of the command in every job's real prompt against that job's own grants. Council also gets the `read-latest-report.ts` grant stand-up already holds. The brief and work order no longer ask for a PM pickup into `docs/council/`: the state-dir report is the record (operator default). Not yet proven headless: the stage-by-stage grant matching rests on the tracker's live observations, so the first scheduled cycle after deploy is the check.

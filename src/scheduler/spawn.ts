@@ -144,8 +144,18 @@ export function extractStateNow(md: string): string {
   return lines.slice(start, end).join("\n").trim();
 }
 
+// The ONE base64 method, shared by every job (every work order demands a
+// base64 flag). jobs.ts ENCODE_GRANTS grants exactly its two pipe stages, and
+// test/scheduler-spawn.test.ts matches each stage of the backticked command
+// below against the job's own grants, so editing either side alone fails.
+// `%b` (not `%s`) lets a multi-line body ride one line as backslash-n; a
+// newline in the command would be a command boundary the permission layer
+// denies.
+const ENCODE_HOWTO =
+  "Base64 encoding (every `--body-b64`, `--text-b64` and `--semantic-b64` value): produce it with this ONE method, never by hand (a hand-encoded token corrupts silently). Run the encoder as its own command, on ONE LINE: `printf '%b' '<text>' | base64 -w 0`. Put the text between single quotes, write each line break in it as backslash-n and each literal backslash as two backslashes, and keep single quotes out of the text (rephrase). The output is one unwrapped line: copy it character for character as the flag's value in the NEXT command. Do not nest the encoder inside the other command with `$(...)`, and do not add flags or stages to it: those forms are denied headless. This pipe is the only one you may use; the commands that take the encoded value never contain a pipe.";
+
 const FILING_HOWTO =
-  "File findings ONLY via `bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>` — the WHOLE command on ONE LINE. base64-encode your finding body (standard base64, no line wrapping) and pass it as the --body-b64 value. Do NOT use a heredoc, a pipe, or any newline anywhere in the command: a headless job's permission layer treats a newline as a command boundary and denies the run. Template (one line): `bun scripts/file-finding.ts --dedup-key <k> --title <t> --body-b64 <base64 of the body>`. It runs under the scheduler-recorded job/cycle identity and enforces the #114 verdict-(a) conditions (dedup incl. recently-closed, machine-filed label + provenance, bump-not-refile, per-cycle cap). Every filed issue gets a fixed priority label automatically — there is no flag to set it. Never `gh issue create` directly." +
+  "File findings ONLY via `bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>` — the WHOLE command on ONE LINE. base64-encode your finding body with the encoding method above (standard base64, no line wrapping) and pass it as the --body-b64 value. Do NOT use a heredoc, a pipe, or any newline anywhere in the file-finding command: a headless job's permission layer treats a newline as a command boundary and denies the run. Template (one line): `bun scripts/file-finding.ts --dedup-key <k> --title <t> --body-b64 <base64 of the body>`. It runs under the scheduler-recorded job/cycle identity and enforces the #114 verdict-(a) conditions (dedup incl. recently-closed, machine-filed label + provenance, bump-not-refile, per-cycle cap). Every filed issue gets a fixed priority label automatically — there is no flag to set it. Never `gh issue create` directly." +
   " Dedup-key rule (#635): mint the key as a lowercase-kebab-case slug naming the CONDITION ONLY (e.g. `core-harvest-unimplemented`) — leave severity/priority (p0, blocker) out of it, it belongs in the title. You do not need to search for a prior key yourself: filing already auto-normalizes a severity word out of the key before matching, so `core-harvest-unimplemented-p0` and `p0-core-harvest-unimplemented` land on the same open issue even without you reusing the exact prior spelling. That normalization does not cover a genuinely different WORDING for the same condition (`core-harvest-unimplemented` vs `core-harvest-job-unimplemented` still file as two) — keep the key short and literal to the condition to avoid that.";
 
 function workOrder(job: JobDef, cycleId: string): string {
@@ -160,6 +170,7 @@ function workOrder(job: JobDef, cycleId: string): string {
   const common = [
     cycleIdLine,
     "You run headless on the scheduler host against a dedicated checkout (your cwd). `gh` is authenticated via GH_TOKEN in your environment.",
+    ENCODE_HOWTO,
   ];
   const perJob: Record<JobDef["id"], string[]> = {
     standup: [
@@ -177,7 +188,7 @@ function workOrder(job: JobDef, cycleId: string): string {
     ],
     council: [
       "Target: today's daily council review, per the brief above (outsider seat, insider seat, synthesis).",
-      "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-council-review.md --body-b64 <base64>` — the WHOLE command on ONE LINE, the report body base64-encoded as the --body-b64 value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/ — and FLAG it for PM pickup in your final output; your PAT cannot push, so committing it to docs/council/ stays a workstation action. Findings go through file-finding.",
+      "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-council-review.md --body-b64 <base64>` — the WHOLE command on ONE LINE, the report body base64-encoded as the --body-b64 value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/. That directory is the record: nothing is committed or collected from it. Findings go through file-finding.",
     ],
     steward: [
       "Target: the merge cluster since the last steward anchor — reconcile the living docs per your charter.",

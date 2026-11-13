@@ -18,6 +18,21 @@
 // used) list, mirroring steward's style; filing stays exclusively through
 // file-finding.ts, which is unaffected (it runs as the harness process, not
 // through the agent's Bash allowedTools).
+
+// Base64 encoder grants, held by EVERY job: each work order demands a base64
+// flag (--body-b64, --text-b64, --semantic-b64) and spawn.ts's ENCODE_HOWTO
+// names the one command that produces it, `printf '%b' '<text>' | base64 -w 0`.
+// The headless permission layer matches each pipe stage on its own, so each
+// stage needs its own grant (the space in `-w 0` is load-bearing: `-w0` was
+// denied live, Cringely/spacemolt#905). Neither stage executes another program.
+// Output redirection to a file is a file-write check in that layer and no job
+// holds a Write grant (#1002 saw it denied), so the printf wildcard writes
+// nothing. Rejected: a plain-text flag on the scripts (untrusted text would
+// reach the script unencoded, as shell text), and #1002's
+// `gh issue list --jq @base64`, which only jobs holding a gh grant could use.
+// test/scheduler-spawn.test.ts pins that every job's prompt and grants agree.
+export const ENCODE_GRANTS = ["Bash(printf *)", "Bash(base64 -w 0)"];
+
 export interface JobDef {
   id: "standup" | "strategy" | "council" | "steward" | "dedupe";
   schedule: { kind: "grid"; periodMs: number; offsetMs: number } | { kind: "main-merge"; settleMs: number };
@@ -74,6 +89,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun run scripts/repo-hygiene.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/read-latest-report.ts *)",
+      ...ENCODE_GRANTS,
     ],
   },
   {
@@ -135,6 +151,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/strategy-store.ts *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
+      ...ENCODE_GRANTS,
     ],
   },
   {
@@ -156,6 +173,11 @@ export const JOBS: JobDef[] = [
     // plausibly needs its full body, so it stays enumerated rather than cut
     // on a guess. No issue-write, no PR access: neither the charter nor the
     // brief documents council reading or touching PRs.
+    //
+    // `bun scripts/read-latest-report.ts *` (Cringely/spacemolt#717): the
+    // brief's Triage step needs the previous report's date, and council had
+    // no command able to find its own report, so it guessed a 24h window.
+    // Same jailed reader stand-up holds (#654), not an `ls`/`find` grant.
     allowedTools: [
       "Read",
       "Grep",
@@ -165,6 +187,8 @@ export const JOBS: JobDef[] = [
       "Bash(gh issue view *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
+      "Bash(bun scripts/read-latest-report.ts *)",
+      ...ENCODE_GRANTS,
     ],
   },
   {
@@ -212,6 +236,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/steward-prep.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(vale *)",
+      ...ENCODE_GRANTS,
     ],
   },
   {
@@ -241,6 +266,7 @@ export const JOBS: JobDef[] = [
       "Grep",
       "Glob",
       "Bash(bun scripts/backlog-dedupe.ts *)",
+      ...ENCODE_GRANTS,
     ],
   },
 ];

@@ -432,6 +432,57 @@ describe("spawn composer + runner (C3)", () => {
     expect(job("standup").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
   });
 
+  // Catches (Cringely/spacemolt#798, #880, #899, #507, #1120, #1123, #1147,
+  // #1148, #980): a work order demanding a base64 flag (--body-b64, --text-b64,
+  // --semantic-b64) while the job's closed allowedTools grants no way to
+  // produce base64. Agents then hand-encoded (one slipped character corrupted
+  // a filed body, #980) or rediscovered an ungranted pipe by trial. The work
+  // order must name ONE encoding method, and every pipeline stage of it must
+  // be matched by a Bash grant in THAT job's own list. Stage-by-stage because
+  // the headless permission layer matches each stage of a pipe on its own.
+  const grantMatches = (grant: string, stage: string): boolean => {
+    const m = /^Bash\((.*)\)$/.exec(grant);
+    if (!m) return false;
+    const re = new RegExp("^" + m[1]!.split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+    return re.test(stage);
+  };
+  test("every work order that demands a base64 flag names one encoder whose every stage is granted to that job", () => {
+    for (const j of JOBS) {
+      const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
+      expect(/-b64/.test(prompt)).toBe(true); // every job's work order demands one
+      const methods = [...prompt.matchAll(/`([^`]*base64 -w 0[^`]*)`/g)].map((m) => m[1]!);
+      expect(methods.length).toBe(1); // one method, not a menu
+      for (const stage of methods[0]!.split(" | ")) {
+        expect(j.allowedTools.some((g) => grantMatches(g, stage.trim()))).toBe(true);
+      }
+    }
+  });
+
+  // Catches (#717, #1131, #1140, #1141, #1144): council's brief Triage step
+  // needs the previous report's date, and council had no command that could
+  // find its own report. Same L-39 shape as the stand-up test above.
+  test("council's brief names read-latest-report and the job holds the grant", () => {
+    const grant = "Bash(bun scripts/read-latest-report.ts *)";
+    expect(job("council").allowedTools).toContain(grant);
+    const prefix = grant.slice("Bash(".length, -" *)".length);
+    const brief = readFileSync(join(import.meta.dir, "..", job("council").charterPath), "utf8");
+    expect(brief).toContain(`${prefix} --glob '*-council-review.md'`);
+    expect(job("council").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
+  });
+
+  // Catches: the council report being routed to a docs/council/ commit nobody
+  // can make (the job's PAT cannot push, #1130). The reports/ state dir is the
+  // record; neither the brief nor the work order may ask for a pickup.
+  test("council asks for no PM pickup or docs/council commit", () => {
+    const prompt = composePrompt(job("council"), { charterText: "x", stateNow: "y", cycleId: "council-1" });
+    expect(prompt).not.toContain("docs/council");
+    expect(prompt).not.toContain("pickup");
+    const brief = readFileSync(join(import.meta.dir, "..", job("council").charterPath), "utf8");
+    const instructions = brief.split(/^## CHANGELOG/m)[0]!;
+    expect(instructions).not.toContain("docs/council");
+    expect(instructions).not.toContain("pickup");
+  });
+
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
   // Steward keeps bare Edit for its docs remit, and an on-disk charter edit
   // bypasses the commit-time D3 fence — the deny (deny wins over allow;
