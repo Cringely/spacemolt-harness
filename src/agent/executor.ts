@@ -4,7 +4,7 @@ import type { Plan, PlanStep } from "../registry/plan";
 import { fitmentRequirement, fitmentVerdict } from "../registry/fitment";
 import type { PlanCursor } from "../store/store";
 import { catalog, nearestCatalogItemId } from "../catalog/catalog";
-import { fuelUrgent } from "./reflex";
+import { fuelUrgent, fuelRemedyUnavailable } from "./reflex";
 
 // Invariant: resultText carries a short snippet (capped ~120 chars, see
 // snippet() below) of the game's human-readable `result` text on every
@@ -1740,7 +1740,10 @@ export async function executeTick(
     fuelUrgent(
       preStatus.fuel, preStatus.maxFuel, fuelPerJump,
       fuelReserveConfig?.keepFuelAboveJumps, fuelReserveConfig?.keepFuelAbovePct,
-    )
+    ) &&
+    // #1068: a ship that can neither jump nor crack a cell has no fuel remedy
+    // for this block to steer toward -- mining is its only way out, so admit.
+    !fuelRemedyUnavailable(preStatus, fuelPerJump)
   ) {
     const reason =
       `fuel ${preStatus.fuel}/${preStatus.maxFuel} is at or below the configured reserve floor -- ` +
