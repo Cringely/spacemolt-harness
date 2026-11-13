@@ -123,9 +123,21 @@ jobs:
   #     moves, so the deployer's watched rolling tag never points at a digest
   #     whose attestation doesn't exist yet (would false-trip the fail-closed
   #     gate).
+  #   * SINGLE IMAGE MANIFEST, NOT AN INDEX: the host deployer resolves the
+  #     pushed tag's digest, reverse-maps it to a sha7 tag, and verifies the
+  #     cosign attestation against that same digest. An OCI image index
+  #     (platform manifest + buildkit attestation manifest) makes the deployer
+  #     pick the untagged inner amd64 manifest and refuse ("could not map ...
+  #     to a sha7 tag"): production skipped every image from f911c8a on, when
+  #     `ubuntu-latest` moved to 26.04 and its Docker started pushing an
+  #     index. Two guards: the runner is pinned to the last verified image,
+  #     and the build passes --provenance=false --sbom=false so buildkit adds
+  #     no attestation manifest on any runner. The cosign step below is the
+  #     provenance of record, so nothing is lost. Unpin the runner only after
+  #     a push from the newer image is confirmed to be a single manifest.
   publish:
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -135,6 +147,7 @@ jobs:
         run: |
           OWNER=${GITHUB_REPOSITORY_OWNER,,}  # GHCR requires lowercase
           docker build \
+            --provenance=false --sbom=false \
             -t ghcr.io/$OWNER/spacemolt-harness:${GITHUB_SHA::7} \
             -t ghcr.io/$OWNER/spacemolt-harness:latest-main \
             .
