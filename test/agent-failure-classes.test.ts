@@ -568,4 +568,34 @@ describe("planner_recovered fires once per real recovery (#538)", () => {
     expect(fbCalls).toBeGreaterThan(2);                 // blip happened and was followed by success
     expect(recoveries(store).length).toBe(1);
   });
+
+  test("a stall whose last failure was the fallback's still announces when the primary answers", async () => {
+    // Round-1 review of PR 159. Both planners fail transiently, the streak
+    // reaches stallThreshold with the FALLBACK as lastFailedPlanner, then the
+    // primary's endpoint-down probe succeeds. Identity alone would skip the
+    // emit and the stall would clear silently, leaving `stalled` newer than
+    // `planner_recovered` in the dump. Any success that ends a stall is a recovery.
+    let now = 0;
+    const store = new Store(":memory:");
+    let pCalls = 0;
+    const primary: Planner = {
+      plan: async () => {
+        pCalls++;
+        if (pCalls <= 2) throw new TransientPlannerError("primary blip");
+        return { plan: okPlan, promptChars: 0, responseChars: 0 };
+      },
+    };
+    const agent = new Agent({
+      id: "a1", persona: "p", api: stubApi(), store,
+      planner: primary, fallbackPlanner: alwaysThrows(new TransientPlannerError("fallback down")),
+      config, now: () => now,
+    });
+
+    for (let i = 0; i < 8; i++) { await agent.runOnce(); now += HEARTBEAT; }
+
+    const types = store.recentEvents("a1", 500).map((e) => e.type);
+    expect(types).toContain("stalled");                 // the stall formed
+    expect(types).toContain("planner_endpoint_recovered"); // and the primary's probe succeeded
+    expect(recoveries(store).length).toBe(1);           // so the stall ending is announced, once
+  });
 });
