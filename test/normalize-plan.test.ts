@@ -351,6 +351,17 @@ describe("normalizePlanItems (issue #982/#1003)", () => {
     expect(result.error).toContain("never invent one");
   });
 
+  // Live case (Cringely/spacemolt scout stall, 2026-11-13): the scout's cargo
+  // (the digest's own cargo block) held 7 'rhodium_ore' -- a real game item
+  // that the vendored snapshot (v0.493.0, 2026-07-12) predated. Admission
+  // rejected the copied-from-cargo id on the plan AND its retry, every ~30 min
+  // for days. The snapshot must know every item the live game ships.
+  test("live case: sell id 'rhodium_ore' (real item, in the scout's cargo) is admitted", () => {
+    const plan: Plan = { goal: "sell cargo", steps: [{ action: "sell", params: { id: "rhodium_ore", quantity: 7 } }] };
+    const result = normalizePlanItems(plan);
+    expect(result.ok).toBe(true);
+  });
+
   // Live case #1003: same class, a different fabricated id, on withdraw --
   // proves the guard is not buy-only (the ONLY prior backstop, executor.ts's
   // nearestCatalogItemId correction, never ran for withdraw at all).

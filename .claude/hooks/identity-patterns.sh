@@ -475,40 +475,152 @@ identity_json_token() {
 # match sees a changed locale -- that match must keep whatever locale the
 # top-level hook actually runs under (this file's header, "WHY grep -E's
 # \b").
+#
+# KEY MATCH IS CASE-INSENSITIVE, NOT A LOCALE-DEPENDENT FOLD (issue #91). $2
+# is always the literal "names" or "emails" from identity_load's two call
+# sites, and the sed below used to match that literal case-sensitively, so
+# a file declaring "Names" (a hand-edit, a differently-cased export from
+# some other tool) read as the key never having been declared at all --
+# the same silent-empty-channel shape as the missing-key case this
+# function's own header already treats as "zero declared entries", except
+# here the operator DID declare entries and the gate never saw them. Never
+# `sed`'s `I` substitution flag, a GNU extension outside what this file's
+# header commits to running under any sed, and never grep -i's locale-
+# dependent case fold, the exact hazard this file's own "KNOWN LIMIT:
+# NON-ASCII CASE FOLDING" header section already declines for the same
+# reason. Both cases of each ASCII letter are spelled out explicitly
+# instead, in a bracket expression, which needs no locale and no
+# extension and works identically under any POSIX sed.
 identity_json_array() {
     LC_ALL=C
     export LC_ALL
 
     raw=$1
     key=$2
-    flat=$(printf '%s' "$raw" | tr '\n' ' ') || return 1
-    # #135's round-2 review (N1): unchecked, a crashed sed here (the exact
-    # 2026-09-05 incident shape this file's header exists to catch, one
-    # tool call in a batch failing silently) reads identically to "the
-    # key was never declared" at the line below -- rc 0, empty $tail --
-    # so this one channel goes silently empty while the other stays
-    # populated and the both-empty refusal never fires. `sed -n` itself
-    # exits 0 on a clean no-match, so checking the exit status here does
-    # not turn an absent key into a false refusal.
-    tail=$(printf '%s' "$flat" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\[/[/p") || {
+    case $key in
+        names) key_ci='[Nn][Aa][Mm][Ee][Ss]' ;;
+        emails) key_ci='[Ee][Mm][Aa][Ii][Ll][Ss]' ;;
+        *)
+            echo "identity gate: internal error, identity_json_array called with an unknown key '$key'." >&2
+            return 1
+            ;;
+    esac
+    # Every tool whose output is read below appends a trailing x sentinel to
+    # its input and the sentinel is checked before it is stripped: $(...)
+    # strips trailing newlines, and a tool that exits 0 with empty or
+    # truncated output must refuse, never read as "the key was not there".
+    flat=$(printf '%sx' "$raw" | tr '\n' ' ') || return 1
+    case $flat in
+        *x) flat=${flat%x} ;;
+        *)
+            echo "identity gate: flattening '$identity_file' returned truncated or empty output. Refusing rather than reading what is left as the whole file." >&2
+            return 1
+            ;;
+    esac
+
+    # KEY PRESENCE (issue #91). Decided here in the shell, fail closed, over
+    # one rule rather than a list of spellings: if the key word occurs
+    # anywhere in the text (case-insensitive), it must occur exactly once,
+    # as one double-quoted key followed by optional whitespace, ':',
+    # optional whitespace and '['. Any other occurrence refuses: an unquoted
+    # or single-quoted key, a comment between the key and its ':' or '[', the
+    # word inside a comment or inside another key or value, a duplicate at
+    # any depth, a string where the array belongs. Only a text that never
+    # mentions the word reads as absent. Every earlier round patched one
+    # lenient-JSON spelling that read as absent and the next review found
+    # another. This rule has no list of spellings to fall behind.
+    # Fail-closed false refusals: an entry or another key containing the
+    # word, as in "nicknames" or "names@example.test".
+    #
+    # ESCAPED KEYS. JSON's only escape that yields a letter is backslash-u.
+    # The presence test runs over a copy with backslash-u escapes for the
+    # letters of both key words decoded, so a key spelled with escapes is
+    # seen by the same rule. A key word found in that copy but not in the
+    # raw text is an escaped key and refuses, since this parser does not
+    # decode keys. Skipped without a fork when the text holds no backslash,
+    # the usual case. Over-decoding an escaped backslash before a u can
+    # only add an occurrence, never remove one, so it refuses rather than
+    # reading as absent.
+    case $flat in
+        *'\'*)
+            identity_arr_dec=$(printf '%sx' "$flat" | sed -e 's/\\u00[46]1/a/g' -e 's/\\u00[46]5/e/g' -e 's/\\u00[46]9/i/g' -e 's/\\u00[46][Cc]/l/g' -e 's/\\u00[46][Dd]/m/g' -e 's/\\u00[46][Ee]/n/g' -e 's/\\u00[57]3/s/g') || {
+                echo "identity gate: the escaped-key check in '$identity_file' did not run cleanly. Refusing rather than reading a crashed check as no escaped key." >&2
+                return 1
+            }
+            case $identity_arr_dec in
+                *x) identity_arr_dec=${identity_arr_dec%x} ;;
+                *)
+                    echo "identity gate: the escaped-key check in '$identity_file' returned truncated or empty output. Refusing rather than reading it as no key." >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+        *) identity_arr_dec=$flat ;;
+    esac
+    case $identity_arr_dec in
+        *${key_ci}*) ;;
+        *) return 0 ;;
+    esac
+    identity_arr_before=${identity_arr_dec%%${key_ci}*}
+    identity_arr_after=${identity_arr_dec#*${key_ci}}
+    case $identity_arr_after in
+        *${key_ci}*)
+            echo "identity gate: '$identity_file' mentions \"$key\" (matched case-insensitively) more than once. It declares a key matching \"$key\" twice (a differently-cased key at the same level, or the key nested inside another object), or the word also appears in an entry, another key or a comment. Refusing rather than guessing which occurrence is the declaration. Keep exactly one '$key' key and no other mention of the word." >&2
+            return 1
+            ;;
+    esac
+    case $identity_arr_before in
+        *'"') identity_arr_bad= ;;
+        *) identity_arr_bad=1 ;;
+    esac
+    case $identity_arr_after in
+        '"'*) ;;
+        *) identity_arr_bad=1 ;;
+    esac
+    if [ -n "$identity_arr_bad" ]; then
+        echo "identity gate: '$identity_file' mentions \"$key\" (matched case-insensitively) without double quotes around it as a key: an unquoted or single-quoted key, the word in a comment, or the word inside another key. This parser reads only a double-quoted key. Refusing rather than reading it as absent. Write it as \"$key\": [\"...\"]." >&2
+        return 1
+    fi
+    case $flat in
+        *${key_ci}*) ;;
+        *)
+            echo "identity gate: '$identity_file' has a key written with a JSON escape. This parser does not decode keys, so it cannot tell whether that key is \"names\" or \"emails\". Refusing rather than reading it as absent. Write every key with plain characters." >&2
+            return 1
+            ;;
+    esac
+    identity_ltrim "${identity_arr_after#\"}"
+    case $identity_trimmed in
+        ':'*) identity_ltrim "${identity_trimmed#:}" ;;
+        *)
+            echo "identity gate: '$identity_file' has \"$key\" (matched case-insensitively) not followed directly by ':'. Refusing rather than reading the key as absent." >&2
+            return 1
+            ;;
+    esac
+    case $identity_trimmed in
+        '['*) ;;
+        *)
+            echo "identity gate: the '$key' value in '$identity_file' is not an array -- a string, a comment or other text sits where its '[' belongs. Refusing rather than reading the key as absent. Declare it as \"$key\": [\"...\"]." >&2
+            return 1
+            ;;
+    esac
+
+    # ONE sed takes the array's contents from the raw text, after the one
+    # strict key the checks above proved is there. It must find it, so no
+    # output (no sentinel) refuses: with the key present, an empty
+    # extraction is a broken tool, not an absent key. #135's round-2 review
+    # (N1): a crashed sed here once read as an absent key, so its status is
+    # checked too.
+    tail=$(printf '%sx' "$flat" | sed -n "s/.*\"${key_ci}\"[[:space:]]*:[[:space:]]*\\[//p") || {
         echo "identity gate: the '$key' key lookup in '$identity_file' did not run cleanly. Refusing rather than reading a crashed extraction as an absent key." >&2
         return 1
     }
-    [ -n "$tail" ] || return 0
-
-    # #135's review (F2): the sed above used to discard the array's own
-    # '[' along with everything before it, so a key that IS declared but
-    # whose array is truncated right after '[' -- a partial write, an
-    # editor that died mid-save -- produced the same empty $tail as a key
-    # that was never declared at all, and the `return 0` above then
-    # reported it as "zero entries", not as the malformed file it is.
-    # Keeping the '[' in the sed's replacement and stripping it here,
-    # after the presence check, means "found but truncated" still reaches
-    # the loop below as an empty $tail -- which then finds no closing ']'
-    # and refuses -- while "key not declared" still returns 0 above,
-    # because a key sed never matched leaves $tail genuinely empty before
-    # this line ever runs.
-    tail=${tail#\[}
+    case $tail in
+        *x) tail=${tail%x} ;;
+        *)
+            echo "identity gate: the '$key' key lookup in '$identity_file' returned truncated or empty output although the key is present. Refusing rather than reading it as absent." >&2
+            return 1
+            ;;
+    esac
 
     while :; do
         identity_ltrim "$tail"
@@ -596,7 +708,7 @@ identity_json_array() {
 #
 # The hold-off is what a rewrite would put at risk. identity_json_array is
 # the parser #91 and #135 took four review rounds to harden, proved
-# against the 26-row ARRAY_MATRIX in test/identity-gate.test.ts, and
+# against the 43-row ARRAY_MATRIX in test/identity-gate.test.ts, and
 # folding it into one pass means re-proving that matrix byte for byte on
 # new code.
 #
@@ -612,6 +724,194 @@ identity_json_array() {
 # reconsidering if that cost is ever paid for another reason, not as a
 # rejected idea.
 #
+# Detects a byte-order mark or an embedded NUL byte in the identity file at
+# $1, before anything downstream reads it into a shell variable (issue #91).
+# Neither POSIX sh nor bash can hold a NUL byte in a variable, so by the
+# time bytes would reach identity_load's `raw=$(cat ...)` any NUL is
+# already gone -- a UTF-16 file (with or without a byte-order mark) encodes
+# every ASCII character as itself plus a NUL, and Windows PowerShell 5.1's
+# `Out-File` default is UTF-16LE with a BOM, a realistic way this file gets
+# written. An ASCII-only UTF-16 file happens to survive that NUL-stripping
+# looking like plain text, but a non-ASCII declared name does not: each of
+# its UTF-16 code units loses its NUL half and what remains is not valid
+# UTF-8, so the pattern arm built from it never matches that name's real
+# UTF-8 form in a scanned commit. Load succeeds, the per-arm canary in
+# identity_control below is built from this same broken parse and passes,
+# and the declared name goes straight through -- a silent false negative
+# for the exact channel this gate exists to close, the same shape issue
+# #91d already fixed for an undecoded \uXXXX escape.
+#
+# Checked with `od`, the only thing here that ever sees the file's actual
+# bytes: everything captured through $(...) below is od's own hex TEXT
+# output, which never contains a byte from the file itself, so it is safe
+# to carry through a variable. `-v` disables od's repeated-line elision so
+# a long run of NUL bytes cannot hide the first one. The shell's own word
+# splitting then turns that output into one positional parameter per byte,
+# and the loop below reads each one whole. That matters because two
+# ordinary, non-NUL neighbouring bytes (0xd0 then 0x0f) concatenate to
+# "d00f", and a bare substring search for "00" would misread that as a NUL
+# that was never there.
+#
+# NO TOOL'S OUTPUT IS TRUSTED UNREAD, AND "NO EVIDENCE" IS NEVER "CLEAN"
+# (issue #91, rounds 2 to 4). The round-2 probe split od's output with a
+# `tr | sed` stage whose exit status nothing read, then asked
+# `grep -qx 00`, where a crash reads the same as "no match": a sed stub
+# that exited 1 emptied the byte list, and a UTF-16LE file loaded with its
+# NULs dropped and its non-ASCII name unmatched. Round 3 checked every
+# tool's exit status, and its review then showed that a tool which exits 0
+# while lying still got through: an od printing two-byte words, octal or
+# prose, a grep whose printed count and exit status disagree, and a split
+# that followed the caller's IFS or expanded a glob. So grep is gone from
+# the probe, and every word od printed is read in the shell itself. 00 is
+# a NUL, any other two hex digits are a byte, and anything else refuses
+# (3), because output this loop cannot read as bytes is not a measurement.
+# An od that exits 0 with a dump in some other format therefore refuses,
+# and so does a caller whose IFS splits od's output into words that are not
+# bytes. IFS is not pinned here. No shipped hook changes it, and refusing
+# under an unusual one is the fail-closed answer.
+#
+# The body runs in a subshell, ( ) rather than { }, so the `set -f` it
+# needs never reaches the caller's shell: a glob character in od's output
+# (only a lying od prints one) would otherwise be expanded against the
+# working directory, and a file there named like a hex byte would turn it
+# into a clean-looking one. Inside the subshell, `exit` ends the probe with
+# its status. That costs one fork per identity_load.
+#
+# What no check here can catch: an od that exits 0 with well-formed hex
+# bytes that are not the file's bytes (a dump truncated or fabricated at
+# read time). Nothing in od's output alone tells that from the real thing.
+#
+# Returns:
+#   0  clean -- no BOM, no NUL byte, and well-formed UTF-8 throughout
+#   1  a UTF-16 byte-order mark, or a NUL byte anywhere in the file (with
+#      or without a leading UTF-8 BOM -- non-BOM UTF-16, a UTF-8 BOM
+#      pasted onto a UTF-16 body, or some other encoding this
+#      byte-oriented parser cannot read), or any byte sequence that is
+#      not valid UTF-8, such as a Latin-1 file (#206) -- the caller
+#      refuses. The message is printed here, since only this function
+#      still has the byte-level evidence
+#   2  a UTF-8 byte-order mark and nothing else wrong -- EF BB BF is
+#      three ordinary, non-NUL bytes, so $(...) carries it through
+#      untouched and every parser in this file already skips past it on
+#      the way to the first quoted key -- this reads correctly today
+#      without this function's help. Reported anyway so the caller can
+#      strip it before reading, so a byte-exact comparison against the
+#      declared text is never carrying three bytes the operator never
+#      typed. The NUL scan below still runs first, so a file starting
+#      with a UTF-8 BOM but carrying a NUL later (a UTF-16 body pasted
+#      behind it) returns 1, not 2.
+#   3  the probe itself failed: od could not be run (missing, or the file
+#      vanished between the readability check above and here), od printed
+#      no bytes for a file that is not empty, or od printed a word that is
+#      not one two-digit hex byte (a lying od, or an unusual IFS in the
+#      calling shell) -- the caller refuses rather than reading a file
+#      that might not be UTF-8 as though it were
+identity_check_encoding() (
+    identity_enc_file=$1
+    identity_enc_out=$(od -An -tx1 -v "$identity_enc_file" 2>/dev/null) || {
+        echo "identity gate: could not read '$identity_enc_file' byte-by-byte to check its encoding (od failed or is unavailable). Refusing rather than reading a file that might not be UTF-8 as if it were." >&2
+        exit 3
+    }
+    # Unquoted on purpose: one positional parameter per hex byte. Globbing
+    # is off first, so a glob character reaches the loop below as the word
+    # od printed and is refused there.
+    set -f
+    set -- $identity_enc_out
+    if [ "$#" -eq 0 ]; then
+        # A genuinely empty file is identity_load's to report, below.
+        [ -s "$identity_enc_file" ] || exit 0
+        echo "identity gate: od printed no bytes for '$identity_enc_file', which is not empty. Refusing rather than reading an empty measurement as a clean file." >&2
+        exit 3
+    fi
+    identity_enc_head=$1${2-}${3-}
+    case $identity_enc_head in
+        fffe*|feff*)
+            echo "identity gate: '$identity_enc_file' starts with a UTF-16 byte-order mark. This parser reads bytes, not UTF-16 code units, and cannot decode it correctly -- silently misreading it would build a pattern that looks fine and does not match real content (issue #91: this is exactly what a UTF-16LE file with a non-ASCII declared name did). Re-save the file as UTF-8 and retry." >&2
+            exit 1
+            ;;
+    esac
+    # #91/round-2 review: the efbbbf case used to `return 2` right here,
+    # before the NUL scan below ever ran. A UTF-8 BOM followed by a
+    # UTF-16LE body (three ordinary bytes, then a body this byte-oriented
+    # parser cannot read) matched that case and returned 2 -- "clean,
+    # just strip the BOM" -- without the NUL scan ever seeing the body,
+    # so the file loaded with rc 0 and a non-ASCII declared name went
+    # straight through. That contradicts this function's own contract
+    # just above: 0 or 2 is supposed to mean no NUL byte anywhere in the
+    # file, not "no NUL byte before this early return". The BOM case now
+    # only records that a strip is needed, and the NUL scan always runs.
+    identity_enc_utf8_bom=0
+    case $identity_enc_head in
+        efbbbf*) identity_enc_utf8_bom=1 ;;
+    esac
+    # The digits are listed rather than written as ranges, so what counts
+    # as a hex digit never depends on the locale's collation order.
+    # #206: the same pass also walks the bytes as UTF-8 (RFC 3629: no
+    # overlong forms, no surrogates, nothing above U+10FFFF). A Latin-1 or
+    # Windows-1252 file has no NUL and no BOM, so everything above passes it,
+    # but its accented letter is one byte that is not valid UTF-8, and the
+    # arm built from it can never match the same name as git stores it. The
+    # verdict is recorded rather than acted on in the loop, so a NUL later in
+    # the file still gets its own, more specific, refusal first. Digit and
+    # letter classes are listed, never ranged, for the same locale reason.
+    identity_enc_need=0
+    identity_enc_kind=any
+    identity_enc_bad=0
+    for identity_enc_byte do
+        case $identity_enc_byte in
+            00)
+                echo "identity gate: '$identity_enc_file' contains a NUL byte, which no valid UTF-8 JSON document does. This is very likely UTF-16 without a byte-order mark, which this parser cannot decode correctly -- silently misreading it would build a pattern that looks fine and does not match real content. Re-save the file as UTF-8 and retry." >&2
+                exit 1
+                ;;
+            [0123456789abcdef][0123456789abcdef]) : ;;
+            *)
+                echo "identity gate: od's output for '$identity_enc_file' is not one two-digit hex byte per word, so it is not a byte measurement this probe can read (an od printing some other format, or an unusual IFS in the calling shell). Refusing rather than reading it as a clean file." >&2
+                exit 3
+                ;;
+        esac
+        if [ "$identity_enc_need" -gt 0 ]; then
+            # A continuation byte is owed. The first one after e0, ed, f0 and
+            # f4 is narrower than 80-bf (overlong, surrogate, over U+10FFFF).
+            identity_enc_ok=0
+            case $identity_enc_kind in
+                any) case $identity_enc_byte in [89ab]?) identity_enc_ok=1 ;; esac ;;
+                e0) case $identity_enc_byte in [ab]?) identity_enc_ok=1 ;; esac ;;
+                ed) case $identity_enc_byte in [89]?) identity_enc_ok=1 ;; esac ;;
+                f0) case $identity_enc_byte in 9?|[ab]?) identity_enc_ok=1 ;; esac ;;
+                f4) case $identity_enc_byte in 8?) identity_enc_ok=1 ;; esac ;;
+            esac
+            if [ "$identity_enc_ok" = 1 ]; then
+                identity_enc_need=$((identity_enc_need - 1))
+                identity_enc_kind=any
+            else
+                identity_enc_bad=1
+                identity_enc_need=0
+                identity_enc_kind=any
+            fi
+        else
+            case $identity_enc_byte in
+                [01234567]?) : ;;
+                c[23456789abcdef]|d?) identity_enc_need=1 ;;
+                e0) identity_enc_need=2 identity_enc_kind=e0 ;;
+                ed) identity_enc_need=2 identity_enc_kind=ed ;;
+                e[123456789abcef]) identity_enc_need=2 ;;
+                f0) identity_enc_need=3 identity_enc_kind=f0 ;;
+                f[123]) identity_enc_need=3 ;;
+                f4) identity_enc_need=3 identity_enc_kind=f4 ;;
+                *) identity_enc_bad=1 ;;
+            esac
+        fi
+    done
+    # A sequence cut off at end of file is as malformed as a stray byte.
+    [ "$identity_enc_need" -gt 0 ] && identity_enc_bad=1
+    if [ "$identity_enc_bad" = 1 ]; then
+        echo "identity gate: '$identity_enc_file' is not valid UTF-8. It is most likely Latin-1 or Windows-1252, where an accented letter is one byte that git's UTF-8 never contains, so a declared name using one would build a pattern arm that cannot match it and the gate would report clean (issue #206). Re-save the file as UTF-8 and retry." >&2
+        exit 1
+    fi
+    [ "$identity_enc_utf8_bom" = 1 ] && exit 2
+    exit 0
+)
+
 # Resolves the identity file, derives the workstation username and machine
 # hostname, and builds IDENTITY_PATTERN (one grep -iE alternation covering
 # every declared name, every declared email, the username, and the
@@ -660,10 +960,11 @@ identity_json_array() {
 # needs no special-cased knob to control them.
 identity_load() {
     # Prove the matcher works before ANYTHING trusts it, the parse below
-    # included. identity_json_array uses grep to pull values out of the
-    # identity file, so a grep that answers "no match" to everything makes a
-    # populated file parse as empty -- and every downstream check then reports
-    # accurately on a pattern set that was never built. Found by breaking grep
+    # included. identity_json_array once used grep to pull values out of the
+    # identity file (it uses none since #91's residual fix), and a grep that
+    # answered "no match" to everything made a populated file parse as empty
+    # -- every downstream check then reported accurately on a pattern set
+    # that was never built. Found by breaking grep
     # deliberately: the empty-arrays guard fired first and blamed the file,
     # which is a confident, wrong diagnosis of a broken tool.
     #
@@ -704,7 +1005,23 @@ identity_load() {
         return 1
     fi
 
-    raw=$(cat "$identity_file" 2>/dev/null)
+    identity_check_encoding "$identity_file"
+    identity_enc_rc=$?
+    identity_skip_bom=0
+    case $identity_enc_rc in
+        0) : ;;
+        2) identity_skip_bom=1 ;;
+        *) return 1 ;;
+    esac
+
+    if [ "$identity_skip_bom" = 1 ]; then
+        # A UTF-8 byte-order mark: three ordinary bytes, skipped rather
+        # than read, so nothing downstream carries three bytes the
+        # operator never typed. See identity_check_encoding's own header.
+        raw=$(tail -c +4 "$identity_file" 2>/dev/null)
+    else
+        raw=$(cat "$identity_file" 2>/dev/null)
+    fi
     if [ -z "$raw" ]; then
         echo "identity gate: '$identity_file' is empty." >&2
         return 1
@@ -723,6 +1040,24 @@ identity_load() {
     # than re-explain -- fail closed either way.
     names=$(identity_json_array "$raw" names) || return 1
     emails=$(identity_json_array "$raw" emails) || return 1
+
+    # An absent names key refuses (issue #91, operator ruling 2026-11-11). The
+    # name is the channel that leaked, and a file that never mentions the key
+    # reads exactly like a hand-edit that dropped it, so silence cannot be a
+    # choice. An explicit empty list ("names": []) is the deliberate opt-out
+    # and stays accepted. identity_json_array has already refused every
+    # malformed or escaped spelling of the key, so a key word still missing
+    # from the text here means the key was never declared. Bracket classes,
+    # not a case fold, for the same locale reason as identity_json_array.
+    if [ -z "$names" ]; then
+        case $raw in
+            *[Nn][Aa][Mm][Ee][Ss]*) ;;
+            *)
+                echo "identity gate: '$identity_file' has no \"names\" key. The name is the channel this gate exists to protect, so a file that omits it is refused rather than read as declaring none. Add \"names\": [\"...\"], or write \"names\": [] to opt out explicitly." >&2
+                return 1
+                ;;
+        esac
+    fi
 
     # Both empty is fail-closed, and the count check further down does not
     # cover it. That check fires only when the WHOLE pattern set is empty, and

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { z } from "zod";
 import { REGISTRY } from "../src/registry/actions";
 import { paramsObject } from "../src/registry/params-shape";
 import slim from "./fixtures/openapi-slim.json";
@@ -22,9 +23,10 @@ describe("registry conforms to OpenAPI spec", () => {
       const entry = fixture[`/api/v2/${a.tool}${a.name ? `/${a.name}` : ""}`];
       expect(entry).toBeDefined(); // action exists in the game API
       // paramsObject, not a raw `.shape` cast: an entry carrying a cross-field
-      // refinement (deposit's item-XOR-gift form, #703) is a ZodEffects around
-      // the object, and the properties this test checks are the inner object's.
-      const shape = paramsObject(a.params).shape;
+      // refinement (deposit's item-XOR-gift form, #703) went through a
+      // ZodEffects wrapper under zod 3; the properties this test checks are
+      // the object's, and paramsObject keeps that one choke point.
+      const shape = paramsObject(a.params).shape as Record<string, z.ZodType>;
       // every param we send is a real param
       for (const key of Object.keys(shape)) {
         expect(entry!.properties).toContain(key);

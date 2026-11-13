@@ -233,7 +233,7 @@ describe("registry", () => {
     test("chat requires target and content, target_id optional", () => {
       const chat = getAction("chat");
       expect(chat.tool).toBe("spacemolt_social");
-      const shape = (chat.params as z.ZodObject<z.ZodRawShape>).shape;
+      const shape = (chat.params as z.ZodObject<Record<string, z.ZodType>>).shape;
       expect(shape.target!.isOptional()).toBe(false);
       expect(shape.content!.isOptional()).toBe(false);
       expect(shape.target_id!.isOptional()).toBe(true);

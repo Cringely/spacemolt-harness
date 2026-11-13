@@ -12,7 +12,7 @@
     "eval:planner": "bun run src/eval/run.ts"
   },
   "dependencies": {
-    "zod": "^3.24.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",

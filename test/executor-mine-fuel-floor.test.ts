@@ -151,3 +151,60 @@ describe("mine fuel-floor guard (#526)", () => {
     expect(calls).toEqual(["dock"]);
   });
 });
+
+// Cringely/spacemolt#1068 (live, corsair stranded ~23.5h): at 0/90 fuel with ~5cr
+// and an empty hold the guard above refused `mine` 18x/window while mining was
+// the ONLY income left (distress_signal exhausted, no fuel_cell, cannot jump).
+// Invariant: the guard never blocks the action that is the pilot's only way
+// out, i.e. at 0 fuel (fuel.md "Stranded": travel and jump return no_fuel) with
+// no fuel cell, at a POI with a base where mined ore can be docked and sold.
+// Narrower than that is NOT exempt: below one jump but above 0 the ship can
+// still travel_to a station (in-system travel costs ~distance * 0.07 against
+// 1.0 per jump, fuel.md), and with no base the strand ladder (#690) must keep
+// seeing blocks, because an admitted mine resets its counter.
+describe("mine fuel-floor guard admits the only recovery action (#1068)", () => {
+  const run = async (status: StatusSnapshot, poiHasBase: boolean | undefined, fuelPerJump?: number) => {
+    const { api, calls } = stubApi(status);
+    const r = await executeTick(
+      api, minePlan, { step: 0, iteration: 0 }, undefined, undefined, undefined,
+      { keepFuelAboveJumps: 2, keepFuelAbovePct: 25, poiHasBase }, fuelPerJump,
+    );
+    return { r, calls };
+  };
+
+  test("0 fuel, empty hold, base POI: mine is admitted", async () => {
+    // Killing mutation: removing the exemption restores the block, so calls
+    // stays empty instead of ["mine"].
+    const { r, calls } = await run(minerStatus({ fuel: 0, maxFuel: 90, credits: 5, cargo: [] }), true);
+    expect(r).toEqual({ kind: "continue", cursor: { step: 0, iteration: 1 }, resultText: "ok" });
+    expect(calls).toEqual(["mine"]);
+  });
+
+  test("0 fuel, empty hold, NO base POI: blocked and tagged fuelReserveBlock so the strand counter accrues", async () => {
+    // Killing mutation: dropping the poiHasBase scope admits this mine, which
+    // returns `continue` and resets agent.ts's fuelBlockedMoves.
+    for (const poiHasBase of [false, undefined]) {
+      const { r, calls } = await run(minerStatus({ fuel: 0, maxFuel: 90, cargo: [] }), poiHasBase);
+      expect(r).toMatchObject({ kind: "blocked", guard: true, fuelReserveBlock: true });
+      expect(calls.length).toBe(0);
+    }
+  });
+
+  test("fuel above 0 but below one measured jump (4 < 15), base POI: still blocked (in-system travel_to is still possible)", async () => {
+    // Killing mutation: an exemption keyed on "cannot make a full jump"
+    // admits this.
+    const { r, calls } = await run(minerStatus({ fuel: 4, maxFuel: 130, cargo: [] }), true, 15);
+    expect(r.kind).toBe("blocked");
+    expect(calls.length).toBe(0);
+  });
+
+  test("0 fuel BUT a fuel_cell in the hold, base POI: still blocked (refuel is the recovery, not mining)", async () => {
+    // Killing mutation: an exemption keyed on fuel alone (ignoring cargo)
+    // admits this and leaves calls as ["mine"].
+    const { r, calls } = await run(minerStatus({
+      fuel: 0, maxFuel: 90, cargo: [{ itemId: "fuel_cell", name: "Fuel Cell", quantity: 2 }],
+    }), true);
+    expect(r.kind).toBe("blocked");
+    expect(calls.length).toBe(0);
+  });
+});

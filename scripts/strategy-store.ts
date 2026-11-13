@@ -40,7 +40,10 @@
 // a secret FILE and exported by the spawner, never passed as an argv token
 // or hardcoded here.
 import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
-import { INSTRUCTION_MAX_LENGTH, STORE_TOKEN_HEADER } from "../src/server/server";
+// Import from store-protocol, NOT server: server.ts pulls in zod, and an
+// import-time crash here exits 1, which the job reads as a SKIP
+// (Cringely/spacemolt#1139, #1143). Every import in this file must stay zod-free.
+import { INSTRUCTION_MAX_LENGTH, STORE_TOKEN_HEADER } from "../src/server/store-protocol";
 
 export const STORE_OPS = ["gate", "mark", "dump", "steer"] as const;
 export type StoreOp = (typeof STORE_OPS)[number];

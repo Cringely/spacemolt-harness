@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-guardrails.sh\""
+            "command": "sh -c 'exec sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-guardrails.sh\"'"
           }
         ]
       },
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-drift-check.sh\""
+            "command": "sh -c 'exec sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-drift-check.sh\"'"
           }
         ]
       }
