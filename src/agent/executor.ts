@@ -1652,6 +1652,30 @@ export async function executeTick(
     return advance(plan, cursor, "already undocked; undock is a no-op");
   }
 
+  // Full-tank refuel guard (tracker Cringely/spacemolt#995/#848/#888/#938, 99
+  // + 87 wasted calls per 72h fleet-wide, every one answered "tank_full: Fuel
+  // tank is already full (130/130). No refueling needed."). Invariant: a tank
+  // refill is never SUBMITTED against a tank this tick's own status reads as
+  // full. Same shape as the undock guard above, and for the same reason it
+  // ADVANCES instead of blocking: a refill that is already satisfied is a
+  // done step, not a failure, and a blocked wake would buy a planner call to
+  // be told so. The resultText is the prose the action event carries.
+  //
+  // `target` (ship-to-ship transfer, or "fleet" status read) is not a refill
+  // of THIS tank, so any target keeps the guard out. maxFuel > 0 is the
+  // known-reading test: status() defaults a missing ship.fuel/max_fuel to 0/0,
+  // and 0 >= 0 must not read as "full". Fail-open like every guard here: no
+  // preStatus, no verdict.
+  if (
+    step.action === "refuel" && preStatus && preStatus.maxFuel > 0 && preStatus.fuel >= preStatus.maxFuel &&
+    !(step.params as { target?: unknown }).target
+  ) {
+    return advance(
+      plan, cursor,
+      `fuel tank already full (${preStatus.fuel}/${preStatus.maxFuel}); refuel is a no-op, moving on`,
+    );
+  }
+
   // accept_mission precondition guard (live diagnosis 2026-07-12): the pilot
   // reached for missions but called accept_mission with EMPTY params and the
   // game answered "invalid_payload: Must provide template_id (or mission_id)
