@@ -533,3 +533,41 @@ describe("admitPlan (fix round on #982/#1003: one admission pass, not two)", () 
     expect(result.error).toContain("sell.id: 'wreck' is not a catalog item id");
   });
 });
+
+// Cringely/spacemolt#1152: the vendored snapshot fell 214 versions behind and
+// admission rejected 'rhodium_ore', a real item the pilot held in its cargo,
+// for days (the retry text told the planner to copy the id from its cargo, so
+// it repeated the same id). AGENTS.md evidence precedence: live state beats the
+// vendored reference. 'zz_unreleased_ore' is absent from catalog.data.json by
+// construction, standing in for whatever the next game update ships.
+describe("normalizePlanItems: live state outranks the vendored catalog (#1152)", () => {
+  const sellUnreleased: Plan = { goal: "sell", steps: [{ action: "sell", params: { id: "zz_unreleased_ore", quantity: 3 } }] };
+
+  test("an id the live state reports is admitted and flagged as catalog drift", () => {
+    const result = normalizePlanItems(sellUnreleased, new Set(["zz_unreleased_ore"]));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.plan).toEqual(sellUnreleased);
+    expect(result.catalogDrift).toEqual(["zz_unreleased_ore"]);
+  });
+
+  test("an id the live state does not report is still rejected", () => {
+    const result = normalizePlanItems(sellUnreleased, new Set(["iron_ore"]));
+    expect(result.ok).toBe(false);
+  });
+
+  test("a catalog id that is also live is not drift", () => {
+    const plan: Plan = { goal: "sell", steps: [{ action: "sell", params: { id: "iron_ore", quantity: 1 } }] };
+    const result = normalizePlanItems(plan, new Set(["iron_ore"]));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.catalogDrift ?? []).toEqual([]);
+  });
+
+  test("admitPlan forwards the live ids and the drift list", () => {
+    const result = admitPlan(sellUnreleased, undefined, new Set(["zz_unreleased_ore"]));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.catalogDrift).toEqual(["zz_unreleased_ore"]);
+  });
+});

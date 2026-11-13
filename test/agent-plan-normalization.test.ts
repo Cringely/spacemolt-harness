@@ -270,3 +270,60 @@ describe("Agent plan admission: locations and items share one admission pass (fi
     expect(retryInstruction).not.toContain(injected.slice(UNTRUSTED_TEXT_SNIPPET_LEN));
   });
 });
+
+// Cringely/spacemolt#1152: the scout held 7 'rhodium_ore' the vendored
+// catalog predated; admission rejected the id on the plan and its retry for
+// days. Live state (the pilot's own cargo, the docked market) outranks the
+// vendored catalog (AGENTS.md evidence precedence), and the gap is surfaced as
+// a catalog_drift event so the snapshot gets refreshed. 'zz_unreleased_ore' is
+// absent from catalog.data.json by construction.
+describe("Agent plan admission: live state outranks the vendored catalog (#1152)", () => {
+  function apiHolding(cargo: Array<{ itemId: string; name: string; quantity: number }>) {
+    const api = stubApiWithMap(commerceFieldsSystem);
+    api.status = async () => ({
+      credits: 100, fuel: 80, maxFuel: 100, hull: 100, maxHull: 100,
+      cargoUsed: 3, cargoCapacity: 50, docked: true, inTransit: false, dockedAt: "base-1", cargo,
+    });
+    return api;
+  }
+  const sellPlan: Plan = { goal: "sell cargo", steps: [{ action: "sell", params: { id: "zz_unreleased_ore", quantity: 3 } }] };
+
+  test("an item id held in cargo but missing from the catalog is admitted with no retry, and emits catalog_drift", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([sellPlan]);
+    const api = apiHolding([{ itemId: "zz_unreleased_ore", name: "Unreleased Ore", quantity: 3 }]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(1);
+    expect(store.loadPlan("a1")!.plan.steps[0]).toEqual({ action: "sell", params: { id: "zz_unreleased_ore", quantity: 3 } });
+    const drift = store.recentEvents("a1", 20).filter((e) => e.type === "catalog_drift");
+    expect(drift.length).toBe(1);
+    expect(drift[0]!.payload).toEqual({ ids: ["zz_unreleased_ore"] });
+  });
+
+  test("an item id the docked market lists but the catalog lacks is admitted too", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([sellPlan]);
+    const api = apiHolding([{ itemId: "iron_ore", name: "Iron Ore", quantity: 3 }]);
+    api.getMarket = async () => [{ itemId: "zz_unreleased_ore", bestBuy: 40, buyQty: 10 }];
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(1);
+    expect(store.loadPlan("a1")!.plan.steps[0]).toEqual({ action: "sell", params: { id: "zz_unreleased_ore", quantity: 3 } });
+    expect(store.recentEvents("a1", 20).filter((e) => e.type === "catalog_drift").length).toBe(1);
+  });
+
+  test("the same id reported by neither cargo nor market is still rejected (live evidence vouches, the planner cannot)", async () => {
+    const store = new Store(":memory:");
+    const planner = new MockPlanner([sellPlan]);
+    const api = apiHolding([{ itemId: "iron_ore", name: "Iron Ore", quantity: 3 }]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1 });
+
+    await agent.runOnce();
+    expect(planner.contexts.length).toBe(2);
+    expect(store.loadPlan("a1")).toBeNull();
+    expect(store.recentEvents("a1", 20).filter((e) => e.type === "catalog_drift")).toEqual([]);
+  });
+});

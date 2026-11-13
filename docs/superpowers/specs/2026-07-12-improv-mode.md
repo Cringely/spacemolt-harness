@@ -428,8 +428,10 @@ Vocabulary / data shapes:
   backstop, #982/#1003: in plan-then-execute a plan-admission check rejects a step whose item id
   does not resolve in the catalog SSOT BEFORE it reaches the executor — zero ticks spent, layered
   under the fuel_cell-style nearest-match correction above for a real near-miss, and a flat
-  "copy the id" instruction for an outright fabrication like these two. The improv driver reaches
-  no plan-admission step at all, so here the rule is yours to keep.)
+  "copy the id" instruction for an outright fabrication like these two. An id your own cargo or
+  the docked market lists is admitted even when the vendored catalog predates it, because live
+  state outranks the snapshot (#1152). The improv driver reaches no plan-admission step at all,
+  so here the rule is yours to keep: an id read from your cargo or a listing is real.)
 - Selling or jettisoning CARGO specifically: the item_id must come from your own cargo listing
   (`get_status` or `get_cargo`), never guessed from the display name — a name like "Common Ore" is
   NOT its id, and `ore_common` is not a real catalog id (a live plan-then-execute run invented
