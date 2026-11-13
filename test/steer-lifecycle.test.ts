@@ -114,6 +114,39 @@ describe("standing goal merge is stable (#821)", () => {
   });
 });
 
+describe("pinned overflow never rotates standing goals (#821, #170 round 2)", () => {
+  // Breakage caught: 3 config goals plus 3 pinned steers exceed the cap (5).
+  // Pass 2 of the eviction shifted the FRONT entry, a standing goal, and the
+  // merge restored it by evicting the next one, so two milestones alternated
+  // every replan with no receipt. A pinned overflow must evict a pinned steer
+  // (with its instruction_pin_changed receipt) and leave config goals fixed.
+  test("3 config goals + 3 pinned steers: goals are stable and the oldest pinned steer is revoked visibly", async () => {
+    const STANDING = ["MILESTONE one", "MILESTONE two", "FUEL rule"];
+    const store = new Store(":memory:");
+    const agent = new Agent({
+      id: "m1", persona: "p", goals: STANDING, api: stubApi().api, store,
+      planner: new MockPlanner([okPlan]), config, now: () => 1,
+    });
+    for (const r of ["RULE: one", "RULE: two", "RULE: three"]) {
+      agent.instruct(r, { standing: true });
+      await agent.runOnce();
+    }
+    const seen: string[][] = [];
+    for (let i = 0; i < 6; i++) {
+      await agent.runOnce();
+      seen.push(agent.snapshot().goals);
+    }
+    for (const goals of seen) {
+      for (const s of STANDING) expect(goals).toContain(s);
+      expect(goals).toEqual(seen[0]!);
+    }
+    const revoked = store.recentEventsByType("m1", "instruction_pin_changed", 20)
+      .map((e) => e.payload as { text: string; pinned: boolean })
+      .filter((p) => !p.pinned);
+    expect(revoked.map((p) => p.text)).toEqual(["RULE: one"]);
+  });
+});
+
 describe("a steer the full goal list cannot hold leaves a receipt (#170 review)", () => {
   // Breakage caught: with standing config goals and pinned steers protected
   // from eviction (#821), three config goals plus two pinned steers fill the

@@ -1126,8 +1126,15 @@ export class Agent {
       survivors.splice(i, 1);
     }
     while (survivors.length > keep) {
-      const text = survivors.shift();
-      if (text !== undefined && this.pinnedInstructions.delete(text)) {
+      // Pass 2 skips standing config goals too (#821, #170 round 2): they sit
+      // at the front, so a plain shift() evicted one, mergeStandingGoals
+      // restored it by evicting the next, and two milestones alternated every
+      // replan. Config max(5) means survivors > keep implies a non-standing
+      // (pinned) entry exists. -1 is unreachable, but break rather than spin.
+      const idx = survivors.findIndex((g) => !this.standingGoals.includes(g));
+      if (idx < 0) break;
+      const text = survivors.splice(idx, 1)[0]!;
+      if (this.pinnedInstructions.delete(text)) {
         try {
           this.emit("instruction_pin_changed", { text, pinned: false });
         } catch { /* telemetry is not the control path -- see instruct() */ }
