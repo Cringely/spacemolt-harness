@@ -511,6 +511,9 @@ export class Agent {
   // that never validate (measured: 25 replans, 0 plans, fallback never
   // reached).
   private consecutivePrimaryFailures = 0;
+  // #538. Which planner the latest transient failure belonged to, so the
+  // success path can tell a recovery from a different planner covering for it.
+  private lastFailedPlanner: Planner | undefined;
   private stalled = false;
   private usingFallback = false;
   private claudeDisabled = false;
@@ -2828,7 +2831,12 @@ export class Agent {
       });
       if (rewrites.length) this.emit("plan_normalized", { rewrites });
 
-      if (this.consecutiveTransientFailures > 0 || this.stalled) {
+      // #538. A recovery is the planner that FAILED now working. consecutive-
+      // TransientFailures is shared across both planners, so a fallback success
+      // after a dead primary's failure used to read as a recovery on every cycle
+      // of the outage. Identity (not `=== this.planner`) keeps the fallback's own
+      // recovery after a subscription-limit latch announced.
+      if ((this.consecutiveTransientFailures > 0 || this.stalled) && planner === this.lastFailedPlanner) {
         this.emit("planner_recovered", { afterFailures: this.consecutiveTransientFailures });
       }
       // #240. Only a PRIMARY success ends the endpoint-down state. `planner` is
@@ -3688,6 +3696,7 @@ export class Agent {
     }
     if (e instanceof TransientPlannerError) {
       this.consecutiveTransientFailures++;
+      this.lastFailedPlanner = served;
       const backoffMs = Math.min(
         TRANSIENT_BACKOFF_BASE_MS * 2 ** (this.consecutiveTransientFailures - 1),
         TRANSIENT_BACKOFF_MAX_MS,

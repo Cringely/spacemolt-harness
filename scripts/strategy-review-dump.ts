@@ -58,7 +58,25 @@ export interface StrategyReviewDump {
   // this shape (#1053, boundTaxonomySamples below) -- everything else about
   // FailureTaxonomy's shape is untouched.
   failures: FailureTaxonomy;
+  // #814. One entry per planner-health event kind the agent has ever written
+  // (src/agent/agent.ts emits one at each plannerHealth transition). lastTs is
+  // lifetime, windowCount is inside the window: a fallback latch that tripped
+  // days ago is still in force until a restart, so the window alone would
+  // hide it. Counts and times only -- the events' message text is planner
+  // error prose and stays out of the LLM-facing shape. `token_invalid` is the
+  // operator_alert of that class (claudeDisabled).
+  plannerHealth: Record<string, PlannerHealthEventSummary>;
 }
+
+export interface PlannerHealthEventSummary {
+  lastTs: number;
+  windowCount: number;
+}
+
+const PLANNER_HEALTH_EVENT_TYPES = [
+  "stalled", "planner_recovered", "planner_transient_error", "planner_subscription_limit",
+  "planner_endpoint_down", "planner_endpoint_recovered",
+] as const;
 
 type Row = { id: number; agent_id: string; ts: number; type: string; payload: string };
 
@@ -141,7 +159,24 @@ export function readDump(
     .all(agentId, cutoff) as Row[];
   const heartbeats = rowsToEvents(hbRows).map(toHeartbeatPoint);
 
-  return { agentId, generatedAt: now, windowHours, heartbeats, failures };
+  // #814: planner health. json_valid leads the operator_alert branch because
+  // json_extract throws on a non-JSON payload (persisted-state tolerance).
+  const healthRows = db
+    .query(
+      `SELECT CASE type WHEN 'operator_alert' THEN 'token_invalid' ELSE type END AS kind,
+              MAX(ts) AS lastTs, SUM(ts >= ?) AS windowCount
+       FROM events
+       WHERE agent_id = ?
+         AND (type IN (${PLANNER_HEALTH_EVENT_TYPES.map((t) => `'${t}'`).join(", ")})
+              OR (type = 'operator_alert' AND json_valid(payload)
+                  AND json_extract(payload, '$.class') = 'token_invalid'))
+       GROUP BY kind`,
+    )
+    .all(cutoff, agentId) as Array<{ kind: string; lastTs: number; windowCount: number }>;
+  const plannerHealth: Record<string, PlannerHealthEventSummary> = {};
+  for (const r of healthRows) plannerHealth[r.kind] = { lastTs: r.lastTs, windowCount: r.windowCount };
+
+  return { agentId, generatedAt: now, windowHours, heartbeats, failures, plannerHealth };
 }
 
 // CLI entry -- guarded so importing this module in a test never opens the prod

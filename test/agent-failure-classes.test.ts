@@ -495,3 +495,77 @@ describe("Reversible endpoint fallback (#240)", () => {
     expect(primary.calls).toBe(2);
   });
 });
+
+// Cringely/spacemolt#538. planner_recovered means "the planner that was failing
+// now works". Before the fix it fired on ANY success after a failure streak, so
+// a dead primary served by a healthy fallback announced a recovery on every
+// cycle -- an operator reads that as a flapping endpoint, not a dead one.
+describe("planner_recovered fires once per real recovery (#538)", () => {
+  const MIN = 60_000;
+  const HEARTBEAT = 15 * MIN + 1;
+  const recoveries = (store: Store) => store.recentEvents("a1", 500).filter((e) => e.type === "planner_recovered");
+
+  test("a dead primary served by a working fallback never announces a recovery", async () => {
+    let now = 0;
+    const store = new Store(":memory:");
+    const fallback = alwaysSucceeds(okPlan);
+    const agent = new Agent({
+      id: "a1", persona: "p", api: stubApi(), store,
+      planner: alwaysThrows(new TransientPlannerError("connect ECONNREFUSED")),
+      fallbackPlanner: fallback, config, now: () => now,
+    });
+
+    for (let i = 0; i < 24; i++) { await agent.runOnce(); now += HEARTBEAT; }
+
+    const types = store.recentEvents("a1", 500).map((e) => e.type);
+    expect(types).toContain("planner_endpoint_down");   // the outage is real and reported
+    expect(types).toContain("plan");                    // the fallback really did serve plans
+    expect(recoveries(store).length).toBe(0);           // but nothing recovered
+  });
+
+  test("a primary that fails then answers announces exactly one recovery", async () => {
+    let now = 0;
+    const store = new Store(":memory:");
+    let calls = 0;
+    const primary: Planner = {
+      plan: async () => {
+        calls++;
+        if (calls <= 2) throw new TransientPlannerError("blip");
+        return { plan: okPlan, promptChars: 0, responseChars: 0 };
+      },
+    };
+    const agent = new Agent({ id: "a1", persona: "p", api: stubApi(), store, planner: primary, config, now: () => now });
+
+    for (let i = 0; i < 6; i++) { await agent.runOnce(); now += HEARTBEAT; }
+
+    const rec = recoveries(store);
+    expect(rec.length).toBe(1);
+    expect(rec[0]!.payload).toEqual({ afterFailures: 2 });
+  });
+
+  test("the fallback recovering from its own outage still announces, once", async () => {
+    // Guards the over-suppression direction: gating on `served === this.planner`
+    // would silence this, because after a subscription-limit latch the fallback
+    // is the ONLY planner serving and its own recovery is real.
+    let now = 0;
+    const store = new Store(":memory:");
+    let fbCalls = 0;
+    const fallback: Planner = {
+      plan: async () => {
+        fbCalls++;
+        if (fbCalls === 2) throw new TransientPlannerError("fallback blip");
+        return { plan: okPlan, promptChars: 0, responseChars: 0 };
+      },
+    };
+    const agent = new Agent({
+      id: "a1", persona: "p", api: stubApi(), store,
+      planner: alwaysThrows(new SubscriptionLimitError("usage limit")),
+      fallbackPlanner: fallback, config, now: () => now,
+    });
+
+    for (let i = 0; i < 6; i++) { await agent.runOnce(); now += HEARTBEAT; }
+
+    expect(fbCalls).toBeGreaterThan(2);                 // blip happened and was followed by success
+    expect(recoveries(store).length).toBe(1);
+  });
+});
