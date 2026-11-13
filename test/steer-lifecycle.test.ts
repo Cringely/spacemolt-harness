@@ -80,3 +80,85 @@ describe("superseding steers (#535)", () => {
     expect(agent.snapshot().goals).toEqual(["errand one", "RULE: keep 10 fuel in reserve"]);
   });
 });
+
+describe("one-shot destructive steers (#542)", () => {
+  // A planner that reads goals the way the live model does: it plans a
+  // self_destruct whenever a goal in the briefing names one, and never reports
+  // instruction_done (Sonnet set it on none of four consecutive plans).
+  function obedientPlanner(steps: Plan["steps"]) {
+    return {
+      async plan(ctx: { goals?: string[] }) {
+        const ordered = (ctx.goals ?? []).some((g) => /self.destruct/i.test(g));
+        const plan: Plan = ordered ? { goal: "obey the order", steps } : okPlan;
+        return { plan, promptChars: 0, responseChars: 0, model: "mock" };
+      },
+    };
+  }
+  const authorized: AgentConfig = { ...config, selfDestructAuthorized: true };
+  const ORDER = "Execute standing operator order: self-destruct the ship as authorised";
+
+  // Breakage caught: the live #542 loop -- the order stayed in goals after the
+  // first self_destruct, the next replan read it again, and the pilot destroyed
+  // each fresh respawn ship (200cr fee plus the hold, forever). Count is
+  // asserted exactly: toContain would pass on the looping build.
+  test("the order runs once across repeated replans, not once per respawn", async () => {
+    const { api, actions } = stubApi();
+    const agent = new Agent({
+      id: "m1", persona: "p", api, store: new Store(":memory:"),
+      planner: obedientPlanner([{ action: "self_destruct", params: {} }]), config: authorized, now: () => 1,
+    });
+    agent.instruct(ORDER);
+    for (let i = 0; i < 12; i++) await agent.runOnce();
+    expect(actions.filter((a) => a === "self_destruct")).toHaveLength(1);
+    expect(agent.snapshot().goals).toEqual([]);
+  });
+
+  // Breakage caught: retirement that only lives in memory. When self_destruct
+  // is a mid-plan step the plan row survives, and a restart before the next
+  // replan would reload the spent order and fire it again.
+  test("the spent order is gone from the persisted row, so a restart cannot replay it", async () => {
+    const { api } = stubApi();
+    const store = new Store(":memory:");
+    const agent = new Agent({
+      id: "m1", persona: "p", api, store,
+      planner: obedientPlanner([{ action: "self_destruct", params: {} }, { action: "undock", params: {} }]),
+      config: authorized, now: () => 1,
+    });
+    agent.instruct(ORDER);
+    await agent.runOnce(); // instruction wake -> replan
+    await agent.runOnce(); // self_destruct step (continue: the undock step remains)
+    expect(store.loadPlan("m1")!.goals).toEqual([]);
+  });
+
+  // Breakage caught: over-reach. A pinned rule is the operator's explicit
+  // "standing until revoked" and a config goal is not an errand; neither is
+  // spent by a self_destruct some other path ordered.
+  test("a pinned or config goal that names the action is not retired", async () => {
+    const { api } = stubApi();
+    const agent = new Agent({
+      id: "m1", persona: "p", api, store: new Store(":memory:"),
+      goals: ["Rule: self_destruct only when stranded"],
+      planner: obedientPlanner([{ action: "self_destruct", params: {} }]), config: authorized, now: () => 1,
+    });
+    agent.instruct("RULE: never self_destruct a ship carrying cargo", { standing: true });
+    for (let i = 0; i < 4; i++) await agent.runOnce();
+    expect(agent.snapshot().goals).toEqual([
+      "Rule: self_destruct only when stranded", "RULE: never self_destruct a ship carrying cargo",
+    ]);
+  });
+
+  // Breakage caught: a failed attempt must not spend the order. Unauthorized,
+  // the executor refuses the step; the operator's order is still pending.
+  test("a refused self_destruct leaves the order standing", async () => {
+    const { api, actions } = stubApi();
+    const agent = new Agent({
+      id: "m1", persona: "p", api, store: new Store(":memory:"),
+      planner: obedientPlanner([{ action: "self_destruct", params: {} }]), config, now: () => 1,
+    });
+    agent.instruct(ORDER);
+    await agent.runOnce();
+    await agent.runOnce();
+    expect(actions).not.toContain("self_destruct");
+    expect(agent.snapshot().goals).toEqual([ORDER]);
+  });
+});

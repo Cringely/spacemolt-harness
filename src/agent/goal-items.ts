@@ -84,6 +84,17 @@ function phraseIn(text: string, phrase: string): boolean {
   return ` ${text} `.includes(` ${phrase} `);
 }
 
+/**
+ * Goals that literally name `action` (a registry id such as "self_destruct"),
+ * token-bounded and punctuation-blind: "self-destruct the ship" and
+ * "self_destruct" both match. Used to find the operator steer a one-shot
+ * action just spent (Cringely/spacemolt#542).
+ */
+export function goalsNamingAction(goals: string[], action: string): string[] {
+  const phrase = normalize(action);
+  return phrase ? goals.filter((g) => phraseIn(normalize(g), phrase)) : [];
+}
+
 export interface GoalPurchaseMatches {
   /**
    * Items the goals literally name, capped at MAX_CANDIDATES. Exact hits win

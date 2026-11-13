@@ -5,7 +5,8 @@ import type {
   Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
   FleetDistress,
 } from "../planner/types";
-import { goalPurchaseCandidates } from "./goal-items";
+import { goalPurchaseCandidates, goalsNamingAction } from "./goal-items";
+import { REGISTRY } from "../registry/actions";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
 import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
 import { executeTick, miningEquipmentKey, classifyGameError, type LearnedSparseRule, type StepResult } from "./executor";
@@ -336,6 +337,10 @@ const SEEN_NOTIFICATIONS_MAX = 500;
 // written before this cap may exceed it; trimming on load keeps the invariant
 // without any schema change -- goals stay a plain string[]).
 const MAX_GOALS = 5;
+// Registry actions whose repetition is itself the harm (ActionDef.oneShot,
+// Cringely/spacemolt#542). REGISTRY is a static array, so computing this once
+// at module load is exact (simplicity rule 5: the sole input is immutable).
+const ONE_SHOT_ACTIONS: ReadonlySet<string> = new Set(REGISTRY.filter((a) => a.oneShot).map((a) => a.name));
 
 // POI-extraction backstop (issue #253): cap on the learned incompatible-POI
 // map, oldest-evicted like MAX_GOALS. 32 because the memory only needs to
@@ -3923,6 +3928,27 @@ export class Agent {
     // already fetched in runOnce -- no extra call) names the system the station
     // is in.
     this.learnStation(step?.action, result, status);
+
+    // One-shot steer retirement (Cringely/spacemolt#542): a successful
+    // oneShot action (self_destruct) spends the operator steer that ordered it,
+    // here at the seam that records the action, not on the planner volunteering
+    // instruction_done (it set none across four plans while the order destroyed
+    // every respawn ship). Success only: a refused or failed step leaves the
+    // order pending. Config goals and pinned rules are never spent, by the same
+    // exemption the instruction_done retirement above applies.
+    if (step && ONE_SHOT_ACTIONS.has(step.action) && (result.kind === "continue" || result.kind === "plan_done")) {
+      const spent = goalsNamingAction(this.goals, step.action)
+        .filter((g) => !this.standingGoals.includes(g) && !this.pinnedInstructions.has(g));
+      if (spent.length) {
+        this.goals = this.goals.filter((g) => !spent.includes(g));
+        // Persist now: a mid-plan oneShot leaves the plan row alive, and a
+        // restart before the next replan would reload the spent order.
+        this.store.saveGoals(this.id, this.goals);
+        for (const instruction of spent) {
+          this.emit("instruction_done", { instruction, reason: "one_shot_action", action: step.action });
+        }
+      }
+    }
 
     // Open-buy-order memory (issue #681): see learnBuyOrderOpened's own doc
     // comment. Same seam as learnStation directly above -- the action, the
