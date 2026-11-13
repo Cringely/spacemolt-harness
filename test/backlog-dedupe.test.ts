@@ -499,7 +499,7 @@ describe("semantic pair input and scheduler wiring", () => {
     const prompt = composePrompt(job, { charterText: "x", stateNow: "y", cycleId: "dedupe-1" });
     expect(prompt).toContain(`${prefix} candidates`);
     expect(prompt).toContain(`${prefix} run`);
-    expect(prompt).toContain("--semantic-b64");
+    expect(prompt).toContain("--semantic-file");
     expect(prompt).not.toContain("file-finding");
   });
 });

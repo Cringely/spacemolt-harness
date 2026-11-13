@@ -1,20 +1,18 @@
 // The ONE authorized report-write path for headless scheduler jobs (#114
-// Batch C review, HIGH finding). Claude Code does not honor Write(path)
-// scoping — only Edit(path) rules match — so a bare `Write` grant would let
-// a prompt-injected job overwrite docs/charters/* ON DISK in the checkout:
-// the D3 fence is commit-time and never sees a plain filesystem write, and
-// the next spawn reads the tampered charter via readFileSync. Bare `Write`
-// is therefore banned from every job's allowedTools
-// (test/scheduler-spawn.test.ts pins it); dated reports write through this
-// jailed script instead.
+// Batch C review, HIGH finding). It writes into the scheduler STATE dir
+// (reports/). A job's write grant is for body files in .job-body/ of its own checkout
+// (src/scheduler/body-arg.ts readBodyFile), and this script is the confined
+// path from there to reports/ (the jail below).
 //
+//   bun scripts/write-report.ts --file <relative path> --body-file <path>
 //   bun scripts/write-report.ts --file <relative path> --body-b64 <base64>
 //
-// The report body is a base64 token on argv — a SINGLE, newline-free argument
-// (src/scheduler/body-arg.ts explains why): headless Claude Code's permission
-// layer splits a Bash command on newlines and matches each fragment against the
-// closed allowedTools list independently, so a heredoc/STDIN body is DENIED,
-// while a one-line `--body-b64 <token>` matches `Bash(bun scripts/write-report.ts *)`.
+// The report body is a file the job wrote with the Write tool inside its
+// checkout under .job-body/ (--body-file, confined there) or a base64 token on argv — a SINGLE,
+// newline-free argument (body-arg.ts explains why): headless Claude Code's
+// permission layer splits a Bash command on newlines and matches each fragment
+// against the closed allowedTools list independently, so a heredoc/STDIN body
+// is DENIED, while a one-line command matches `Bash(bun scripts/write-report.ts *)`.
 //
 // The caller is a spawned agent, so both --file and --body-b64 are UNTRUSTED
 // input (spec §Security: LLM output is untrusted input). Rejected with exit 2 +
@@ -32,14 +30,14 @@
 // Exit codes: 0 written (outcome JSON on stdout), 2 usage/rejected input.
 import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
+import { BodyArgError, resolveBody } from "../src/scheduler/body-arg";
 
 const MAX_REPORT_BYTES = 90 * 1024;
 
 function usage(msg: string): never {
   console.error(msg);
   console.error(
-    "usage: bun scripts/write-report.ts --file <relative path under $SCHEDULER_STATE_DIR/reports/> --body-b64 <base64>",
+    "usage: bun scripts/write-report.ts --file <relative path under $SCHEDULER_STATE_DIR/reports/> (--body-file <path inside your checkout> | --body-b64 <base64>)",
   );
   process.exit(2);
 }
@@ -54,7 +52,8 @@ for (let i = 0; i < args.length; i += 2) {
 }
 const file = opts.file;
 const bodyB64 = opts["body-b64"];
-if (!file || !bodyB64) usage("expected: --file <relative path> --body-b64 <base64>");
+const bodyFile = opts["body-file"];
+if (!file || (!bodyB64 && !bodyFile)) usage("expected: --file <relative path> and --body-file <path> (or --body-b64 <base64>)");
 
 const stateDir = process.env.SCHEDULER_STATE_DIR;
 if (!stateDir) usage("SCHEDULER_STATE_DIR is not set — write-report runs only inside a scheduled job");
@@ -79,13 +78,14 @@ for (const part of resolved.slice((reportsDir + sep).length).split(sep)) {
   if (cur === resolved && !st.isFile()) usage(`target exists and is not a regular file: ${file}`);
 }
 
-// Decode + validate + cap the body BEFORE any write. Malformed base64 or an
-// oversized decoded report is rejected input (exit 2).
+// Decode or read + validate + cap the body BEFORE any write. Malformed base64,
+// a body file outside the job's checkout, or an oversized report is rejected
+// input (exit 2).
 let body: string;
 try {
-  body = decodeBodyArg(bodyB64, MAX_REPORT_BYTES);
+  body = resolveBody({ b64: bodyB64, file: bodyFile }, MAX_REPORT_BYTES);
 } catch (e) {
-  usage(e instanceof BodyArgError ? e.message : `invalid --body-b64: ${e instanceof Error ? e.message : String(e)}`);
+  usage(e instanceof BodyArgError ? e.message : `invalid body: ${e instanceof Error ? e.message : String(e)}`);
 }
 
 mkdirSync(dirname(resolved), { recursive: true });

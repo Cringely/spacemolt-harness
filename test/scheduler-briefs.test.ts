@@ -6,9 +6,11 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { JOBS } from "../src/scheduler/jobs";
+import { JOBS, type JobDef } from "../src/scheduler/jobs";
+import { composePrompt } from "../src/scheduler/spawn";
 
 const root = join(import.meta.dir, "..");
+const job = (id: JobDef["id"]): JobDef => JOBS.find((j) => j.id === id)!;
 const docsPresent = existsSync(join(root, "docs", "charters"));
 
 // First non-empty line under `## Tier` — the charters' shape is "Model, effort — why".
@@ -53,20 +55,28 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
   });
 
   // Catches: a charter/brief's INSTRUCTIONS reintroducing a dead filing/report
-  // form (#114). Findings and reports now carry the body as a single-line
-  // `--body-b64` argv token; the `--body-file` outbox jail and the STDIN/heredoc
-  // form are both denied headless (no fleet tool could write the outbox file;
-  // the permission layer splits a Bash command on newlines). scheduler-spawn's
-  // work-order test runs the same STDIN/`<<` check on the spawn.ts template, but
-  // only sees stubbed strings — this pins the REAL charter/brief files, closing
-  // the seam-manifest entry-9 gap. Scoped to the instruction body: a
-  // `## CHANGELOG` may legitimately name the old forms as history, not instruction.
-  test("no charter/brief instructs a dead filing/report form (--body-file, STDIN, heredoc)", () => {
+  // form (#114). The STDIN/heredoc form is denied headless (the permission layer
+  // splits a Bash command on newlines), and so was the original outbox jail (no
+  // fleet tool could write the outbox file). The live form is `--body-file`
+  // pointing inside the job's own checkout at a file it wrote with the Write
+  // tool, so the flag itself is no longer a tell: the outbox is. A shell encoder
+  // (`printf ... | base64`) is the other banned form (injection, PR 171 review).
+  // scheduler-spawn's work-order test runs the same checks on the spawn.ts
+  // template, but only sees stubbed strings — this pins the REAL charter/brief
+  // files, closing the seam-manifest entry-9 gap. Scoped to the instruction body:
+  // a `## CHANGELOG` may legitimately name the old forms as history, not instruction.
+  test("no charter/brief instructs a dead filing/report form (outbox, STDIN, heredoc, shell encoder)", () => {
     for (const job of JOBS) {
       const instructions = readFileSync(join(root, job.charterPath), "utf8").split(/^## CHANGELOG/m)[0]!;
-      expect(instructions).not.toContain("--body-file");
+      expect(instructions).not.toContain("outbox");
       expect(instructions).not.toContain("STDIN");
       expect(instructions).not.toContain("<<");
+      expect(instructions).not.toContain("printf");
+      expect(instructions).not.toContain("| base64");
+      // The work order names the file flags, so an instruction body still
+      // teaching a base64 flag would contradict it (base64 flags still work,
+      // they are just no longer how a job is told to pass a body).
+      expect(instructions).not.toMatch(/--(body|text|semantic)-b64/);
     }
   });
 
@@ -150,5 +160,30 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
       const council = JOBS.find((j) => j.id === "council")!;
       expect(council.allowedTools.some((t) => t.startsWith("Bash(gh pr"))).toBe(false);
     });
+  });
+
+  // Catches (#717, #1131, #1140, #1141, #1144): council's brief Triage step
+  // needs the previous report's date, and council had no command that could
+  // find its own report. Same L-39 shape as the stand-up test above.
+  test("council's brief names read-latest-report and the job holds the grant", () => {
+    const grant = "Bash(bun scripts/read-latest-report.ts *)";
+    expect(job("council").allowedTools).toContain(grant);
+    const prefix = grant.slice("Bash(".length, -" *)".length);
+    const brief = readFileSync(join(root, job("council").charterPath), "utf8");
+    expect(brief).toContain(`${prefix} --glob '*-council-review.md'`);
+    expect(job("council").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
+  });
+
+  // Catches: the council report being routed to a docs/council/ commit nobody
+  // can make (the job's PAT cannot push, #1130). The reports/ state dir is the
+  // record; neither the brief nor the work order may ask for a pickup.
+  test("council asks for no PM pickup or docs/council commit", () => {
+    const prompt = composePrompt(job("council"), { charterText: "x", stateNow: "y", cycleId: "council-1" });
+    expect(prompt).not.toContain("docs/council");
+    expect(prompt).not.toContain("pickup");
+    const brief = readFileSync(join(root, job("council").charterPath), "utf8");
+    const instructions = brief.split(/^## CHANGELOG/m)[0]!;
+    expect(instructions).not.toContain("docs/council");
+    expect(instructions).not.toContain("pickup");
   });
 });

@@ -4,12 +4,16 @@ import { describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readActiveCycle } from "../src/scheduler/filing";
+import { BODY_DIR } from "../src/scheduler/body-arg";
+import { BREAKER_CONFIG_FILE, BREAKER_FILE } from "../src/scheduler/breaker";
+import { LEDGER_FILE } from "../src/scheduler/dispatch-ledger";
+import { ACTIVE_CYCLE_FILE, FILING_LOG_FILE, SUPPRESSION_NOTICE_FILE, readActiveCycle } from "../src/scheduler/filing";
 import type { GitRunner } from "../src/scheduler/git";
-import { JOBS, type JobDef } from "../src/scheduler/jobs";
-import { POLICY_PATHS } from "../src/scheduler/policy-paths";
-import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
-import { loadAnchors } from "../src/scheduler/state";
+import { BODY_EDIT, JOBS, toolNames, type JobDef } from "../src/scheduler/jobs";
+import { HEADLESS_WRITE_ALLOWLIST, POLICY_PATHS } from "../src/scheduler/policy-paths";
+import { CODE_DENY_PATHS, buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
+import { ANCHORS_FILE, LOCK_FILE, STOP_FILE, loadAnchors } from "../src/scheduler/state";
+import { LAST_TICK_FILE } from "../src/scheduler/tick";
 import { INSTALL_ARGV, type CommandRunner } from "../src/scheduler/worktree";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
@@ -146,18 +150,19 @@ describe("spawn composer + runner (C3)", () => {
   });
 
   // Catches: the ON-ARRIVAL filing defect returning (#114). The work order must
-  // teach the WORKING method — a single-line `--body-b64 <base64>` argv token —
-  // never a heredoc/STDIN body (denied: the headless permission layer splits a
-  // Bash command on newlines) nor the dead `--body-file <under outbox/>` form.
-  test("every filing-capable work order instructs single-line --body-b64 filing, never heredoc/STDIN/--body-file", () => {
+  // teach a method that runs headless: a single-line `--body-file <path>` command
+  // whose body the job wrote with the Write tool. Never a heredoc/STDIN body
+  // (denied: the headless permission layer splits a Bash command on newlines),
+  // never the dead outbox jail (no tool could create a file there), and never
+  // text inside a shell argument (`printf '<text>' | base64`: injection).
+  test("every filing-capable work order instructs single-line --body-file filing, never heredoc/STDIN/outbox", () => {
     for (const j of FILING_JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
-      expect(prompt).toContain("bun scripts/file-finding.ts");
-      expect(prompt).toContain("--body-b64");
+      expect(prompt).toMatch(/bun scripts\/file-finding\.ts[^\n]*--body-file/);
       expect(prompt).toContain("ONE LINE"); // the single-line instruction agents must follow
+      expect(prompt).toContain("Write tool"); // the body is written, not computed in a shell
       expect(prompt).not.toContain("<<"); // no heredoc anywhere
       expect(prompt).not.toContain("STDIN"); // the denied-headless method is gone
-      expect(prompt).not.toContain("--body-file");
       expect(prompt).not.toContain("outbox");
     }
   });
@@ -347,17 +352,113 @@ describe("spawn composer + runner (C3)", () => {
     }
   });
 
-  // Catches: bare `Write` regressing into ANY job's list. Claude Code does
-  // not honor Write(path) scoping (only Edit(path) rules match), so an
-  // unscoped Write lets a prompt-injected run overwrite docs/charters/* ON
-  // DISK in the checkout — the D3 fence is commit-time and never sees a
-  // plain filesystem write; the next spawn readFileSync's the tampered
-  // charter. Reports go through the jailed scripts/write-report.ts instead.
-  test("no job's allowedTools contains bare Write; report-writing jobs carry the jailed writer", () => {
+  // Catches (security review of PR 171, CRITICAL): a file-writing grant wider
+  // than the body dir. A bare `Write` let a job overwrite scripts/file-finding.ts
+  // and run it through its own Bash grant, or write gates.json and the state dir.
+  // Claude Code accepts a `Write(path)` rule and never matches it (permissions
+  // docs), so a scoped Write() entry would grant nothing and read as protection:
+  // the only scoped form is `Edit(<path>)`, which covers the Write tool. Pinned
+  // on every job: no bare Write/Edit (or the multi-file variants), no Write(...)
+  // entry, and every Edit(...) grant sits under the body dir or, for the steward,
+  // the doc-steward write allowlist, never on a path a job executes or that
+  // steers how it runs.
+  test("no job has an unscoped Write or Edit grant, no Write(...) entry, and every Edit grant is body dir or the steward allowlist", () => {
+    const unscoped = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
     for (const j of JOBS) {
-      expect(j.allowedTools.includes("Write")).toBe(false);
-      expect(j.allowedTools.some((t) => /^Write\(/.test(t))).toBe(false); // scoped Write is not honored either
+      expect(j.allowedTools.filter((t) => unscoped.has(t))).toEqual([]);
+      expect(j.allowedTools.filter((t) => /^(Write|MultiEdit|NotebookEdit)\(/.test(t))).toEqual([]);
+      const edits = j.allowedTools.filter((t) => t.startsWith("Edit("));
+      expect(edits).toContain(BODY_EDIT);
+      const allowedPaths = new Set([`./${BODY_DIR}/**`, ...(j.id === "steward" ? HEADLESS_WRITE_ALLOWLIST : [])]);
+      for (const e of edits) expect(allowedPaths.has(e.slice("Edit(".length, -1))).toBe(true);
+      // No allowed edit path may fall under a denied code path.
+      for (const e of edits) {
+        const path = e.slice("Edit(".length, -1).replace(/^\.\//, "");
+        for (const d of [...CODE_DENY_PATHS, ...POLICY_PATHS]) {
+          const prefix = d.endsWith("/**") ? d.slice(0, -2) : d;
+          expect(path.startsWith(prefix)).toBe(false);
+        }
+      }
     }
+  });
+
+  // Catches: --tools closing the Write tool the body-dir grant exists for. The
+  // grant is `Edit(...)`, so a --tools list derived from tool names alone would
+  // name Edit and drop Write, leaving the job no way to create the body file.
+  test("toolNames exposes Write beside a scoped Edit grant, and every job's --tools list carries it", () => {
+    expect(toolNames(["Read", "Edit(./x/**)"]).sort()).toEqual(["Edit", "Read", "Write"]);
+    expect(toolNames(["Read", "Bash(gh pr list *)"])).not.toContain("Write");
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      expect(argv[argv.indexOf("--tools") + 1]!.split(",")).toContain("Write");
+    }
+  });
+
+  // Catches: the second layer dropping out of buildArgv. The allow scoping is
+  // the first layer; these denies keep scripts a job runs, the code they import
+  // and the manifests that steer bun out of reach even if a later edit widens a
+  // grant. Edit denies cover the Write tool too (docs).
+  test("every job's argv denies Edit on scripts, src, .claude, the manifests and every state-dir file", () => {
+    expect([...CODE_DENY_PATHS].sort()).toEqual([".claude/**", "bun.lock", "bunfig.toml", "package.json", "scripts/**", "src/**"]);
+    // Each state-dir name is the value of an exported constant; spawn.ts lists them as literals.
+    const stateNames = [
+      ANCHORS_FILE,
+      LOCK_FILE,
+      STOP_FILE,
+      LAST_TICK_FILE,
+      ACTIVE_CYCLE_FILE,
+      FILING_LOG_FILE,
+      SUPPRESSION_NOTICE_FILE,
+      BREAKER_FILE,
+      BREAKER_CONFIG_FILE,
+      LEDGER_FILE,
+      "reports/**",
+      "logs/**",
+    ];
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+      for (const p of CODE_DENY_PATHS) expect(denies).toContain(`Edit(${p})`);
+      for (const n of stateNames) expect(denies).toContain(`Edit(//srv/sched/state/${n})`);
+      // Never Write(path): accepted by Claude Code and never matched.
+      expect(denies.filter((d) => d.startsWith("Write("))).toEqual([]);
+    }
+  });
+
+  // Catches: a deny that swallows the job's own body dir. The worktree lives
+  // under the state dir (stateDir/worktrees/<cycle>), so a blanket
+  // `Edit(<state>/**)` would deny the very file the grant lets it write, and a
+  // deny wins over an allow. Nothing the argv denies may be a prefix of the
+  // worktree path, and the body dir's own grant must not be shadowed by a code deny.
+  test("no deny covers the job's worktree body dir under the state dir", () => {
+    const bodyFile = `/srv/sched/state/worktrees/standup-1/${BODY_DIR}/finding.md`;
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1).filter((d) => d.startsWith("Edit("));
+      for (const d of denies) {
+        const path = d.slice("Edit(".length, -1);
+        if (!path.startsWith("//")) continue; // relative rules anchor at the job's cwd, not the state dir
+        const abs = path.slice(1);
+        if (abs.endsWith("/**")) expect(bodyFile.startsWith(abs.slice(0, -2))).toBe(false);
+        else expect(bodyFile).not.toBe(abs);
+      }
+    }
+  });
+
+  // Catches: runJob forgetting to create the body dir. The write grant covers the
+  // directory, not its creation, and readBodyFile needs a real dir to resolve.
+  test("runJob creates the body dir in the job's worktree before the spawn", async () => {
+    const dirs = makeDirs();
+    let existed: boolean | undefined;
+    const spawner: Spawner = (_argv, opts) => {
+      existed = existsSync(join(opts.cwd, BODY_DIR));
+      return { exited: Promise.resolve({ exitCode: 0 }), kill() {} };
+    };
+    await runJob(job("council"), { spawner, clock: () => 1_000_000, ...dirs });
+    expect(existed).toBe(true);
+  });
+
+  test("the council and strategy jobs hold the report writer", () => {
     for (const id of ["strategy", "council"] as const) {
       expect(job(id).allowedTools.includes("Bash(bun scripts/write-report.ts *)")).toBe(true);
     }
@@ -405,7 +506,7 @@ describe("spawn composer + runner (C3)", () => {
   test("strategy work order advertises the steer lever as USABLE and names the real command", () => {
     const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
     expect(prompt).toContain("bun scripts/strategy-store.ts steer");
-    expect(prompt).toContain("--text-b64");
+    expect(prompt).toMatch(/strategy-store\.ts steer <agentId> --body-file/);
     expect(prompt).toContain("500 characters"); // the bound the server enforces
     expect(prompt).toContain("#527"); // the query-action content rule
     // The dead advisories, gone. Both are exact strings from the pre-#495
@@ -425,7 +526,7 @@ describe("spawn composer + runner (C3)", () => {
     expect(job("strategy").allowedTools).toContain(grant);
     const grantedPrefix = grant.slice("Bash(".length, -" *)".length); // "bun scripts/strategy-store.ts"
     const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
-    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --text-b64`);
+    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --body-file`);
   });
 
   // Catches (#654): stand-up's council-freshness command drifting out of sync
@@ -444,8 +545,50 @@ describe("spawn composer + runner (C3)", () => {
     expect(job("standup").allowedTools.some((t) => /^Bash\((ls|find|printenv) /.test(t))).toBe(false);
   });
 
+  // Catches (Cringely/spacemolt#798, #880, #899, #507, #1120, #1123, #1147,
+  // #1148, #980): a work order demanding a body the job has no safe way to
+  // produce. Agents then hand-encoded base64 (one slipped character corrupted a
+  // filed body, #980) or rediscovered an ungranted pipe by trial. The first fix
+  // granted `Bash(printf *)` + `base64` and taught `printf '<text>' | base64`:
+  // untrusted text inside a single-quoted shell argument is injection, and
+  // `printf *` is a free-form wildcard (security review of PR 171, HIGH). The
+  // method is now a file the job writes with the Write tool, passed by path.
+  // This pins both halves: no job grants a shell encoder, and every body-taking
+  // script a job is granted is named in its work order with the file flag the
+  // script really accepts (a flag renamed on one side only fails here).
+  const SHELL_ENCODER = /^Bash\((printf|base64|echo|cat|tee|xxd|od|openssl|python3?|node|perl|ruby|sh|bash|env)\b/;
+  test("no job grants a shell encoder, and no work order teaches piping text through one", () => {
+    for (const j of JOBS) {
+      expect(j.allowedTools.filter((t) => SHELL_ENCODER.test(t))).toEqual([]);
+      const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
+      expect(prompt).not.toContain("printf");
+      expect(prompt).not.toContain("| base64");
+      expect(prompt).not.toContain("base64 -w");
+    }
+  });
+
+  const BODY_SCRIPTS = [
+    { script: "file-finding.ts", flag: "--body-file" },
+    { script: "write-report.ts", flag: "--body-file" },
+    { script: "strategy-store.ts", flag: "--body-file" },
+    { script: "backlog-dedupe.ts", flag: "--semantic-file" },
+  ];
+  test("each body-taking script a job is granted is named in its work order with a file flag the script accepts", () => {
+    for (const j of JOBS) {
+      const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
+      expect(j.allowedTools).toContain(BODY_EDIT); // the grant that lets Write create the body file
+      expect(prompt).toContain(`${BODY_DIR}/`); // where the work order says to write it
+      for (const { script, flag } of BODY_SCRIPTS) {
+        if (!j.allowedTools.some((t) => t === `Bash(bun scripts/${script} *)`)) continue;
+        expect(prompt).toMatch(new RegExp(`scripts/${script.replace(".", "\\.")}[^\\n]*${flag}`));
+        const src = readFileSync(join(import.meta.dir, "..", "scripts", script), "utf8");
+        expect(src).toContain(flag.slice(2)); // the script parses the flag the prompt names
+      }
+    }
+  });
+
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
-  // Steward keeps bare Edit for its docs remit, and an on-disk charter edit
+  // Steward's Edit is scoped to its docs allowlist, and an on-disk charter edit
   // bypasses the commit-time D3 fence — the deny (deny wins over allow;
   // Edit(path) scoping honored, verified live) must cover every POLICY_PATHS
   // entry on EVERY job so a job gaining Edit later cannot reopen the hole.
@@ -473,7 +616,8 @@ describe("spawn composer + runner (C3)", () => {
       const toolsIdx = argv.indexOf("--tools");
       expect(toolsIdx).toBeGreaterThan(-1);
       // Derived independently of the implementation: the part before "(" of each grant, deduped.
-      const expected = [...new Set(j.allowedTools.map((t) => t.replace(/\(.*$/, "")))];
+      // Plus Write when the job holds a scoped Edit grant: Claude Code checks Write against Edit rules.
+      const expected = [...new Set([...j.allowedTools.map((t) => t.replace(/\(.*$/, "")), "Write"])];
       expect(argv[toolsIdx + 1]!.split(",").sort()).toEqual(expected.sort());
       // One comma-joined value, then the next flag: nothing else is swept into the set.
       expect(argv[toolsIdx + 2]!.startsWith("--")).toBe(true);

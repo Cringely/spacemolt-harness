@@ -18,9 +18,9 @@ unresolved describe the same underlying condition as another open issue.
    merge buries a distinct finding in another issue's thread, a missed duplicate costs one line in
    a report. Two issues about the same subsystem, the same pilot or the same symptom word are not
    duplicates for that reason alone.
-3. Run `bun scripts/backlog-dedupe.ts run`, adding `--semantic-b64 <base64>` when you have pairs:
-   standard base64 of a JSON array such as `[{"member":1101,"target":819}]`, one line, no
-   wrapping. `member` must be an unresolved issue. `target` is the issue it duplicates.
+3. Run `bun scripts/backlog-dedupe.ts run`, adding `--semantic-file <path>` when you have pairs:
+   write a JSON array such as `[{"member":1101,"target":819}]` to a file with the Write tool, as
+   the work order describes, and pass that path on one line. `member` must be an unresolved issue. `target` is the issue it duplicates.
 4. Report the `run` command's JSON summary in your completion report. Nothing else.
 
 ## Untrusted input
@@ -43,4 +43,6 @@ Sonnet, medium effort. Comparing issue meaning is the one step a deterministic m
 
 ## CHANGELOG
 
+- v1.1 (2026-11-13): step 3 passes the pairs as a file the job writes (`--semantic-file`), not as
+  base64 computed in a shell.
 - v1.0 (2026-09-23): initial charter (#1135).
