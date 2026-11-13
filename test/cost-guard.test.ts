@@ -161,6 +161,72 @@ describe("Layer 3: per-agent rolling plan-budget ceiling", () => {
     expect(budgetEvents.length).toBeLessThan(20);
   });
 
+  // Cringely/spacemolt#1151: the miner sat at its cap for days and emitted 198
+  // plan_budget_exceeded events in 24h -- one per replan, not one per episode.
+  // A saturated pilot passes the gate each time one old wake ages out, replans
+  // (count back to the cap) and is capped on the next tick. The old flag was
+  // cleared by that single pass, so every replan re-armed the emit. Invariant:
+  // an episode ends only after a full window with no capped tick.
+  function saturatedFixture(maxPlans: number, windowMinutes: number, heartbeatMinutes = baseConfig.heartbeatMinutes) {
+    let now = 0;
+    let fuel = 5; // pinned low -> low_fuel every tick while undocked
+    // credits climb every tick so Layer 4's identical-fingerprint detector never
+    // arms: it would back the pilot off and mask the gate under test.
+    const status = (): StatusSnapshot => ({
+      credits: now, fuel, maxFuel: 100, hull: 100, maxHull: 100,
+      cargoUsed: 0, cargoCapacity: 50, docked: false, inTransit: false,
+    });
+    const api: GameApi = {
+      async action(): Promise<V2Result> { return { result: "ok" }; },
+      async status() { return status(); },
+      async notifications() { return []; },
+    };
+    const store = new Store(":memory:");
+    const runawayPlan: Plan = { goal: "mine forever", steps: [{ action: "mine", params: {}, until: "cargo_full" }] };
+    store.savePlan("a1", runawayPlan, []);
+    const planner = new MockPlanner([runawayPlan]);
+    const config: AgentConfig = {
+      ...baseConfig, fuelPct: 20, fuelReservePct: 1, heartbeatMinutes,
+      maxPlansPerWindow: maxPlans, planBudgetWindowMinutes: windowMinutes,
+    };
+    const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => now });
+    return {
+      store, agent, now: () => now,
+      setFuel: (f: number) => { fuel = f; },
+      tick: async () => { now += 60_000; await agent.runOnce(); },
+    };
+  }
+  const budgetEvents = (store: Store) => store.recentEvents("a1", 10_000).filter((e) => e.type === "plan_budget_exceeded");
+
+  test("a pilot saturated at the cap emits plan_budget_exceeded once, not once per replan", async () => {
+    const f = saturatedFixture(5, 60);
+    expect(f.agent.snapshot().plannerHealth.budgetCappedUntil).toBe(0); // never capped: finite, JSON-safe
+    // A low_fuel wake every 5th minute: the trickle of a live pilot (plan_done
+    // wakes ~5 min apart), which is what keeps the gate flipping open one aged-
+    // out wake at a time. 200 minutes = 3+ windows at a cap of 5 per 60.
+    for (let i = 0; i < 200; i++) { f.setFuel(i % 5 === 0 ? 5 : 100); await f.tick(); }
+    const wakes = f.store.recentEvents("a1", 10_000).filter((e) => e.type === "wake").length;
+    expect(wakes).toBeGreaterThan(5 * 2); // replanning kept resuming as wakes aged out
+    expect(budgetEvents(f.store).length).toBe(1);
+    // The single event is long past the dashboard's 30-minute recency window, so
+    // the THROTTLED banner must read the sticky snapshot field instead.
+    expect(f.agent.snapshot().plannerHealth.budgetCappedUntil).toBeGreaterThan(f.now());
+  });
+
+  test("a new episode after a full window with no capped tick emits again", async () => {
+    // Heartbeat out of reach (and below Layer 4's replan count) so the quiet
+    // stretch below really has no wakes: a heartbeat every 15 min would keep
+    // the pilot capped through it and correctly stay one episode.
+    const f = saturatedFixture(3, 60, 100_000);
+    for (let i = 0; i < 10; i++) await f.tick(); // saturate: episode 1
+    expect(budgetEvents(f.store).length).toBe(1);
+    f.setFuel(100); // no wakes -> no capped ticks for > one window
+    for (let i = 0; i < 90; i++) await f.tick();
+    f.setFuel(5);
+    for (let i = 0; i < 10; i++) await f.tick(); // saturate again: episode 2
+    expect(budgetEvents(f.store).length).toBe(2);
+  });
+
   // The operator is the escape hatch. A low_fuel wake at/over budget is capped
   // (the guard works), but an instruction wake at the SAME budget must still
   // reach the planner so a human can steer a thrashing agent.
