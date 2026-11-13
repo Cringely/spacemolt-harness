@@ -20,7 +20,7 @@
 // form the work orders teach: the job never computes base64 in a shell, so no
 // `printf '<untrusted text>' | base64` command, no `Bash(printf *)` grant, and
 // the command carries only a path. The base64 token stays accepted.
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /**
@@ -97,10 +97,29 @@ export function readBodyFile(path: string, maxBytes: number, cwd: string = proce
     throw new BodyArgError(`body file not found: ${path}`);
   }
   if (!strictlyInside(realDir, real)) throw outside();
-  const st = statSync(real);
-  if (!st.isFile()) throw new BodyArgError(`body file is not a regular file: ${path}`);
-  if (st.size > maxBytes) throw new BodyArgError(`body file exceeds ${maxBytes} bytes`);
-  return readFileSync(real, "utf8");
+  // Open ONCE and judge the file through that descriptor, never by path again: a
+  // stat-by-path then read-by-path lets the file be swapped between the two
+  // (CodeQL js/file-system-race). O_NOFOLLOW refuses a final component swapped
+  // for a link after the realpath above (ELOOP), and O_NONBLOCK keeps a FIFO from
+  // hanging the open so the regular-file check below can reject it. Both are
+  // undefined on Windows, where node exposes neither. A swapped ANCESTOR
+  // directory stays unguarded, which needs a link the job's Edit grant cannot
+  // create.
+  let fd: number;
+  try {
+    fd = openSync(real, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ELOOP") throw outside();
+    throw new BodyArgError(`body file not found or unreadable: ${path}`);
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new BodyArgError(`body file is not a regular file: ${path}`);
+    if (st.size > maxBytes) throw new BodyArgError(`body file exceeds ${maxBytes} bytes`);
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
