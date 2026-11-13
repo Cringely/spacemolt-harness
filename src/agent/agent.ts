@@ -3978,7 +3978,24 @@ export class Agent {
     // or "all"/"*" -- see clearOpenBuyOrders's doc comment for why matching
     // the exact order is not available, and why over-clearing at this
     // station is the safe direction.
-    if (step?.action === "cancel_order" && (result.kind === "continue" || result.kind === "plan_done")) {
+    //
+    // A GAME-refused cancel with `no_orders` closes them too: the game saying
+    // this station holds none of our orders is the same fact the success branch
+    // acts on. A bid that fills at placement (markets.md, "Your buy order fills
+    // instantly at placement") is recorded open by learnBuyOrderOpened but never
+    // rests in the book, so without this clear the digest's STALE line tells
+    // the planner to cancel it on every replan and the cancel fails every time
+    // (the #833 loop at the right station). `guard` excludes our own pre-call
+    // refusals, whose text could name the code without the game having said it.
+    // Matched with `.includes` on the leading `no_orders:` code, the same
+    // convention learnItemUnavailable uses (the transport buckets terminal game
+    // errors as command_error, the specific code lives in the message text).
+    const cancelledNothingLeft =
+      result.kind === "blocked" && !result.guard && result.reason.includes("no_orders");
+    if (
+      step?.action === "cancel_order" &&
+      (result.kind === "continue" || result.kind === "plan_done" || cancelledNothingLeft)
+    ) {
       const stationKey = status?.dockedAt;
       if (stationKey) this.clearOpenBuyOrders((r) => r.stationKey === stationKey);
     }

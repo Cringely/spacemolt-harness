@@ -4,7 +4,7 @@ import { MockPlanner } from "../src/planner/mock";
 import { Store } from "../src/store/store";
 import { buildDigest } from "../src/planner/digest";
 import type { GameApi, MarketRow, StatusSnapshot } from "../src/client/client";
-import type { V2Result } from "../src/client/http";
+import { SpacemoltError, type V2Result } from "../src/client/http";
 import type { Plan } from "../src/registry/plan";
 
 // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
@@ -108,6 +108,52 @@ describe("PlanContext.openBuyOrders (standing-bid aging)", () => {
 
     expect(planner.contexts[1]!.openBuyOrders).toHaveLength(1);
     expect(planner.contexts[2]!.openBuyOrders ?? []).toEqual([]);
+  });
+
+  // A bid that fills at placement (markets.md: "Your buy order fills instantly at
+  // placement") is recorded open but never rests in the book, so the game answers
+  // the 24h STALE cancel with no_orders. That refusal is the game saying this
+  // station holds none of our orders; the record must close on it or the digest
+  // repeats "cancel it now" on every replan (the #833 loop at the right station).
+  describe("cancel_order refused by the game", () => {
+    async function replansAfterCancel(cancelError: SpacemoltError) {
+      const status = dockedStatus();
+      let t = 1_000_000;
+      const { api: base } = makeApi(status);
+      const api: GameApi = {
+        ...base,
+        async action(name: string): Promise<V2Result> {
+          if (name === "cancel_order") throw cancelError;
+          return { result: "ok" };
+        },
+      };
+      const store = new Store(":memory:");
+      const planner = new MockPlanner([bidScanner, cancelAll, idle, idle]);
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => t });
+
+      await agent.runOnce(); // replan (bid)
+      await agent.runOnce(); // bid placed
+      t += 30 * HOUR_MS;
+      await agent.runOnce(); // plan_done -> replan (cancelAll), ctx1 carries the stale bid
+      await agent.runOnce(); // cancel_order refused by the game
+      await agent.runOnce(); // replan (ctx2)
+      return planner.contexts;
+    }
+
+    test("no_orders closes the station's records, so the next replan stops telling the planner to cancel", async () => {
+      const ctxs = await replansAfterCancel(
+        new SpacemoltError("command_error", 'no_orders: You have no orders at this station.'),
+      );
+      expect(ctxs[1]!.openBuyOrders).toHaveLength(1);
+      expect(buildDigest(ctxs[1]!)).toContain("cancel it now");
+      expect(ctxs[2]!.openBuyOrders ?? []).toEqual([]);
+      expect(buildDigest(ctxs[2]!)).not.toContain("Standing buy orders");
+    });
+
+    test("any other refusal leaves the record open: only no_orders is the game's 'nothing here'", async () => {
+      const ctxs = await replansAfterCancel(new SpacemoltError("command_error", "not_docked: You must be docked."));
+      expect(ctxs[2]!.openBuyOrders).toHaveLength(1);
+    });
   });
 
   // The seller-depth half needs market rows, and the old gate (docked AND cargo

@@ -1534,6 +1534,16 @@ describe("social capabilities", () => {
       expect(section(text)).not.toContain('cancel_order{order_id="all"}');
     });
 
+    // The duplicate guard keys on the DOCKED station plus the item (agent.ts
+    // buyOrderAlreadyOpen), so a bid at another station does not make
+    // create_buy_order refuse. The digest must not say it does.
+    test("a stale bid elsewhere makes no claim that create_buy_order is refused as a duplicate", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ ageHours: 72, here: false, stationKey: "far_outpost" })],
+      });
+      expect(section(text)).not.toMatch(/duplicate|create_buy_order/i);
+    });
+
     test("every open bid is listed, oldest first as supplied", () => {
       const text = buildDigest({
         ...baseCtx,
