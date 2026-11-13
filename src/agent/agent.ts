@@ -538,9 +538,13 @@ export class Agent {
   private repeatBreakFloorTs = Number.NEGATIVE_INFINITY;
 
   // Layer 3: throttle so plan_budget_exceeded is emitted once per over-budget
-  // episode, not once per capped tick. Cleared the moment the trailing window
-  // drains back under the ceiling and a replan is permitted again.
-  private planBudgetExceeded = false;
+  // episode, not once per capped tick or per replan. The episode ends only after
+  // a full window with no capped tick: a pilot saturated at the cap passes the
+  // gate each time one old wake ages out, replans, and is capped again on the
+  // next tick, so a flag cleared by that single pass re-armed the emit on every
+  // replan (Cringely/spacemolt#1151: 198 events/24h at a cap of 12). Simpler
+  // alternative rejected: a count-below-cap reset, which needs a new threshold.
+  private lastBudgetCapTs = Number.NEGATIVE_INFINITY;
 
   // Layer 4 (no-progress detector): the previous replan boundary's fingerprint
   // and a run-length count of identical ones. `stuck` is the sticky operator
@@ -1607,8 +1611,10 @@ export class Agent {
       const windowMs = (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000;
       const maxPlans = this.config.maxPlansPerWindow ?? AGENT_DEFAULTS.maxPlansPerWindow;
       if (wake.reason !== "instruction" && this.store.countWakesSince(this.id, this.now() - windowMs) >= maxPlans) {
-        if (!this.planBudgetExceeded) {
-          this.planBudgetExceeded = true;
+        const cappedAt = this.now();
+        const newEpisode = cappedAt - this.lastBudgetCapTs > windowMs;
+        this.lastBudgetCapTs = cappedAt;
+        if (newEpisode) {
           this.emit("plan_budget_exceeded", {
             maxPlans,
             windowMinutes: this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes,
@@ -1619,7 +1625,6 @@ export class Agent {
         if (!reflexSpentTick && this.plan && this.planState === "running") await this.executeOne(status);
         return;
       }
-      this.planBudgetExceeded = false;
       // evaluateWake (wake.ts) returns "blocked"/"plan_done" only when no
       // instruction is queued, so a queued operator instruction always
       // bypasses this gate. See BLOCKED_THRASH_THRESHOLD's comment.
