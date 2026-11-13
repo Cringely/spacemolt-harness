@@ -168,11 +168,15 @@ const TRAVEL_TO_VOCAB = "travel_to(system_id:string) -- expands into jump hops v
 // receipt as ACTION_VOCAB above (simplicity rule 5): the sole input is the
 // vendored-catalog singleton, provably immutable for the process lifetime.
 // Cheapest first so a broke pilot sees the affordable option up front.
-const FUEL_CELL_IDS_LINE = catalog.items()
-  .filter((i) => i.category === "consumable" && i.id.includes("fuel_cell"))
+const FUEL_CELL_ITEMS = catalog.items()
+  .filter((i) => i.category === "consumable" && i.id.includes("fuel_cell"));
+const FUEL_CELL_IDS_LINE = [...FUEL_CELL_ITEMS]
   .sort((a, b) => (a.base_value ?? Number.MAX_SAFE_INTEGER) - (b.base_value ?? Number.MAX_SAFE_INTEGER))
   .map((i) => (i.base_value != null ? `${i.id} (~${i.base_value}cr)` : i.id))
   .join(", ");
+// Same catalog singleton, same immutability receipt: the ids a refuel can crack
+// from cargo (fuel.md:109), for renderFuelAvailability's cells-aboard count.
+const FUEL_CELL_ID_SET = new Set(FUEL_CELL_ITEMS.map((i) => i.id));
 
 // Ore-value signal (issue #366): the catalog's value RANGE for ore, so the
 // deposit check's value advisory can say what "cheap" and "rich" mean in this
@@ -200,8 +204,8 @@ const ORE_VALUE_SCALE = VALUED_ORES.length
  * currentPoiDeposits, nearbyText,
  * lowFuel, marketRows, unavailableItemsAtStation, shipFit, fittedModules,
  * shipyardText, purchaseEstimates, marketInsightsText, locationInfo,
- * knownStations, fleetDistress
- * -- all thirty appear below, so nothing the agent knows
+ * knownStations, fleetDistress, tank
+ * -- all thirty-one appear below, so nothing the agent knows
  * is silently dropped from what the planner sees. No caching of ctx itself:
  * agent.ts builds a fresh PlanContext object on every replan() call
  * (src/agent/agent.ts's replan method), so buildDigest has nothing stale to
@@ -340,6 +344,11 @@ export function buildDigest(ctx: PlanContext): string {
       `singular; 'fuel_cells' is NOT an item), then refuel.`
     );
   }
+  // Fuel availability (D1, Cringely/spacemolt#984/#839/#829/#701/#684, canonical
+  // #716): the fuel facts the planner was missing, stated where it reads its
+  // status. See renderFuelAvailability for the invariant.
+  const fuelAvailability = renderFuelAvailability(ctx);
+  if (fuelAvailability) lines.push(fuelAvailability);
   // Fleet-rescue briefing (issue #1114): the read half of the #703 gift path
   // -- rendered right under your own Status/fuel lines, the same priority as
   // the low-fuel advisory above, so "a fleet-mate needs help" reads as a
@@ -867,6 +876,71 @@ export function buildDigest(ctx: PlanContext): string {
     lines.push(`The POIs above are ONLY the POIs of the system you are in RIGHT NOW; a step's id is resolved when that step RUNS, not when you write it. Your plan executes over many ticks from a MOVING position: after a travel_to or jump step you are in a DIFFERENT system where none of the POI ids above exist. So never place a travel{id} for one of the POIs above AFTER a step that leaves this system (a guaranteed error, not a round trip) -- end the plan when you arrive and plan the next leg from the new system's own POI list.`);
   }
   return lines.join("\n");
+}
+
+// Fuel availability (D1; Cringely/spacemolt#984 station_fuel_empty 55x/72h,
+// #839 target=self/full 54x/72h, #829 + #684 no_fuel_source, #701 no fuel_cell
+// fallback, canonical #716). Invariant: the digest offers a refuel only where a
+// fuel source exists and the tank is not full. Before this the planner saw
+// "fuel 40/100" and nothing about WHERE fuel exists, so it proposed refuel at
+// a dry station, with nothing aboard to crack, at a full tank, and with a
+// ship-to-ship target meant for someone else. Producer fix: state the facts the
+// refuel outcome is a function of, each with its receipt:
+//   - fuel.md:107-109, fuel.md:138: refuel draws faction reserve, then the
+//     station tank, then cargo cells "if the station is empty"; a station tank
+//     of 0 returns station_fuel_empty. get_system.poi.fuel_reserve is that tank
+//     (openapi-v2.json, required integer on the poi object).
+//   - travel.md:62: docked it buys station fuel and fills the tank; otherwise
+//     it cracks fuel cells from cargo. Undocked with none aboard, nothing draws
+//     (the tracker's no_fuel_source text: "No fuel cells in cargo ...").
+//   - travel.md:62, fuel.md:235: `target` is ship-to-ship (a player at your POI,
+//     Refueling Pump required) or "fleet"; it never means your own tank.
+// Full tank is the one claim with no error text in the reference (fuel.md:225's
+// tank_full belongs to distress_signal), so it is worded as a wasted step, not
+// as a failure. ABSENCE IS NOT A VERDICT (#94): an unread tank renders nothing,
+// an unread station reserve is "unproven", unread cargo never reads as "no
+// cells". fuelReserve is read only while docked; a belt reports 0 meaninglessly.
+// Every input (tank, surroundings.dockedAt/currentPoi, cargo, unavailable list)
+// is a parsed number/id off our own snapshot, so no untrusted-text quoting.
+function renderFuelAvailability(ctx: PlanContext): string | undefined {
+  const tank = ctx.tank;
+  if (!tank || !(tank.maxFuel > 0)) return undefined;
+  const head = `Fuel availability: tank ${tank.fuel}/${tank.maxFuel}.`;
+  if (tank.fuel >= tank.maxFuel) {
+    return `${head} Tank FULL -- a refuel now buys nothing, so do not plan a refuel step until fuel drops.`;
+  }
+  const cells = ctx.cargo
+    ? ctx.cargo.items.filter((i) => FUEL_CELL_ID_SET.has(i.itemId)).reduce((n, i) => n + i.quantity, 0)
+    : undefined;
+  const cellsText = `${cells} fuel cell${cells === 1 ? "" : "s"}`;
+  const target =
+    `To refuel yourself omit target entirely: target is only a player at your POI (ship-to-ship, needs a Refueling Pump) ` +
+    `or "fleet" (read-only status), never "self" or "full".`;
+  const s = ctx.surroundings;
+  let where = "";
+  if (s && !s.dockedAt) {
+    where = cells === undefined
+      ? `Not docked, so no station tank is in reach: refuel can only crack fuel cells from cargo.`
+      : cells > 0
+        ? `Not docked, so no station tank is in reach: refuel cracks your ${cellsText} from cargo.`
+        : `Not docked and no fuel cells aboard: refuel FAILS (no_fuel_source) -- nothing to draw from. Refuel only after a dock step.`;
+  } else if (s) {
+    const reserve = s.currentPoi?.fuelReserve;
+    if (reserve === undefined) {
+      where = `This station's fuel stock was not read this tick, so refuel here is unproven either way.`;
+    } else if (reserve > 0) {
+      where = `This station's fuel tank holds ${reserve} -- refuel here fills your tank from it.`;
+    } else if (cells === undefined) {
+      where = `This station's fuel tank is EMPTY (station_fuel_empty): refuel here works only if you hold fuel cells (cargo not read).`;
+    } else if (cells > 0) {
+      where = `This station's fuel tank is EMPTY (station_fuel_empty), but you hold ${cellsText}: refuel cracks them from cargo.`;
+    } else if (ctx.unavailableItemsAtStation?.some((id) => FUEL_CELL_ID_SET.has(id))) {
+      where = `This station has NO fuel source: its tank is EMPTY (station_fuel_empty), you hold no fuel cells, and a fuel cell buy here is proven unavailable, so refuel here FAILS. travel_to another station before any refuel.`;
+    } else {
+      where = `This station's fuel tank is EMPTY (station_fuel_empty) and you hold no fuel cells, so refuel here FAILS. Buy fuel_cell from this station's market first, or travel_to another station.`;
+    }
+  }
+  return [head, where, target].filter(Boolean).join(" ");
 }
 
 // Compact rendering of PlanContext.surroundings (src/planner/types.ts): id

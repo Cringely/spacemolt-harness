@@ -1478,3 +1478,117 @@ describe("summarizeStatus", () => {
     expect(summarizeStatus(null)).toBe("status unavailable");
   });
 });
+
+// D1 (Cringely/spacemolt#984, #839, #829, #701, #684; canonical #716): the
+// planner kept proposing refuel where it cannot work -- at a station whose tank
+// reads zero (station_fuel_empty, 55x/72h), with nothing aboard to crack
+// (no_fuel_source, 196x lifetime for one pilot), and with a target that means
+// ship-to-ship transfer (target=self/full, 54x/72h) -- because the digest only
+// said "fuel 40/100" in a status string and never stated where fuel exists.
+// Invariant: the digest states a refuel as available only where a fuel source
+// exists and the tank is not full. Vendored reference: fuel.md:107-109 (draw
+// order: station tank, then cargo cells "if the station is empty"), fuel.md:138
+// (base.Fuel == 0 -> station_fuel_empty), travel.md:62 (docked buys station
+// fuel; otherwise cracks cargo cells; target=<player> is ship-to-ship, needs a
+// Refueling Pump), openapi-v2.json get_system.poi.fuel_reserve (integer,
+// required).
+describe("fuel availability line (D1)", () => {
+  const station = (fuelReserve?: number) => ({
+    systemId: "market_prime", systemName: "Market Prime", connections: [], pois: [],
+    dockedAt: "market_prime_station",
+    currentPoi: { id: "market_prime_station", name: "Market Prime Station", type: "station", hasBase: true, fuelReserve },
+  });
+  const undocked = {
+    systemId: "market_prime", systemName: "Market Prime", connections: [], pois: [], dockedAt: null,
+    currentPoi: { id: "belt_1", name: "Belt 1", type: "asteroid_belt", hasBase: false, fuelReserve: 0 },
+  };
+  const cells = (quantity: number) => ({
+    used: quantity, capacity: 50, items: [{ itemId: "fuel_cell", name: "Fuel Cell", quantity }],
+  });
+  const empty = { used: 0, capacity: 50, items: [] };
+  const fuelLine = (ctx: PlanContext): string | undefined =>
+    buildDigest(ctx).split("\n").find((l) => l.startsWith("Fuel availability:"));
+  const ctxOf = (over: Partial<PlanContext>): PlanContext => ({
+    ...baseCtx, tank: { fuel: 40, maxFuel: 100 }, cargo: empty, surroundings: station(500), ...over,
+  });
+
+  test("dry station, nothing to crack: refuel here is stated as failing, with the way out", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(0) }))!;
+    expect(line).toContain("EMPTY");
+    expect(line).toContain("station_fuel_empty");
+    expect(line).toMatch(/refuel here FAILS/);
+    expect(line).toContain("travel_to another station");
+    // must not simultaneously offer the working-refuel claim
+    expect(line).not.toContain("fills your tank");
+  });
+
+  test("dry station AND fuel_cell proven unavailable: no fuel source here, relocate (#701)", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(0), unavailableItemsAtStation: ["fuel_cell"] }))!;
+    expect(line).toContain("NO fuel source");
+    expect(line).toContain("travel_to another station");
+    expect(line).not.toMatch(/buy fuel_cell from this station/);
+  });
+
+  test("dry station but cells aboard: refuel is offered, as a crack of the cargo cells", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(0), cargo: cells(3) }))!;
+    expect(line).toContain("3 fuel cell");
+    expect(line).toContain("cracks");
+    expect(line).not.toMatch(/refuel here FAILS/);
+  });
+
+  test("stocked station, tank not full: states refuel here fills the tank", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(500) }))!;
+    expect(line).toContain("holds 500");
+    expect(line).toContain("fills your tank");
+    expect(line).not.toContain("EMPTY");
+  });
+
+  test("full tank: states a refuel buys nothing and offers no refuel path", () => {
+    const line = fuelLine(ctxOf({ tank: { fuel: 100, maxFuel: 100 }, surroundings: station(500) }))!;
+    expect(line).toContain("FULL");
+    expect(line).toMatch(/do not plan a refuel/i);
+    expect(line).not.toContain("fills your tank");
+    expect(line).not.toContain("holds 500");
+  });
+
+  test("undocked, nothing aboard: refuel fails (no_fuel_source), dock first", () => {
+    const line = fuelLine(ctxOf({ surroundings: undocked }))!;
+    expect(line).toContain("no_fuel_source");
+    expect(line).toMatch(/dock/);
+    // the belt's meaningless fuel_reserve:0 must not be read as a dry station
+    expect(line).not.toContain("EMPTY");
+  });
+
+  test("undocked with cells aboard: refuel cracks them", () => {
+    const line = fuelLine(ctxOf({ surroundings: undocked, cargo: cells(2) }))!;
+    expect(line).toContain("2 fuel cell");
+    expect(line).toContain("cracks");
+    expect(line).not.toContain("no_fuel_source");
+  });
+
+  test("premium cells count as cells aboard (catalog fuel-cell ids, not the literal fuel_cell)", () => {
+    const premium = { used: 1, capacity: 50, items: [{ itemId: "premium_fuel_cell", name: "Premium Fuel Cell", quantity: 1 }] };
+    expect(fuelLine(ctxOf({ surroundings: undocked, cargo: premium }))).not.toContain("no_fuel_source");
+  });
+
+  // ABSENCE IS NOT A VERDICT (#94): an unread reserve is unproven, never dry.
+  test("docked with no fuel_reserve reading: makes no claim about the station tank", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(undefined) }))!;
+    expect(line).not.toContain("EMPTY");
+    expect(line).not.toContain("fills your tank");
+    expect(line).not.toContain("holds");
+    expect(line).toContain("not read");
+  });
+
+  test("renders nothing without a tank reading, and nothing when maxFuel is 0", () => {
+    expect(fuelLine(ctxOf({ tank: undefined }))).toBeUndefined();
+    expect(fuelLine(ctxOf({ tank: { fuel: 0, maxFuel: 0 } }))).toBeUndefined();
+  });
+
+  test("target note: own-tank refuel takes no target; never self/full (#839)", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(500) }))!;
+    expect(line).toMatch(/omit target/i);
+    expect(line).toContain('"self"');
+    expect(line).toContain('"full"');
+  });
+});

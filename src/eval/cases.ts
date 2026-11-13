@@ -37,7 +37,12 @@ const SurroundingsSchema = z.object({
     sparse: z.boolean().optional(),
   })),
   dockedAt: z.string().nullable(),
-  currentPoi: z.object({ id: z.string(), name: z.string(), type: z.string() }).optional(),
+  // hasBase/fuelReserve (D1): mirror Surroundings.currentPoi so a harvested case
+  // replays the station-tank reading the fuel-availability line was shown.
+  currentPoi: z.object({
+    id: z.string(), name: z.string(), type: z.string(),
+    hasBase: z.boolean().optional(), fuelReserve: z.number().optional(),
+  }).optional(),
 });
 
 const CargoSchema = z.object({
@@ -106,6 +111,8 @@ const PlanContextSchema = z.object({
   })).optional(),
   nearbyText: z.string().optional(),
   lowFuel: z.boolean().optional(),
+  // D1: mirrors PlanContext.tank, the numbers behind the fuel-availability line.
+  tank: z.object({ fuel: z.number(), maxFuel: z.number() }).optional(),
   marketRows: z.array(z.object({
     itemId: z.string(),
     bestBuy: z.number().optional(),

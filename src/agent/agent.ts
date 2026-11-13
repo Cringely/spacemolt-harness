@@ -2647,6 +2647,9 @@ export class Agent {
         // strand detector uses, over the same snapshot -- gates the digest's
         // fuel-acquisition briefing (exact catalog fuel ids + dock/buy/refuel).
         lowFuel: statusSnap ? this.fuelBelowReserve(statusSnap) : undefined,
+        // D1: the tank numbers behind the digest's fuel-availability line
+        // (full-tank and where-can-I-refuel), same snapshot as lowFuel above.
+        tank: statusSnap ? { fuel: statusSnap.fuel, maxFuel: statusSnap.maxFuel } : undefined,
         marketRows,
         // Repeated-buy remainder (issue #669): the buy-side counterpart to
         // marketRows above, read fresh every replan off the docked station

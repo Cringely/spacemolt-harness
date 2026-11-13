@@ -58,6 +58,25 @@ describe("Agent surroundings (F-1)", () => {
     });
   });
 
+  // D1: the producer half of the fuel-availability line. buildDigest can only
+  // state what the agent hands it; this pins that the tank numbers and the
+  // docked station's fuel_reserve actually reach the digest end-to-end.
+  test("threads the tank and the docked station's fuel_reserve into the digest (D1)", async () => {
+    const { api } = stubApiWithMap({
+      status: { fuel: 40, maxFuel: 100 },
+      system: {
+        id: "sys-1", name: "Alpha Prime", connections: [], pois: [],
+        currentPoi: { id: "base-1", name: "Alpha Station", type: "station", hasBase: true, fuelReserve: 0 },
+      },
+    });
+    const planner = new MockPlanner([okPlan]);
+    const agent = new Agent({ id: "a1", persona: "p", api, store: new Store(":memory:"), planner, config, now: () => 1 });
+
+    await agent.runOnce();
+    expect(planner.contexts[0]!.tank).toEqual({ fuel: 40, maxFuel: 100 });
+    expect(buildDigest(planner.contexts[0]!)).toMatch(/Fuel availability: tank 40\/100\. This station's fuel tank is EMPTY/);
+  });
+
   test("surroundings is gathered fresh on every replan (no caching)", async () => {
     const { api, counts } = stubApiWithMap({
       system: { id: "sys-1", name: "Alpha Prime", connections: [], pois: [] },
