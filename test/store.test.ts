@@ -207,3 +207,60 @@ describe("Store.eventsSince", () => {
     expect(store.eventsSince("a1", 1000)).toEqual([]);
   });
 });
+
+// Cringely/spacemolt#540. Persisted state outlives the schema that wrote it, so
+// every events reader must DISCARD a row whose payload is not JSON and return
+// the rest, exactly as dockTrail and lastMeasuredFuelPerJump already do.
+// Written past appendEvent on purpose: it JSON.stringifys, so no typed writer
+// can produce a half-written payload. The bad row is placed between valid ones
+// so a reader that stops at it, or returns nothing, fails the assertion.
+describe("Store event readers discard a malformed stored payload (#540)", () => {
+  const BAD = '{"k":"x","half":';
+
+  function seed(): { store: Store; first: number; last: number } {
+    const dbPath = join(tmpdir(), `spacemolt-store-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+    cleanupPaths.push(dbPath);
+    const store = new Store(dbPath);
+    const first = store.appendEvent({ agentId: "a1", ts: 100, type: "t", payload: { k: "x", pin: true } });
+    const raw = new Database(dbPath);
+    raw.query("INSERT INTO events (agent_id, ts, type, payload) VALUES (?, ?, ?, ?)").run("a1", 200, "t", BAD);
+    raw.close();
+    const last = store.appendEvent({ agentId: "a1", ts: 300, type: "t", payload: { k: "y", pin: false } });
+    return { store, first, last };
+  }
+
+  test("recentEvents skips the bad row and the limit still counts valid rows", () => {
+    const { store, first, last } = seed();
+    expect(store.recentEvents("a1", 10).map((e) => e.id)).toEqual([first, last]);
+    // limit 2 over 3 rows (one bad): a catch-and-skip in JS would return 1.
+    expect(store.recentEvents("a1", 2).map((e) => e.id)).toEqual([first, last]);
+    store.close();
+  });
+
+  test("eventsSince skips the bad row", () => {
+    const { store, first, last } = seed();
+    expect(store.eventsSince("a1", 0).map((e) => e.id)).toEqual([first, last]);
+    store.close();
+  });
+
+  test("recentEventsByType skips the bad row", () => {
+    const { store, first, last } = seed();
+    expect(store.recentEventsByType("a1", "t", 10).map((e) => e.id)).toEqual([first, last]);
+    store.close();
+  });
+
+  test("eventsByTypeSince skips the bad row", () => {
+    const { store, first, last } = seed();
+    expect(store.eventsByTypeSince("a1", "t", 0).map((e) => e.id)).toEqual([first, last]);
+    store.close();
+  });
+
+  // This reader throws earlier than the rest: json_extract inside the SQL raises
+  // on non-JSON text before any JS JSON.parse runs.
+  test("latestEventPerPayloadKey skips the bad row, with and without a filter", () => {
+    const { store, first, last } = seed();
+    expect(store.latestEventPerPayloadKey("a1", "t", "k", 10).map((e) => e.id)).toEqual([first, last]);
+    expect(store.latestEventPerPayloadKey("a1", "t", "k", 10, { field: "pin", equals: true }).map((e) => e.id)).toEqual([first]);
+    store.close();
+  });
+});
