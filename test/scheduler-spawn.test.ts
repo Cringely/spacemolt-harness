@@ -10,6 +10,7 @@ import { JOBS, type JobDef } from "../src/scheduler/jobs";
 import { POLICY_PATHS } from "../src/scheduler/policy-paths";
 import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
 import { loadAnchors } from "../src/scheduler/state";
+import { INSTALL_ARGV, type CommandRunner } from "../src/scheduler/worktree";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
@@ -67,7 +68,11 @@ function makeDirs(stateNowBody = "now-block-content-marker") {
   for (const [name, value] of Object.entries(SENTINELS)) {
     writeFileSync(join(secretsDir, name), `${value}\n`); // trailing newline like a real secret file
   }
-  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), pinnedSha: TEST_PINNED_SHA };
+  // commandRunner is the dependency-install seam: a no-op success here, because
+  // these tests are not about dependency resolution. The install tests at the
+  // end of this file override it.
+  const commandRunner: CommandRunner = () => ({ stdout: "", exitCode: 0 });
+  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), commandRunner, pinnedSha: TEST_PINNED_SHA };
 }
 
 interface SpawnCall {
@@ -533,5 +538,53 @@ describe("spawn composer + runner (C3)", () => {
     expect(call.argv.includes(CHARTER_TEXT)).toBe(false);
     expect(call.argv).toContain("--allowedTools");
     for (const tool of job("council").allowedTools) expect(call.argv).toContain(tool);
+  });
+
+  // Catches: a job worktree spawning with no node_modules, so bun falls back to
+  // its global cache and resolves zod 4 (Cringely/spacemolt#1110 and its
+  // duplicates). The install must run FIRST, inside the very directory the
+  // spawn then uses as cwd, and must be the lockfile-frozen form.
+  test("locked deps are installed in the job worktree before claude spawns", async () => {
+    const dirs = makeDirs();
+    const events: string[] = [];
+    const installs: Array<{ argv: string[]; cwd: string }> = [];
+    const commandRunner: CommandRunner = (argv, cwd) => {
+      events.push("install");
+      installs.push({ argv, cwd });
+      return { stdout: "", exitCode: 0 };
+    };
+    const calls: SpawnCall[] = [];
+    const spawner: Spawner = (argv, opts) => {
+      events.push("spawn");
+      calls.push({ argv, opts });
+      return { exited: Promise.resolve({ exitCode: 0 }), kill() {} };
+    };
+    const outcome = await runJob(job("strategy"), { spawner, clock: () => 1_000_000, ...dirs, commandRunner });
+    expect(outcome.result).toBe("ok");
+    expect(events).toEqual(["install", "spawn"]);
+    expect(installs[0]!.argv).toEqual(INSTALL_ARGV);
+    expect(installs[0]!.argv).toContain("--frozen-lockfile");
+    expect(installs[0]!.cwd).toBe(calls[0]!.opts.cwd);
+  });
+
+  // Catches: a failed install being swallowed and the job spawning anyway
+  // against a half-installed or cache-resolved tree. It must fail the job
+  // loudly: no spawn, result fail, error on the run row, failStreak bumped,
+  // and the worktree still cleaned up.
+  test("a failed install fails the job: no spawn, error recorded, worktree removed", async () => {
+    const dirs = makeDirs();
+    const commandRunner: CommandRunner = () => ({ stdout: "error: lockfile had changes, but lockfile is frozen", exitCode: 1 });
+    const { spawner, calls } = fakeSpawner(0);
+    const outcome = await runJob(job("strategy"), { spawner, clock: () => 1_000_000, ...dirs, commandRunner });
+    expect(outcome.result).toBe("fail");
+    expect(calls.length).toBe(0);
+    const logText = readdirSync(join(dirs.stateDir, "logs"))
+      .map((f) => readFileSync(join(dirs.stateDir, "logs", f), "utf8"))
+      .join("");
+    const line = JSON.parse(logText.trim());
+    expect(line.error).toContain("bun install --frozen-lockfile failed (exit 1)");
+    expect(line.error).toContain("lockfile is frozen");
+    expect(loadAnchors(dirs.stateDir).strategy.failStreak).toBe(1);
+    expect(existsSync(join(dirs.stateDir, "worktrees", outcome.cycleId))).toBe(false);
   });
 });

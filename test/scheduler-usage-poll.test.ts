@@ -222,7 +222,8 @@ function makeTickDirs() {
     dedupe: { ...defaultAnchor(), lastAttemptAt: T },
   };
   saveAnchors(stateDir, quiet);
-  return { checkoutDir, secretsDir, stateDir };
+  // Install is faked: these tests are not about dependency resolution (see scheduler-spawn.test.ts).
+  return { checkoutDir, secretsDir, stateDir, commandRunner: () => ({ stdout: "", exitCode: 0 }) };
 }
 
 const quietGit: GitRunner = (args) => {
