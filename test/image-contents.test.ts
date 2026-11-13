@@ -2,12 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Drift gate for #290: the charters tell an operator to run
-// `docker exec ... bun run scripts/strategy-review-gate.ts` (and the matching
-// -mark.ts cursor writer), but the runtime image shipped /app/src only --
-// 'Module not found' at the very first gated strategy review, and without the
-// marker CLI the review cursor could never advance (every future gate returns
-// run=true). #280's "active once the next image deploys" assumption was wrong
+// Drift gate for #290: the charters tell an operator to run CLIs under
+// scripts/ (today `bun scripts/strategy-store.ts`), but the runtime image once
+// shipped /app/src only -- 'Module not found' at the very first gated strategy
+// review. #280's "active once the next image deploys" assumption was wrong
 // because nothing pinned the image contents to what the charters reference.
 // This test pins it: the runtime stage must COPY scripts/.
 //
@@ -41,11 +39,4 @@ describe.skipIf(!dockerfilePresent)("runtime image contents (#290)", () => {
     expect(runtime).toMatch(/apt-get install -y --no-install-recommends ca-certificates/);
   });
 
-  test("the chartered gate CLIs exist where the charters point", () => {
-    // The two container-run CLIs named by docs/charters/strategy-reviewer.md.
-    // If they move (e.g. under src/), the charters and the COPY above must
-    // move with them -- this failure is the reminder.
-    expect(existsSync(join(import.meta.dir, "..", "scripts", "strategy-review-gate.ts"))).toBe(true);
-    expect(existsSync(join(import.meta.dir, "..", "scripts", "strategy-review-mark.ts"))).toBe(true);
-  });
 });

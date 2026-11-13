@@ -488,6 +488,56 @@ describe("strand guard", () => {
 
     expect(alerts(store, "stranded").length).toBeGreaterThanOrEqual(1);
   });
+
+  // Cringely/spacemolt#1068 review: the guard's no-remedy exemption (0 fuel,
+  // no cell) admits `mine`, and an admitted mine returns `continue`, which
+  // resets fuelBlockedMoves. So the exemption is scoped to a base POI, and a
+  // POI with no base must keep blocking so the #690 strand ladder still fires.
+  describe("0 fuel, no fuel cell (#1068)", () => {
+    const zeroFuelApi = (poi: { hasBase: boolean } | null, mined: string[]): GameApi => ({
+      async action(name): Promise<V2Result> { mined.push(name); return { result: "ok" }; },
+      async status(): Promise<StatusSnapshot> {
+        return {
+          credits: 5, fuel: 0, maxFuel: 90, hull: 95, maxHull: 95, cargo: [],
+          cargoUsed: 0, cargoCapacity: 100, docked: false, inTransit: false, systemId: "krynn",
+        };
+      },
+      async notifications() { return []; },
+      ...(poi ? {
+        async getSystem() {
+          return {
+            id: "krynn", name: "Krynn", connections: [], pois: [],
+            currentPoi: { id: "krynn_belt", name: "Krynn Belt", type: "asteroid_belt", hasBase: poi.hasBase, fuelReserve: 0 },
+          };
+        },
+      } : {}),
+    });
+    const minePlan: Plan = {
+      goal: "keep mining", steps: [{ action: "mine", params: {} }, { action: "refuel", params: {} }],
+    };
+    const drive = async (api: GameApi) => {
+      const store = new Store(":memory:");
+      const planner = new MockPlanner([minePlan]);
+      let now = 0;
+      const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config: cfg, now: () => now });
+      for (let i = 0; i < 12; i++) { now += 2_000; await agent.runOnce(); }
+      return store;
+    };
+
+    test("POI with no base: mine stays blocked and the stranded alert fires", async () => {
+      const calls: string[] = [];
+      const store = await drive(zeroFuelApi({ hasBase: false }, calls));
+      expect(calls).not.toContain("mine");
+      expect(alerts(store, "stranded").length).toBeGreaterThanOrEqual(1);
+    });
+
+    test("POI with a base: mine reaches the game (the only income is not refused)", async () => {
+      const calls: string[] = [];
+      const store = await drive(zeroFuelApi({ hasBase: true }, calls));
+      expect(calls).toContain("mine");
+      expect(alerts(store, "stranded").length).toBe(0);
+    });
+  });
 });
 
 describe("dock dead-end guard (#551)", () => {

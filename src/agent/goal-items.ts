@@ -132,6 +132,12 @@ export function goalPurchaseCandidates(goals: string[], items: ItemMeta[] = cata
   const exact: Hit[] = [];
   const family: Hit[] = [];
   for (const item of items) {
+    // Catalog 0.707.0 added `fuel` (tradeable:false), the ship's fuel resource,
+    // not a purchasable item. Its one-word name token-matches any goal that says
+    // "fuel" ("buy fuel_cell") and burned a MAX_CANDIDATES slot on an
+    // estimate_purchase that can never succeed. Only an explicit false skips an
+    // item: modules and ships carry no tradeable field and stay candidates.
+    if (item.tradeable === false) continue;
     const name = item.name ? normalize(item.name) : "";
     const id = normalize(item.id);
     const g = name ? firstGoal(name) : -1;
