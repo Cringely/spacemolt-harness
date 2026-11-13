@@ -493,10 +493,12 @@ describe("spawn composer + runner (C3)", () => {
 
   // Catches: the deny rules for the paths a prompt-injected job must never
   // read or edit (secrets dir, gates.json, host env file) dropping out of argv.
-  // `--restricted` is the primary control. These are the defence in depth
-  // behind it, and the only guard if a Claude Code build does not confine
-  // read-only Bash. `//path` is Claude Code's absolute-path rule syntax.
-  test("every job's argv denies Read/Edit on the secrets dir, gates.json and the host env file", () => {
+  // `--restricted` is the primary control for the file tools. These rules are
+  // the defence in depth behind it, and Claude Code also applies Read denies to
+  // cat/head/tail/sed named in Bash. `//path` is its absolute-path rule syntax.
+  // No Bash(...) deny belongs here: Bash rules match command text literally,
+  // so a path-shaped one never matches (PR #158 round 1).
+  test("every job's argv denies Read/Edit on the secrets dir, gates.json and the host env file, and no Bash deny", () => {
     for (const j of JOBS) {
       const argv = buildArgv(j, FENCE);
       const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
@@ -505,8 +507,35 @@ describe("spawn composer + runner (C3)", () => {
         expect(denies).toContain(`${tool}(//srv/sched/state/gates.json)`);
         expect(denies).toContain(`${tool}(//home/sched/.config/spacemolt-sched.env)`);
       }
-      expect(denies).toContain("Bash(cat *//srv/sched/secrets*)");
-      expect(denies).toContain("Bash(cat *//home/sched/.config/spacemolt-sched.env*)");
+      expect(denies.filter((d) => d.startsWith("Bash(") && d.includes("srv/sched"))).toEqual([]);
+    }
+  });
+
+  // Catches: a relative SCHEDULER_SECRETS / SCHEDULER_STATE_DIR / env-file path
+  // reaching the fence unresolved. `Read(/rel/secrets/**)` anchors at the job's
+  // cwd and matches nothing, so the deny rules silently fail open.
+  test("a relative fence path is resolved to an absolute path before the rule is built", () => {
+    const argv = buildArgv(job("steward"), { secretsDir: "rel/secrets", stateDir: "rel/state", hostEnvFile: "rel/host.env" });
+    const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+    const cwd = process.cwd().replaceAll("\\", "/");
+    for (const rel of ["rel/secrets/**", "rel/state/gates.json", "rel/host.env"]) {
+      const rule = denies.find((d) => d.startsWith("Read(") && d.endsWith(`${rel})`));
+      expect(rule).toBeDefined();
+      expect(rule!.includes(`${cwd}/${rel}`)).toBe(true);
+    }
+  });
+
+  // Catches (#158 round 1): --restricted confines the file tools only, not
+  // Bash. blockReadsOutsideWorkingDirectories, passed through --settings (which
+  // --restricted still loads), makes recognized file-reading Bash commands on
+  // outside paths prompt, and a -p run denies a prompt. Dropping the flag
+  // leaves `cat ../../secrets/x` running unprompted.
+  test("every job's argv passes --settings with permissions.blockReadsOutsideWorkingDirectories true", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const idx = argv.indexOf("--settings");
+      expect(idx).toBeGreaterThan(-1);
+      expect(JSON.parse(argv[idx + 1]!)).toEqual({ permissions: { blockReadsOutsideWorkingDirectories: true } });
     }
   });
 

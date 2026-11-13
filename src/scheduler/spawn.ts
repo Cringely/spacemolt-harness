@@ -15,10 +15,11 @@
 //   closed: buildArgv adds `--restricted` (file tools confined to the
 //   worktree, project/user settings ignored) and `--tools` (the built-in set
 //   as an explicit list) to close it, plus deny rules for the secrets dir,
-//   gates.json and the host env file (Cringely/spacemolt#865).
+//   gates.json and the host env file (Cringely/spacemolt#865). Bash is NOT
+//   path-confined by --restricted. See the note above buildArgv.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { writeActiveCycle } from "./filing";
 import { GATES_FILE } from "./gates";
 import type { GitRunner } from "./git";
@@ -239,9 +240,20 @@ export function composePrompt(
 // is additive; Cringely/spacemolt#865). --restricted confines Read/Grep/Glob/
 // Edit to the worktree (cwd) and ignores user/project/local settings, so the
 // worktree's .claude/settings.json hooks (workstation dev-team gates, none of
-// which a job depends on) no longer load. The deny rules are defence in depth
-// behind it, and the only guard on the one thing --restricted does not
-// document: whether read-only Bash is path-confined.
+// which a job depends on) no longer load. --restricted does NOT confine Bash:
+// read-only commands (cat, head, tail, grep, ...) run unprompted on any path.
+// BLOCK_OUTSIDE_READS (via --settings, which --restricted still loads) makes
+// recognized file-reading Bash commands on paths outside the worktree, and
+// commands the shell parser cannot trace, prompt. A -p run denies a prompt.
+// That is a prompt-and-deny gate on recognized commands, not a boundary:
+// commands outside Claude Code's recognized set (base64, od, ...) are
+// unverified, so a separate uid or the sandbox stays the structural fix. The
+// Read/Edit deny rules are defence in depth: Claude Code applies them to the
+// file tools and to cat/head/tail/sed/tee named in Bash, not to Bash rules on
+// the same paths (Bash rules match command text literally, so a path-shaped
+// Bash deny cannot match).
+const BLOCK_OUTSIDE_READS = JSON.stringify({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+
 export interface SandboxFence {
   secretsDir: string;
   stateDir: string;
@@ -256,17 +268,16 @@ export function hostEnvFile(env: NodeJS.ProcessEnv = process.env): string {
 
 // Claude Code's absolute-path rule syntax is `//path`: a single leading slash
 // means project-relative, so an absolute path gets one more slash prepended.
-const absPath = (p: string) => `/${p.replaceAll("\\", "/")}`;
+// A relative path (a relative SCHEDULER_SECRETS in the env file) is resolved
+// first: left alone it would anchor at the job's cwd and match nothing, so the
+// fence would fail open. An absolute path is passed through as-is (resolve()
+// would add a drive letter on a Windows dev box and change the rule).
+const absPath = (p: string) => `/${(isAbsolute(p) ? p : resolve(p)).replaceAll("\\", "/")}`;
 
 function fenceDenies(fence: SandboxFence): string[] {
   const dir = absPath(fence.secretsDir);
-  const envFile = absPath(fence.hostEnvFile);
-  const files = [absPath(join(fence.stateDir, GATES_FILE)), envFile];
-  return [
-    ...["Read", "Edit"].flatMap((tool) => [`${tool}(${dir}/**)`, ...files.map((f) => `${tool}(${f})`)]),
-    `Bash(cat *${dir}*)`,
-    `Bash(cat *${envFile}*)`,
-  ];
+  const files = [absPath(join(fence.stateDir, GATES_FILE)), absPath(fence.hostEnvFile)];
+  return ["Read", "Edit"].flatMap((tool) => [`${tool}(${dir}/**)`, ...files.map((f) => `${tool}(${f})`)]);
 }
 
 export function buildArgv(job: JobDef, fence: SandboxFence): string[] {
@@ -279,6 +290,8 @@ export function buildArgv(job: JobDef, fence: SandboxFence): string[] {
     "--strict-mcp-config",
     "--no-session-persistence",
     "--restricted",
+    "--settings",
+    BLOCK_OUTSIDE_READS,
     "--tools",
     toolNames(job.allowedTools).join(","),
     "--allowedTools",
