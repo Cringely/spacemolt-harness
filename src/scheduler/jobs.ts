@@ -2,12 +2,19 @@
 // and PAT split are the spec §Job table + §Security verbatim — a reviewer
 // diffs this file against docs/superpowers/specs/2026-07-18-durable-scheduler.md.
 //
-// allowedTools (finalized in Task C3): CLOSED per-job lists mirroring spec
+// allowedTools (finalized in Task C3): per-job lists mirroring spec
 // §What-it-executes — LLM output is untrusted input, so anything absent from
-// a list is forbidden. No package managers, no unscoped shell, and never a
+// a list is not granted. No package managers, no unscoped shell, and never a
 // bare `Bash(git *)` or `Bash(gh *)` wildcard; the pre-push hook and the D3
 // fence stay the structural backstops BEHIND the lists
-// (test/scheduler-spawn.test.ts pins the closed-list posture).
+// (test/scheduler-spawn.test.ts pins the grant posture).
+//
+// A list is an ALLOW list, additive on its own: it does not close the tool
+// set (Cringely/spacemolt#865: read-only Bash ran with no grant, and a bare
+// `Read` matches every path, not just the worktree). The set is closed by
+// buildArgv (spawn.ts), which passes `--restricted` and a `--tools` list
+// derived from the lists below by toolNames(), so each list stays defined
+// here once.
 //
 // #490: a bare `Bash(gh *)` on council/standup/strategy let the spawned agent
 // run `gh issue create`/`gh issue comment` directly, unscoped, bypassing the
@@ -18,23 +25,35 @@
 // used) list, mirroring steward's style; filing stays exclusively through
 // file-finding.ts, which is unaffected (it runs as the harness process, not
 // through the agent's Bash allowedTools).
+import { BODY_DIR } from "./body-arg";
+import { HEADLESS_WRITE_ALLOWLIST } from "./policy-paths";
 
-// Bare `Write`, held by EVERY job, so a job can hand a long body (finding,
-// report, steer text, dedupe pairs) to its script as a FILE it writes inside
-// its own checkout and names with `--body-file` (spawn.ts BODY_FILE_HOWTO;
-// body-arg.ts readBodyFile confines the path to cwd). Each work order demands a
-// body, and the first fix granted `Bash(printf *)` + `Bash(base64 -w 0)` and
-// told jobs to run `printf '<text>' | base64 -w 0`: untrusted text inside a
-// single-quoted shell argument is injection, and `printf *` is a free-form
-// wildcard (security review of PR 171, HIGH). Rejected: that encoder pair;
+// BODY_EDIT: the ONE file-writing grant the four non-steward jobs hold, so a job
+// can hand a long body (finding, report, steer text, dedupe pairs) to its script
+// as a FILE it writes with the Write tool and names with `--body-file`
+// (spawn.ts BODY_FILE_HOWTO; body-arg.ts readBodyFile reads only from BODY_DIR).
+// Each work order demands a body, and the first fix granted `Bash(printf *)` +
+// `Bash(base64 -w 0)` and told jobs to run `printf '<text>' | base64 -w 0`:
+// untrusted text inside a single-quoted shell argument is injection, and
+// `printf *` is a free-form wildcard (security review of PR 171, HIGH). The
+// second fix granted BARE `Write` and was rated CRITICAL: a job could overwrite
+// scripts/file-finding.ts and then run it through its own Bash grant, or write
+// gates.json and the state dir. Rejected: that encoder pair; bare Write;
 // `gh issue list --jq @base64` (#1002), which only jobs holding a gh grant
 // could use; a plain-text flag, which would put untrusted text on a command
-// line. No scoped `Write(path)` form: Claude Code does not honor it, so the
-// charter protection is the fleet-wide `Edit(<policy path>)` deny that buildArgv
-// composes, which Claude Code applies to every built-in file-editing tool
-// including Write (test/scheduler-spawn.test.ts pins both). The list names the
-// tool as bare "Write" so a `--tools` list derived from it by tool name (PR 158)
-// includes Write.
+// line.
+//
+// The scoped form is `Edit(./.job-body/**)`, NOT `Write(./.job-body/**)`: the
+// permissions docs say Claude Code accepts a `Write(path)` rule but never
+// matches a write against it (docs, "Write(path), Glob(path), and Grep(path)
+// rules don't match"; read 2026-11-13, not exercised live), and that `Edit`
+// rules apply to every built-in file-editing tool, Write included. A
+// `Write(path)` allow would therefore grant nothing and read as protection.
+// toolNames() adds the Write tool name beside Edit so `--tools` (PR 158) still
+// exposes it. buildArgv adds explicit Edit denies over scripts/, src/, .claude/,
+// the manifests and the state dir, so a later broader grant cannot reach them
+// by omission.
+export const BODY_EDIT = `Edit(./${BODY_DIR}/**)`;
 
 export interface JobDef {
   id: "standup" | "strategy" | "council" | "steward" | "dedupe";
@@ -45,6 +64,19 @@ export interface JobDef {
   extraSecrets?: string[];
   timeoutMs: number;
   allowedTools: string[];
+}
+
+/**
+ * The built-in tool names a job's grant list names: `Bash(gh pr list *)` becomes
+ * `Bash`, deduped. An `Edit` grant also names `Write`: Claude Code checks the
+ * Write tool against Edit rules and ignores a `Write(path)` rule, so a scoped
+ * Edit grant is the only way to let a job create a file, and without the tool
+ * name here `--tools` would close the Write tool the grant exists for.
+ */
+export function toolNames(allowedTools: string[]): string[] {
+  const names = allowedTools.map((t) => t.replace(/\(.*$/, ""));
+  if (names.includes("Edit")) names.push("Write");
+  return [...new Set(names)];
 }
 
 const MIN = 60_000;
@@ -92,7 +124,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun run scripts/repo-hygiene.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/read-latest-report.ts *)",
-      "Write", // body files only; see the note above JobDef
+      BODY_EDIT,
     ],
   },
   {
@@ -132,8 +164,8 @@ export const JOBS: JobDef[] = [
     // arbitrary read, then the forced-command SSH key itself).
     // `bun scripts/strategy-store.ts *` is one single-line argv the headless
     // permission layer matches whole (L-39). The dated report writes through
-    // the jailed write-report script, from a body file the job wrote with its
-    // Write grant (see the note above JobDef for why bare Write is safe here).
+    // the jailed write-report script, from a body file the job wrote under
+    // BODY_DIR with its scoped grant (see the note above JobDef).
     // #490: dropped the `Bash(gh *)` wildcard — neither the charter nor this
     // job's work order (spawn.ts) ever calls gh directly. The issue-bump
     // lever routes through file-finding.ts's own dedup (bump-not-refile), and
@@ -153,7 +185,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/strategy-store.ts *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
-      "Write", // body files only; see the note above JobDef
+      BODY_EDIT,
     ],
   },
   {
@@ -163,10 +195,11 @@ export const JOBS: JobDef[] = [
     model: "sonnet",
     patSecret: "gh_pat_readcomment",
     timeoutMs: 45 * MIN,
-    // Task = the outsider/insider/synthesis seats as in-session subagents —
-    // the brief's review METHOD, not capability-(b) dispatch (plan §C3);
-    // the dated report writes through the jailed write-report script, from a
-    // body file the job wrote with its Write grant (see the strategy job's note).
+    // No Task: the outsider/insider seats were in-session subagents until
+    // Cringely/spacemolt#865, where a Task subagent's Bash was not held to
+    // this list. The brief now has the job run the seats itself, in order.
+    // The dated report writes through the jailed write-report script, from a
+    // body file the job wrote under BODY_DIR (see the note above JobDef).
     //
     // #490: narrowed the `Bash(gh *)` wildcard to the one read the brief's
     // §Triage step documents (`gh issue list --search`, docs/briefs/
@@ -184,13 +217,12 @@ export const JOBS: JobDef[] = [
       "Read",
       "Grep",
       "Glob",
-      "Task",
       "Bash(gh issue list *)",
       "Bash(gh issue view *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
       "Bash(bun scripts/read-latest-report.ts *)",
-      "Write", // body files only; see the note above JobDef
+      BODY_EDIT,
     ],
   },
   {
@@ -212,19 +244,21 @@ export const JOBS: JobDef[] = [
     timeoutMs: 30 * MIN,
     // The ONE job whose PAT could technically merge, so nothing here is
     // wildcarded: git and gh are enumerated per-subcommand (no `Bash(git *)`,
-    // no `Bash(gh *)`) — create the docs PR, never merge it. Edit is its
-    // living-docs remit (existing files). Write is the fleet-wide body-file
-    // grant (note above JobDef), so this job CAN now create a new file; the
-    // work order has it keep body files under .scratch/ (gitignored), and the
-    // D3 fence (policy-path allowlist hook) and the pre-push guard back the
-    // list structurally for anything it commits.
+    // no `Bash(gh *)`) — create the docs PR, never merge it. Its Edit grant is
+    // scoped to HEADLESS_WRITE_ALLOWLIST (the doc-steward write surface, one
+    // definition in policy-paths.ts) plus BODY_DIR: a bare Edit here would let
+    // the one contents:write job overwrite scripts/file-finding.ts and run it
+    // through its own Bash grant (security review of PR 171, CRITICAL). Nothing
+    // is lost: the D3 fence (policy-path allowlist hook) and the pre-push guard
+    // already reject a commit touching any path off that list. Edit rules cover
+    // the Write tool (see the note above JobDef), so it can create files there.
     // Read-only git/gh forms (status, diff, list, view) included so
     // reconciliation per the charter does not dead-end on a denied lookup.
     allowedTools: [
       "Read",
       "Grep",
       "Glob",
-      "Edit",
+      ...HEADLESS_WRITE_ALLOWLIST.map((p) => `Edit(${p})`),
       "Bash(git status)",
       "Bash(git diff *)",
       "Bash(git add *)",
@@ -239,7 +273,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/steward-prep.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(vale *)",
-      "Write", // body files only; see the note above JobDef
+      BODY_EDIT,
     ],
   },
   {
@@ -269,7 +303,7 @@ export const JOBS: JobDef[] = [
       "Grep",
       "Glob",
       "Bash(bun scripts/backlog-dedupe.ts *)",
-      "Write", // body files only; see the note above JobDef
+      BODY_EDIT,
     ],
   },
 ];

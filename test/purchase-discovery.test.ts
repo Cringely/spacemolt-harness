@@ -94,6 +94,18 @@ describe("goal item candidates (#220)", () => {
   // regardless of prose plurals. The old substring matcher tolerated plurals
   // only by accident of the #216 bug; loosening this again is a decision, not
   // a fix.
+  // Catalog 0.707.0 added `fuel` (tradeable:false), the ship's fuel resource.
+  // "buy fuel_cell" token-matches its one-word name; it must not take a slot.
+  test("an explicitly untradeable item is never a purchase candidate; an item with no tradeable field still is", () => {
+    const items = [
+      { id: "fuel", name: "Fuel", tradeable: false },
+      { id: "fuel_cell", name: "Fuel Cell", tradeable: true },
+      { id: "survey_scanner_i", name: "Survey Scanner I" },
+    ];
+    expect(goalPurchaseCandidates(["buy fuel_cell"], items).candidates.map((i) => i.id)).toEqual(["fuel_cell"]);
+    expect(goalPurchaseCandidates(["buy a Survey Scanner I"], items).candidates.map((i) => i.id)).toEqual(["survey_scanner_i"]);
+  });
+
   test("plural prose does not match the singular catalog name (strict by design)", () => {
     expect(goalPurchaseCandidates(["buy some fuel cells"]).candidates).toEqual([]);
     // The guaranteed path: the exact name or the raw id in parens.

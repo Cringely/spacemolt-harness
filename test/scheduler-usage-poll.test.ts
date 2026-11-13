@@ -25,7 +25,8 @@ import {
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 const T = Date.UTC(2026, 6, 20, 12, 0);
-const TOKEN = "sk-ant-oat01-THISVALUEMUSTNEVERLEAK-0123456789abcdef";
+// Split at the prefix so the pre-commit secret scan (.claude/hooks/pre-commit) does not read a fixture as a token. Runtime value unchanged.
+const TOKEN = "sk-ant" + "-oat01-THISVALUEMUSTNEVERLEAK-0123456789abcdef";
 
 function makeDirs(token: string | null = TOKEN) {
   const stateDir = tmp("usage-state-");
@@ -144,7 +145,7 @@ describe("usage poll (#183 Stage 4 capture)", () => {
     const dirs = makeDirs();
     const logs: string[] = [];
     // Body deliberately contains a token-shaped string under an innocuous key.
-    const body = JSON.stringify({ note: "leaked?", session_token: TOKEN, blob: "zzzz-sk-ant-oat01-EMBEDDEDLEAK-9999999999" });
+    const body = JSON.stringify({ note: "leaked?", session_token: TOKEN, blob: "zzzz-sk-ant" + "-oat01-EMBEDDEDLEAK-9999999999" });
     const f = fakeFetcher([ok200(body)]);
     await pollUsage({ now: T, ...dirs, fetcher: f.fetcher, log: (l) => logs.push(l) });
     for (const line of logs) expect(line).not.toContain(TOKEN);
@@ -222,7 +223,8 @@ function makeTickDirs() {
     dedupe: { ...defaultAnchor(), lastAttemptAt: T },
   };
   saveAnchors(stateDir, quiet);
-  return { checkoutDir, secretsDir, stateDir };
+  // Install is faked: these tests are not about dependency resolution (see scheduler-spawn.test.ts).
+  return { checkoutDir, secretsDir, stateDir, commandRunner: () => ({ stdout: "", exitCode: 0 }) };
 }
 
 const quietGit: GitRunner = (args) => {

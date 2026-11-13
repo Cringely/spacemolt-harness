@@ -28,10 +28,11 @@ agents.yaml
 # embedding N duplicate copies of the whole tree (WSL CPU runaway, 2026-07-17)
 .claude/worktrees/
 
-# Body files a scheduler job writes for its --body-file flag (src/scheduler/spawn.ts
-# BODY_FILE_HOWTO). The job's checkout is disposable, but ignoring the dir keeps
-# a steward `git add` from sweeping one into a docs PR.
-.scratch/
+# Body files a scheduler job writes for its --body-file flag (src/scheduler/body-arg.ts
+# BODY_DIR, the one directory its write grant covers). The job's checkout is
+# disposable, but ignoring the dir keeps a steward `git add` from sweeping one
+# into a docs PR.
+.job-body/
 
 # scripts/groom-report.ts last-run cluster set (machine-local, never committed)
 .groom-state/

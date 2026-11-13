@@ -6,7 +6,7 @@
 //   bun scripts/backlog-dedupe.ts candidates
 //   bun scripts/backlog-dedupe.ts run [--semantic-file <path> | --semantic-b64 <base64>]
 //     (the body is a JSON array of {"member":N,"target":M}; the file is one the job
-//     wrote inside its checkout, see src/scheduler/body-arg.ts readBodyFile)
+//     wrote under .job-body/ in its checkout, see src/scheduler/body-arg.ts readBodyFile)
 //
 // `candidates` is read-only in every mode: the semantic-pass gate and, when
 // the pass is due, the issues the deterministic pass left unresolved, printed

@@ -4,12 +4,17 @@ import { describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readActiveCycle } from "../src/scheduler/filing";
+import { BODY_DIR } from "../src/scheduler/body-arg";
+import { BREAKER_CONFIG_FILE, BREAKER_FILE } from "../src/scheduler/breaker";
+import { LEDGER_FILE } from "../src/scheduler/dispatch-ledger";
+import { ACTIVE_CYCLE_FILE, FILING_LOG_FILE, SUPPRESSION_NOTICE_FILE, readActiveCycle } from "../src/scheduler/filing";
 import type { GitRunner } from "../src/scheduler/git";
-import { JOBS, type JobDef } from "../src/scheduler/jobs";
-import { POLICY_PATHS } from "../src/scheduler/policy-paths";
-import { buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
-import { loadAnchors } from "../src/scheduler/state";
+import { BODY_EDIT, JOBS, toolNames, type JobDef } from "../src/scheduler/jobs";
+import { HEADLESS_WRITE_ALLOWLIST, POLICY_PATHS } from "../src/scheduler/policy-paths";
+import { CODE_DENY_PATHS, buildArgv, composePrompt, parseClaudeUsage, runJob, type Spawner } from "../src/scheduler/spawn";
+import { ANCHORS_FILE, LOCK_FILE, STOP_FILE, loadAnchors } from "../src/scheduler/state";
+import { LAST_TICK_FILE } from "../src/scheduler/tick";
+import { INSTALL_ARGV, type CommandRunner } from "../src/scheduler/worktree";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
@@ -67,7 +72,11 @@ function makeDirs(stateNowBody = "now-block-content-marker") {
   for (const [name, value] of Object.entries(SENTINELS)) {
     writeFileSync(join(secretsDir, name), `${value}\n`); // trailing newline like a real secret file
   }
-  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), pinnedSha: TEST_PINNED_SHA };
+  // commandRunner is the dependency-install seam: a no-op success here, because
+  // these tests are not about dependency resolution. The install tests at the
+  // end of this file override it.
+  const commandRunner: CommandRunner = () => ({ stdout: "", exitCode: 0 });
+  return { checkoutDir, secretsDir, stateDir, gitRunner: fakeWorktreeGit(checkoutDir), commandRunner, pinnedSha: TEST_PINNED_SHA };
 }
 
 interface SpawnCall {
@@ -96,6 +105,13 @@ const RESULT_JSON = JSON.stringify({
 });
 
 const job = (id: JobDef["id"]): JobDef => JOBS.find((j) => j.id === id)!;
+
+// A fixed sandbox fence for the argv-only tests; runJob builds the real one from its deps.
+const FENCE = {
+  secretsDir: "/srv/sched/secrets",
+  stateDir: "/srv/sched/state",
+  hostEnvFile: "/home/sched/.config/spacemolt-sched.env",
+};
 
 // Fix round on PR #143: dedupe carries no file-finding.ts grant (jobs.ts), so
 // its work order carries neither FILING_HOWTO nor OBSERVE_AND_FILE_ONLY (see
@@ -336,24 +352,113 @@ describe("spawn composer + runner (C3)", () => {
     }
   });
 
-  // Catches: the Write grant losing the thing that makes it safe. Claude Code
-  // does not honor Write(path) scoping, so the grant is the bare tool, and the
-  // protection for docs/charters/* (the next spawn readFileSync's them; the D3
-  // fence is commit-time and never sees a filesystem write) is the fleet-wide
-  // `Edit(<policy path>)` deny, which Claude Code applies to every built-in
-  // file-editing tool including Write (permissions docs, "Edit rules apply to
-  // all built-in tools that edit files"). Every job holds Write to hand a body
-  // to its script as a file; each must also carry the deny for every policy
-  // path, and no scoped `Write(...)` entry (not honored, so it would read as
-  // protection that is not there).
-  test("every job holds bare Write, no scoped Write(), and its argv denies Edit on every policy path", () => {
+  // Catches (security review of PR 171, CRITICAL): a file-writing grant wider
+  // than the body dir. A bare `Write` let a job overwrite scripts/file-finding.ts
+  // and run it through its own Bash grant, or write gates.json and the state dir.
+  // Claude Code accepts a `Write(path)` rule and never matches it (permissions
+  // docs), so a scoped Write() entry would grant nothing and read as protection:
+  // the only scoped form is `Edit(<path>)`, which covers the Write tool. Pinned
+  // on every job: no bare Write/Edit (or the multi-file variants), no Write(...)
+  // entry, and every Edit(...) grant sits under the body dir or, for the steward,
+  // the doc-steward write allowlist, never on a path a job executes or that
+  // steers how it runs.
+  test("no job has an unscoped Write or Edit grant, no Write(...) entry, and every Edit grant is body dir or the steward allowlist", () => {
+    const unscoped = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
     for (const j of JOBS) {
-      expect(j.allowedTools.includes("Write")).toBe(true);
-      expect(j.allowedTools.some((t) => /^Write\(/.test(t))).toBe(false);
-      const argv = buildArgv(j);
-      const denied = argv.slice(argv.indexOf("--disallowedTools") + 1);
-      for (const p of POLICY_PATHS) expect(denied).toContain(`Edit(${p})`);
+      expect(j.allowedTools.filter((t) => unscoped.has(t))).toEqual([]);
+      expect(j.allowedTools.filter((t) => /^(Write|MultiEdit|NotebookEdit)\(/.test(t))).toEqual([]);
+      const edits = j.allowedTools.filter((t) => t.startsWith("Edit("));
+      expect(edits).toContain(BODY_EDIT);
+      const allowedPaths = new Set([`./${BODY_DIR}/**`, ...(j.id === "steward" ? HEADLESS_WRITE_ALLOWLIST : [])]);
+      for (const e of edits) expect(allowedPaths.has(e.slice("Edit(".length, -1))).toBe(true);
+      // No allowed edit path may fall under a denied code path.
+      for (const e of edits) {
+        const path = e.slice("Edit(".length, -1).replace(/^\.\//, "");
+        for (const d of [...CODE_DENY_PATHS, ...POLICY_PATHS]) {
+          const prefix = d.endsWith("/**") ? d.slice(0, -2) : d;
+          expect(path.startsWith(prefix)).toBe(false);
+        }
+      }
     }
+  });
+
+  // Catches: --tools closing the Write tool the body-dir grant exists for. The
+  // grant is `Edit(...)`, so a --tools list derived from tool names alone would
+  // name Edit and drop Write, leaving the job no way to create the body file.
+  test("toolNames exposes Write beside a scoped Edit grant, and every job's --tools list carries it", () => {
+    expect(toolNames(["Read", "Edit(./x/**)"]).sort()).toEqual(["Edit", "Read", "Write"]);
+    expect(toolNames(["Read", "Bash(gh pr list *)"])).not.toContain("Write");
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      expect(argv[argv.indexOf("--tools") + 1]!.split(",")).toContain("Write");
+    }
+  });
+
+  // Catches: the second layer dropping out of buildArgv. The allow scoping is
+  // the first layer; these denies keep scripts a job runs, the code they import
+  // and the manifests that steer bun out of reach even if a later edit widens a
+  // grant. Edit denies cover the Write tool too (docs).
+  test("every job's argv denies Edit on scripts, src, .claude, the manifests and every state-dir file", () => {
+    expect([...CODE_DENY_PATHS].sort()).toEqual([".claude/**", "bun.lock", "bunfig.toml", "package.json", "scripts/**", "src/**"]);
+    // Each state-dir name is the value of an exported constant; spawn.ts lists them as literals.
+    const stateNames = [
+      ANCHORS_FILE,
+      LOCK_FILE,
+      STOP_FILE,
+      LAST_TICK_FILE,
+      ACTIVE_CYCLE_FILE,
+      FILING_LOG_FILE,
+      SUPPRESSION_NOTICE_FILE,
+      BREAKER_FILE,
+      BREAKER_CONFIG_FILE,
+      LEDGER_FILE,
+      "reports/**",
+      "logs/**",
+    ];
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+      for (const p of CODE_DENY_PATHS) expect(denies).toContain(`Edit(${p})`);
+      for (const n of stateNames) expect(denies).toContain(`Edit(//srv/sched/state/${n})`);
+      // Never Write(path): accepted by Claude Code and never matched.
+      expect(denies.filter((d) => d.startsWith("Write("))).toEqual([]);
+    }
+  });
+
+  // Catches: a deny that swallows the job's own body dir. The worktree lives
+  // under the state dir (stateDir/worktrees/<cycle>), so a blanket
+  // `Edit(<state>/**)` would deny the very file the grant lets it write, and a
+  // deny wins over an allow. Nothing the argv denies may be a prefix of the
+  // worktree path, and the body dir's own grant must not be shadowed by a code deny.
+  test("no deny covers the job's worktree body dir under the state dir", () => {
+    const bodyFile = `/srv/sched/state/worktrees/standup-1/${BODY_DIR}/finding.md`;
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1).filter((d) => d.startsWith("Edit("));
+      for (const d of denies) {
+        const path = d.slice("Edit(".length, -1);
+        if (!path.startsWith("//")) continue; // relative rules anchor at the job's cwd, not the state dir
+        const abs = path.slice(1);
+        if (abs.endsWith("/**")) expect(bodyFile.startsWith(abs.slice(0, -2))).toBe(false);
+        else expect(bodyFile).not.toBe(abs);
+      }
+    }
+  });
+
+  // Catches: runJob forgetting to create the body dir. The write grant covers the
+  // directory, not its creation, and readBodyFile needs a real dir to resolve.
+  test("runJob creates the body dir in the job's worktree before the spawn", async () => {
+    const dirs = makeDirs();
+    let existed: boolean | undefined;
+    const spawner: Spawner = (_argv, opts) => {
+      existed = existsSync(join(opts.cwd, BODY_DIR));
+      return { exited: Promise.resolve({ exitCode: 0 }), kill() {} };
+    };
+    await runJob(job("council"), { spawner, clock: () => 1_000_000, ...dirs });
+    expect(existed).toBe(true);
+  });
+
+  test("the council and strategy jobs hold the report writer", () => {
     for (const id of ["strategy", "council"] as const) {
       expect(job(id).allowedTools.includes("Bash(bun scripts/write-report.ts *)")).toBe(true);
     }
@@ -471,8 +576,8 @@ describe("spawn composer + runner (C3)", () => {
   test("each body-taking script a job is granted is named in its work order with a file flag the script accepts", () => {
     for (const j of JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
-      expect(j.allowedTools).toContain("Write"); // the tool that creates the body file
-      expect(prompt).toContain(".scratch/"); // where the work order says to write it
+      expect(j.allowedTools).toContain(BODY_EDIT); // the grant that lets Write create the body file
+      expect(prompt).toContain(`${BODY_DIR}/`); // where the work order says to write it
       for (const { script, flag } of BODY_SCRIPTS) {
         if (!j.allowedTools.some((t) => t === `Bash(bun scripts/${script} *)`)) continue;
         expect(prompt).toMatch(new RegExp(`scripts/${script.replace(".", "\\.")}[^\\n]*${flag}`));
@@ -508,18 +613,118 @@ describe("spawn composer + runner (C3)", () => {
   });
 
   // Catches: the fleet-wide policy-path Edit deny dropping out of buildArgv.
-  // Steward keeps bare Edit for its docs remit, and an on-disk charter edit
+  // Steward's Edit is scoped to its docs allowlist, and an on-disk charter edit
   // bypasses the commit-time D3 fence — the deny (deny wins over allow;
   // Edit(path) scoping honored, verified live) must cover every POLICY_PATHS
   // entry on EVERY job so a job gaining Edit later cannot reopen the hole.
   test("every job's argv denies Edit on every POLICY_PATHS entry via --disallowedTools", () => {
     for (const j of JOBS) {
-      const argv = buildArgv(j);
+      const argv = buildArgv(j, FENCE);
       const denyFlagIdx = argv.indexOf("--disallowedTools");
       expect(denyFlagIdx).toBeGreaterThan(-1);
       for (const p of POLICY_PATHS) {
         expect(argv.indexOf(`Edit(${p})`)).toBeGreaterThan(denyFlagIdx);
       }
+    }
+  });
+
+  // Catches (Cringely/spacemolt#865, appsec P1): `--allowedTools` is an additive
+  // allow list, so a job's tool set was never closed. `--restricted` confines
+  // the file tools to the worktree and ignores project settings; `--tools` makes
+  // the built-in set an explicit list. Deleting either flag from buildArgv
+  // reopens unscoped Read/Edit of the secrets dir, gates.json and the host env
+  // file while every grant-content test stays green.
+  test("every job's argv passes --restricted and a --tools list equal to its granted tool names", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      expect(argv).toContain("--restricted");
+      const toolsIdx = argv.indexOf("--tools");
+      expect(toolsIdx).toBeGreaterThan(-1);
+      // Derived independently of the implementation: the part before "(" of each grant, deduped.
+      // Plus Write when the job holds a scoped Edit grant: Claude Code checks Write against Edit rules.
+      const expected = [...new Set([...j.allowedTools.map((t) => t.replace(/\(.*$/, "")), "Write"])];
+      expect(argv[toolsIdx + 1]!.split(",").sort()).toEqual(expected.sort());
+      // One comma-joined value, then the next flag: nothing else is swept into the set.
+      expect(argv[toolsIdx + 2]!.startsWith("--")).toBe(true);
+    }
+  });
+
+  // Catches (#865): Task in the council grant. A Task subagent runs Bash that
+  // is not held to the job's allowedTools list (live evidence in #865), so no
+  // job may be granted it until that is fixed.
+  test("no job holds Task, in its grant or in its --tools set", () => {
+    for (const j of JOBS) {
+      expect(j.allowedTools.some((t) => t === "Task" || t.startsWith("Task("))).toBe(false);
+      const argv = buildArgv(j, FENCE);
+      expect(argv[argv.indexOf("--tools") + 1]!.split(",")).not.toContain("Task");
+    }
+  });
+
+  // Catches: the deny rules for the paths a prompt-injected job must never
+  // read or edit (secrets dir, gates.json, host env file) dropping out of argv.
+  // `--restricted` is the primary control for the file tools. These rules are
+  // the defence in depth behind it, and Claude Code also applies Read denies to
+  // cat/head/tail/sed named in Bash. `//path` is its absolute-path rule syntax.
+  // No Bash(...) deny belongs here: Bash rules match command text literally,
+  // so a path-shaped one never matches (PR #158 round 1).
+  test("every job's argv denies Read/Edit on the secrets dir, gates.json and the host env file, and no Bash deny", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+      for (const tool of ["Read", "Edit"]) {
+        expect(denies).toContain(`${tool}(//srv/sched/secrets/**)`);
+        expect(denies).toContain(`${tool}(//srv/sched/state/gates.json)`);
+        expect(denies).toContain(`${tool}(//home/sched/.config/spacemolt-sched.env)`);
+      }
+      expect(denies.filter((d) => d.startsWith("Bash(") && d.includes("srv/sched"))).toEqual([]);
+    }
+  });
+
+  // Catches: a relative SCHEDULER_SECRETS / SCHEDULER_STATE_DIR / env-file path
+  // reaching the fence unresolved. `Read(/rel/secrets/**)` anchors at the job's
+  // cwd and matches nothing, so the deny rules silently fail open.
+  test("a relative fence path is resolved to an absolute path before the rule is built", () => {
+    const argv = buildArgv(job("steward"), { secretsDir: "rel/secrets", stateDir: "rel/state", hostEnvFile: "rel/host.env" });
+    const denies = argv.slice(argv.indexOf("--disallowedTools") + 1);
+    const cwd = process.cwd().replaceAll("\\", "/");
+    for (const rel of ["rel/secrets/**", "rel/state/gates.json", "rel/host.env"]) {
+      const rule = denies.find((d) => d.startsWith("Read(") && d.endsWith(`${rel})`));
+      expect(rule).toBeDefined();
+      expect(rule!.includes(`${cwd}/${rel}`)).toBe(true);
+    }
+  });
+
+  // Catches (#158 round 1): --restricted confines the file tools only, not
+  // Bash. blockReadsOutsideWorkingDirectories, passed through --settings (which
+  // --restricted still loads), makes recognized file-reading Bash commands on
+  // outside paths prompt, and a -p run denies a prompt. Dropping the flag
+  // leaves `cat ../../secrets/x` running unprompted.
+  test("every job's argv passes --settings with permissions.blockReadsOutsideWorkingDirectories true", () => {
+    for (const j of JOBS) {
+      const argv = buildArgv(j, FENCE);
+      const idx = argv.indexOf("--settings");
+      expect(idx).toBeGreaterThan(-1);
+      expect(JSON.parse(argv[idx + 1]!)).toEqual({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+    }
+  });
+
+  // Catches: SCHEDULER_SECRETS (the literal secrets path, exported by
+  // scheduler-tick.sh) riding process.env into the child. The child's scripts
+  // never read it, so handing it over only tells an injected job where the
+  // PAT files are. Also pins that runJob builds the argv fence from ITS OWN
+  // secretsDir rather than a constant.
+  test("the child env drops SCHEDULER_SECRETS and the argv fence is built from the run's own secrets dir", async () => {
+    const dirs = makeDirs();
+    process.env.SCHEDULER_SECRETS = dirs.secretsDir;
+    try {
+      const { spawner, calls } = fakeSpawner(0);
+      await runJob(job("steward"), { spawner, clock: () => 1_000_000, ...dirs });
+      expect("SCHEDULER_SECRETS" in calls[0]!.opts.env).toBe(false);
+      expect(calls[0]!.opts.env.GH_TOKEN).toBe(SENTINELS.gh_pat_steward); // the real secrets still arrive
+      const posixSecrets = dirs.secretsDir.replaceAll("\\", "/");
+      expect(calls[0]!.argv.some((a) => a.startsWith("Read(") && a.includes(posixSecrets))).toBe(true);
+    } finally {
+      delete process.env.SCHEDULER_SECRETS;
     }
   });
 
@@ -608,5 +813,53 @@ describe("spawn composer + runner (C3)", () => {
     expect(call.argv.includes(CHARTER_TEXT)).toBe(false);
     expect(call.argv).toContain("--allowedTools");
     for (const tool of job("council").allowedTools) expect(call.argv).toContain(tool);
+  });
+
+  // Catches: a job worktree spawning with no node_modules, so bun falls back to
+  // its global cache and resolves zod 4 (Cringely/spacemolt#1110 and its
+  // duplicates). The install must run FIRST, inside the very directory the
+  // spawn then uses as cwd, and must be the lockfile-frozen form.
+  test("locked deps are installed in the job worktree before claude spawns", async () => {
+    const dirs = makeDirs();
+    const events: string[] = [];
+    const installs: Array<{ argv: string[]; cwd: string }> = [];
+    const commandRunner: CommandRunner = (argv, cwd) => {
+      events.push("install");
+      installs.push({ argv, cwd });
+      return { stdout: "", exitCode: 0 };
+    };
+    const calls: SpawnCall[] = [];
+    const spawner: Spawner = (argv, opts) => {
+      events.push("spawn");
+      calls.push({ argv, opts });
+      return { exited: Promise.resolve({ exitCode: 0 }), kill() {} };
+    };
+    const outcome = await runJob(job("strategy"), { spawner, clock: () => 1_000_000, ...dirs, commandRunner });
+    expect(outcome.result).toBe("ok");
+    expect(events).toEqual(["install", "spawn"]);
+    expect(installs[0]!.argv).toEqual(INSTALL_ARGV);
+    expect(installs[0]!.argv).toContain("--frozen-lockfile");
+    expect(installs[0]!.cwd).toBe(calls[0]!.opts.cwd);
+  });
+
+  // Catches: a failed install being swallowed and the job spawning anyway
+  // against a half-installed or cache-resolved tree. It must fail the job
+  // loudly: no spawn, result fail, error on the run row, failStreak bumped,
+  // and the worktree still cleaned up.
+  test("a failed install fails the job: no spawn, error recorded, worktree removed", async () => {
+    const dirs = makeDirs();
+    const commandRunner: CommandRunner = () => ({ stdout: "error: lockfile had changes, but lockfile is frozen", exitCode: 1 });
+    const { spawner, calls } = fakeSpawner(0);
+    const outcome = await runJob(job("strategy"), { spawner, clock: () => 1_000_000, ...dirs, commandRunner });
+    expect(outcome.result).toBe("fail");
+    expect(calls.length).toBe(0);
+    const logText = readdirSync(join(dirs.stateDir, "logs"))
+      .map((f) => readFileSync(join(dirs.stateDir, "logs", f), "utf8"))
+      .join("");
+    const line = JSON.parse(logText.trim());
+    expect(line.error).toContain("bun install --frozen-lockfile failed (exit 1)");
+    expect(line.error).toContain("lockfile is frozen");
+    expect(loadAnchors(dirs.stateDir).strategy.failStreak).toBe(1);
+    expect(existsSync(join(dirs.stateDir, "worktrees", outcome.cycleId))).toBe(false);
   });
 });

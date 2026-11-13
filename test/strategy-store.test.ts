@@ -11,7 +11,7 @@ import {
   validateStoreArgs, resolveBaseUrl, resolveBearerToken, buildStoreRequest, parseSteerText,
   StoreArgError, STORE_OPS,
 } from "../scripts/strategy-store";
-import { INSTRUCTION_MAX_LENGTH } from "../src/server/server";
+import { INSTRUCTION_MAX_LENGTH } from "../src/server/store-protocol";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 
@@ -110,25 +110,25 @@ describe("strategy-store.ts steer op (#495)", () => {
 });
 
 // A steer text can ride a file the job wrote with the Write tool (--body-file),
-// confined to the job's cwd, instead of base64 computed in a shell. The base64
+// confined to the job's body dir, instead of base64 computed in a shell. The base64
 // flag above keeps working.
 describe("strategy-store.ts steer op, --body-file", () => {
   const jail = () => {
     const root = mkdtempSync(join(tmpdir(), "steer-file-"));
     const cwd = join(root, "checkout");
-    mkdirSync(join(cwd, ".scratch"), { recursive: true });
+    mkdirSync(join(cwd, ".job-body"), { recursive: true });
     writeFileSync(join(root, "outside.md"), "secret");
     return { root, cwd };
   };
 
   test("parseSteerText reads --body-file inside cwd and applies the same character bound", () => {
     const { cwd } = jail();
-    writeFileSync(join(cwd, ".scratch", "s.md"), "stop mining\nand go dock");
-    expect(parseSteerText("steer", ["--body-file", ".scratch/s.md"], cwd)).toBe("stop mining\nand go dock");
-    writeFileSync(join(cwd, ".scratch", "big.md"), "x".repeat(INSTRUCTION_MAX_LENGTH + 1));
-    expect(() => parseSteerText("steer", ["--body-file", ".scratch/big.md"], cwd)).toThrow(StoreArgError);
-    writeFileSync(join(cwd, ".scratch", "empty.md"), "");
-    expect(() => parseSteerText("steer", ["--body-file", ".scratch/empty.md"], cwd)).toThrow(StoreArgError);
+    writeFileSync(join(cwd, ".job-body", "s.md"), "stop mining\nand go dock");
+    expect(parseSteerText("steer", ["--body-file", ".job-body/s.md"], cwd)).toBe("stop mining\nand go dock");
+    writeFileSync(join(cwd, ".job-body", "big.md"), "x".repeat(INSTRUCTION_MAX_LENGTH + 1));
+    expect(() => parseSteerText("steer", ["--body-file", ".job-body/big.md"], cwd)).toThrow(StoreArgError);
+    writeFileSync(join(cwd, ".job-body", "empty.md"), "");
+    expect(() => parseSteerText("steer", ["--body-file", ".job-body/empty.md"], cwd)).toThrow(StoreArgError);
   });
 
   // Catches: a steer text read from outside the job's checkout, which would
@@ -141,8 +141,8 @@ describe("strategy-store.ts steer op, --body-file", () => {
 
   test("both body sources, or --body-file on a non-steer op, are rejected", () => {
     const { cwd } = jail();
-    writeFileSync(join(cwd, "s.md"), "x");
-    expect(() => parseSteerText("steer", ["--text-b64", b64("y"), "--body-file", "s.md"], cwd)).toThrow(StoreArgError);
-    expect(() => parseSteerText("dump", ["--body-file", "s.md"], cwd)).toThrow(StoreArgError);
+    writeFileSync(join(cwd, ".job-body", "s.md"), "x");
+    expect(() => parseSteerText("steer", ["--text-b64", b64("y"), "--body-file", ".job-body/s.md"], cwd)).toThrow(StoreArgError);
+    expect(() => parseSteerText("dump", ["--body-file", ".job-body/s.md"], cwd)).toThrow(StoreArgError);
   });
 });

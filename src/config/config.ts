@@ -22,8 +22,8 @@ const PlannerSpecSchema = z.object({
   // there is no safe default for either -- model ids differ per LM Studio
   // install, and a guessed URL would just burn transient-retry cycles.
   if (spec.provider === "openai-compat") {
-    if (!spec.base_url) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "openai-compat planner requires base_url" });
-    if (!spec.model) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "openai-compat planner requires model" });
+    if (!spec.base_url) ctx.addIssue({ code: "custom", message: "openai-compat planner requires base_url" });
+    if (!spec.model) ctx.addIssue({ code: "custom", message: "openai-compat planner requires model" });
   }
 });
 

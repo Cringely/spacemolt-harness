@@ -1,7 +1,8 @@
 #!/bin/sh
 # Git pre-commit hook — refuses a commit carrying an identifying string
-# (see the "identity gate" block below), then lints staged living-doc prose
-# with Vale before it reaches a commit.
+# (see the "identity gate" block below) or a provider-shaped token or private
+# key (the "secret scan" block), then lints staged living-doc prose with Vale
+# before it reaches a commit.
 #
 # WHY A GIT HOOK, NOT ANOTHER CLAUDE CODE HOOK
 # lint-doc-prose.ts (PostToolUse, matcher Write|Edit) only sees direct tool
@@ -56,10 +57,12 @@
 # to stderr so `git commit` output shows them, but the exit code never
 # reflects them (see the ponytail note above the final `exit 0`).
 #
-# THE IDENTITY GATE BELOW IS NOT ADVISORY
+# THE IDENTITY GATE AND THE SECRET SCAN BELOW ARE NOT ADVISORY
 # Unlike the Vale pass in the rest of this file, the identity-string check
-# below is a real gate: it can and does `exit 1`. See its own comment block
-# for what it covers and why it lives ahead of Vale rather than after it.
+# and the token-pattern secret scan (#232) below are real gates: each can and
+# does `exit 1`, and the secret scan also refuses when its grep cannot run.
+# See their own comment blocks for what each covers and why both live ahead
+# of Vale rather than after it.
 
 set -u
 
@@ -135,6 +138,14 @@ personal_terms_state=$?
 personal_terms_paths=
 personal_terms_bodies=
 
+# Secret scan (#232) input, filled by the identity loop below from the blobs it
+# already reads, so the common path adds no `git show`. Set here, before the
+# loop: under `set -u` an --allow-empty commit never enters the loop and would
+# otherwise crash on an unset variable when the scan reads it.
+secret_nl='
+'
+secret_bodies=
+
 # `d` (lowercase) excludes only Deleted -- there is no content left to scan
 # for a deleted path. ACMR (uppercase, include-only) used to be here and
 # silently dropped typechanges (symlink <-> regular file, T status): the
@@ -146,6 +157,17 @@ identity_staged=$(git -c core.quotePath=false diff --cached --name-only --diff-f
 if [ -n "$identity_staged" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # git quotes a name carrying a double quote, a backslash, a tab or another
+    # control character even under core.quotePath=false, so $f holds a C-style
+    # literal that `git show` cannot read. Skipping it would let its blob past
+    # every content channel below unscanned. Only a quoted name begins with a
+    # double quote here (a name holding one is itself quoted), so refuse.
+    case "$f" in
+      '"'*)
+        echo "pre-commit: refused. A staged path needs quoting (double quote, backslash, tab or control character), so its content cannot be scanned. Rename it, then re-stage." >&2
+        exit 1
+        ;;
+    esac
     [ "$personal_terms_state" -eq 0 ] && personal_terms_paths="${personal_terms_paths}${f}${personal_terms_nl}"
     # Path channel first, and its own refusal never echoes $f -- if the path
     # itself is the identifying string, printing it back would be the leak
@@ -171,8 +193,23 @@ if [ -n "$identity_staged" ]; then
     # a bracket in one staged filename could make the numstat check answer
     # for a DIFFERENT staged file. Reading every staged blob unconditionally
     # removes the pathspec argument entirely along with the skip it gated.
-    identity_body=$(git show ":$f" 2>/dev/null) || continue
+    #
+    # ":0:$f", stage 0 spelled out: a bare ":$f" reads a name like "2:x" as
+    # index stage 2 of path "x" and fails. A read that fails is refused, since
+    # skipping it would pass the blob unscanned through this channel, the
+    # personal-term channel and the secret scan alike. The one exception is a
+    # gitlink, whose commit is not in this repository, so `git show` fails on
+    # it legitimately and there is no blob to scan. The ls-files check runs
+    # only on that failure path, never on a readable blob.
+    if ! identity_body=$(git show ":0:$f" 2>/dev/null); then
+      case "$(git ls-files --stage -- ":(literal)$f")" in
+        "160000 "*) continue ;;
+      esac
+      echo "pre-commit: refused. A staged blob could not be read, so its content cannot be scanned." >&2
+      exit 1
+    fi
     [ -n "$identity_body" ] || continue
+    secret_bodies="${secret_bodies}${identity_body}${secret_nl}"
     [ "$personal_terms_state" -eq 0 ] && personal_terms_bodies="${personal_terms_bodies}${identity_body}${personal_terms_nl}"
     if identity_match "$identity_body"; then
       identity_line=$(printf '%s\n' "$identity_body" | grep -noiE "$IDENTITY_PATTERN" | head -n1 | cut -d: -f1)
@@ -220,7 +257,7 @@ if [ "$personal_terms_state" -eq 0 ]; then
       personal_term_refuse pre-commit "A staged file's path"
     while IFS= read -r f; do
       [ -n "$f" ] || continue
-      personal_terms_body=$(git show ":$f" 2>/dev/null) || continue
+      personal_terms_body=$(git show ":0:$f" 2>/dev/null) || continue
       personal_term_match "$personal_terms_body" &&
         personal_term_refuse pre-commit "'$f'"
     done <<EOF
@@ -228,6 +265,90 @@ $identity_staged
 EOF
     personal_term_refuse pre-commit "Staged content"
   fi
+fi
+
+# --- secret scan: provider-shaped tokens and private keys (#232) ---------
+# A staged blob carrying a provider-shaped token or a private key cannot
+# become a commit, and a scanner that cannot run refuses rather than passes.
+# GitHub push protection catches provider tokens at push on repositories that
+# have it. This stage refuses before the secret enters local history, and it
+# covers installed projects that have no push protection at all.
+#
+# Scope is every staged blob the identity loop read, whole, never the added
+# lines from a `git diff`: diff-shaping config (a `-diff` attribute,
+# core.bigFileThreshold) hides content from a diff, the bypass class the
+# identity gate's content channel already closed.
+#
+# One grep for the whole commit (#113 counts this hook's spawns). A canary
+# rides in the same input, so a grep that cannot match anything, or cannot
+# run, refuses instead of reading as clean. A separate canary grep was
+# rejected as a second spawn on every commit.
+#
+# The arms are ERE, ASCII only, run under LC_ALL=C. Only the private-key
+# header arm is anchored: a header at end of line, or a header followed by a
+# literal backslash-n and a key body (the one-line JSON form). A header quoted
+# inside prose or a test string carries neither, so it passes. The optional CR
+# before that `$` is for Linux. MSYS grep strips CR before matching, so on
+# Windows it is redundant.
+#
+# One allowlisted literal: AWS's documented example access key, which the
+# installer tests and two plan docs quote. Any other allowlist entry needs the
+# operator's sign-off. The canary and that literal are assembled from split
+# parts so this file never carries either whole.
+secret_cr=$(printf '\r')
+# Exactly 36 characters after the underscore, the arm's fixed width, so the
+# grep -o hit equals the canary whole.
+secret_canary="ghp""_harnessSecretScanCanary0000000000000"
+secret_allowed="AKIA""IOSFODNN7EXAMPLE"
+secret_pattern='gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,}|(AKIA|ASIA)[0-9A-Z]{16}'
+secret_pattern="${secret_pattern}"'|xox[baprs]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}'
+secret_pattern="${secret_pattern}"'|AIza[0-9A-Za-z_-]{35}|(sk|rk)_live_[0-9A-Za-z]{24,}|npm_[A-Za-z0-9]{36}|ops_eyJ[A-Za-z0-9+/=_-]{20,}'
+secret_pattern="${secret_pattern}|-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----[${secret_cr}]?\$"
+secret_pattern="${secret_pattern}"'|-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----\\n[A-Za-z0-9+/=]{20,}'
+
+# Reads grep -o hits on stdin. Returns 0 when any hit is neither the canary
+# nor the allowlisted literal.
+secret_unallowed_hit() {
+  while IFS= read -r secret_hit; do
+    [ -n "$secret_hit" ] || continue
+    case "$secret_hit" in
+      "$secret_canary"|"$secret_allowed") ;;
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Never prints the matched value, only where it is.
+secret_refuse() {
+  echo "pre-commit: refused. $1 carries a provider-shaped token or a private key." >&2
+  echo "  The matched value is deliberately not printed. Remove it from the staged" >&2
+  echo "  content (and rotate it if it was ever real), then re-stage." >&2
+  exit 1
+}
+
+secret_hits=$(printf '%s\n' "${secret_canary}${secret_nl}${secret_bodies}" | LC_ALL=C grep -o -E "$secret_pattern")
+secret_rc=$?
+if [ "$secret_rc" -gt 1 ]; then
+  echo "pre-commit: refused. The secret scan could not run (grep exit $secret_rc). A scan that cannot run does not vouch for this commit." >&2
+  exit 1
+fi
+if [ "$secret_rc" -eq 1 ]; then
+  echo "pre-commit: refused. The secret scan did not find its own canary, so the scanner is broken and cannot vouch for this commit." >&2
+  exit 1
+fi
+if printf '%s\n' "$secret_hits" | secret_unallowed_hit; then
+  # Look again, per file, only to say where. This ends in a refusal whatever
+  # it finds, so a second look that fails cannot read as clean.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    secret_body=$(git show ":0:$f" 2>/dev/null) || continue
+    secret_file_hits=$(printf '%s\n' "$secret_body" | LC_ALL=C grep -o -E "$secret_pattern") || continue
+    printf '%s\n' "$secret_file_hits" | secret_unallowed_hit && secret_refuse "'$f'"
+  done <<EOF
+$identity_staged
+EOF
+  secret_refuse "Staged content"
 fi
 
 # core.quotePath=false: its default (true) makes git emit non-ASCII paths as

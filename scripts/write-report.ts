@@ -1,6 +1,6 @@
 // The ONE authorized report-write path for headless scheduler jobs (#114
 // Batch C review, HIGH finding). It writes into the scheduler STATE dir
-// (reports/). A job's Write grant is for body files inside its own checkout
+// (reports/). A job's write grant is for body files in .job-body/ of its own checkout
 // (src/scheduler/body-arg.ts readBodyFile), and this script is the confined
 // path from there to reports/ (the jail below).
 //
@@ -8,7 +8,7 @@
 //   bun scripts/write-report.ts --file <relative path> --body-b64 <base64>
 //
 // The report body is a file the job wrote with the Write tool inside its
-// checkout (--body-file, confined to cwd) or a base64 token on argv — a SINGLE,
+// checkout under .job-body/ (--body-file, confined there) or a base64 token on argv — a SINGLE,
 // newline-free argument (body-arg.ts explains why): headless Claude Code's
 // permission layer splits a Bash command on newlines and matches each fragment
 // against the closed allowedTools list independently, so a heredoc/STDIN body

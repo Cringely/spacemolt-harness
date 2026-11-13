@@ -29,8 +29,8 @@
 // closed allowedTools list independently, so a heredoc/STDIN body is DENIED,
 // while a one-line `--body-b64 <token>` matches `Bash(bun scripts/file-finding.ts *)`.
 // The form the work orders teach is `--body-file <path>`: the job writes the
-// body with the Write tool into its own checkout and passes the path, which
-// readBodyFile confines to cwd. That keeps the text out of every shell command
+// body with the Write tool into .job-body/ in its checkout and passes the path, which
+// readBodyFile confines to .job-body/. That keeps the text out of every shell command
 // (a `printf '<text>' | base64` step would put untrusted text inside a
 // single-quoted shell argument). The old `--body-file <under outbox/>` jail was
 // dead on arrival because no fleet tool could create a file there; this one

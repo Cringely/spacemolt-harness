@@ -15,13 +15,21 @@
 // the DECODED bytes well under that (a 64KB body → ~87KB base64; a 90KB report →
 // ~120KB base64) so the token always fits.
 //
-// A body can also arrive as a FILE the job wrote with the Write tool and named
-// with a `--body-file <path>` flag (readBodyFile below). That is the form the
-// work orders teach: the job never computes base64 in a shell, so no
+// A body can also arrive as a FILE the job wrote with the Write tool into BODY_DIR
+// and named with a `--body-file <path>` flag (readBodyFile below). That is the
+// form the work orders teach: the job never computes base64 in a shell, so no
 // `printf '<untrusted text>' | base64` command, no `Bash(printf *)` grant, and
 // the command carries only a path. The base64 token stays accepted.
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+
+/**
+ * The one directory a job may write, relative to its checkout. The scheduler
+ * pre-creates it (spawn.ts runJob), jobs.ts grants `Edit(./.job-body/**)` on it
+ * and nothing else, and readBodyFile reads from nowhere else. Those three must
+ * name the same directory, hence one constant.
+ */
+export const BODY_DIR = ".job-body";
 
 export class BodyArgError extends Error {}
 
@@ -51,37 +59,44 @@ function strictlyInside(base: string, target: string): boolean {
 }
 
 /**
- * Read a body from a file the job wrote, confined to `cwd` (the job's
- * checkout). The path is untrusted: it is resolved against cwd, then
- * realpath'd, and the REAL path must sit strictly inside the real cwd. That one
- * check rejects `..` traversal, an absolute path elsewhere, a sibling directory
- * sharing cwd's name prefix, and a symlink (or Windows junction) inside cwd
- * that points out. The target must be a regular file within `maxBytes`, checked
- * before it is read. Throws BodyArgError (the CLIs map it to exit 2).
+ * Read a body from a file the job wrote, confined to `<cwd>/BODY_DIR`. The path
+ * is untrusted: it is resolved against cwd, then realpath'd, and the REAL path
+ * must sit strictly inside the REAL body directory, which must itself sit inside
+ * the real cwd. That rejects `..` traversal, an absolute path elsewhere, a
+ * sibling directory sharing the body dir's name prefix, a file in cwd but
+ * outside BODY_DIR (a job can write nowhere else, but a script that reads
+ * anywhere in cwd would let it name a source file as its "body"), and a symlink
+ * (or Windows junction) that points out, including BODY_DIR itself. The target
+ * must be a regular file within `maxBytes`, checked before it is read. Throws
+ * BodyArgError (the CLIs map it to exit 2).
  */
 export function readBodyFile(path: string, maxBytes: number, cwd: string = process.cwd()): string {
   if (path === "" || path.includes("\0")) throw new BodyArgError("body file path is empty or malformed");
-  const outside = () => new BodyArgError(`body file is outside the job checkout: ${path}`);
-  let real: string;
+  const outside = () => new BodyArgError(`body file is outside the job body directory (${BODY_DIR}/): ${path}`);
+  const bodyDir = resolve(cwd, BODY_DIR);
   let realCwd: string;
+  let realDir: string;
   try {
     realCwd = realpathSync(cwd);
+    realDir = realpathSync(bodyDir);
   } catch {
-    throw new BodyArgError("job checkout is not readable");
+    throw new BodyArgError(`job body directory is not readable: ${BODY_DIR}/`);
   }
+  if (!strictlyInside(realCwd, realDir)) throw new BodyArgError(`job body directory leaves the checkout: ${BODY_DIR}/`);
   // Lexical check first, so an outside path answers "outside" whether or not it
   // exists (no existence oracle for host files), then the realpath check for
   // links that lead out.
-  // (An absolute path may spell cwd through a link, so inside-either is enough
-  // here; the realpath check below is the authoritative one.)
+  // (An absolute path may spell the dir through a link, so inside-either is
+  // enough here; the realpath check below is the authoritative one.)
   const target = resolve(cwd, path);
-  if (!strictlyInside(resolve(cwd), target) && !strictlyInside(realCwd, target)) throw outside();
+  if (!strictlyInside(bodyDir, target) && !strictlyInside(realDir, target)) throw outside();
+  let real: string;
   try {
     real = realpathSync(target);
   } catch {
     throw new BodyArgError(`body file not found: ${path}`);
   }
-  if (!strictlyInside(realCwd, real)) throw outside();
+  if (!strictlyInside(realDir, real)) throw outside();
   const st = statSync(real);
   if (!st.isFile()) throw new BodyArgError(`body file is not a regular file: ${path}`);
   if (st.size > maxBytes) throw new BodyArgError(`body file exceeds ${maxBytes} bytes`);

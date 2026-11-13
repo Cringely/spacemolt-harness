@@ -12,8 +12,11 @@ per run: review, synthesize, file, report, terminate.
 
 ## Method — two seats, then synthesis
 
-Run both seats as in-session subagents (Task tool). That is this job's review METHOD — it is
-not the capability-(b) agent dispatch the D1 gate keeps off.
+Run both seats yourself, one after the other, as separate passes. You hold no Task tool (a
+Task subagent's Bash escaped the job's tool list, Cringely/spacemolt#865). The outsider pass
+MUST read only code and the one-paragraph what-this-is before you open any rationale doc;
+the insider pass comes second, so the outsider verdict is written down before rationale
+context can contaminate it.
 
 1. **Outsider seat.** Fresh eyes, LOW context BY DESIGN: the code plus a one-paragraph
    what-this-is, and NO rationale context (no decisions.md, no wiki, no goals). It sees
@@ -44,7 +47,7 @@ section as its source; the two files must agree).
 
 1. **Findings → backlog issues**, filed ONLY via `bun scripts/file-finding.ts --dedup-key
    <stable-key> --title <title> --body-file <path>` — the WHOLE command on ONE LINE, your
-   finding body written with the Write tool to a file under `.scratch/` and that path as the
+   finding body written with the Write tool to a file under `.job-body/` and that path as the
    `--body-file` value, as the work order describes (no heredoc, no pipe, no newline in this
    command: a headless job's permission layer denies a multi-line Bash command). The
    mechanical filer enforces the #114 verdict-(a) conditions (dedup incl. recently-closed,
@@ -52,7 +55,7 @@ section as its source; the two files must agree).
    directly.
 2. **Dated report**, written ONLY via `bun scripts/write-report.ts --file
    <YYYY-MM-DD>-council-review.md --body-file <path>` — the WHOLE command on ONE LINE, the
-   report body written to a file under `.scratch/` first (same one-line rule). It lands under
+   report body written to a file under `.job-body/` first (same one-line rule). It lands under
    `$SCHEDULER_STATE_DIR/reports/` and the jailed writer accepts nothing outside it (your
    Write tool is for the body file in your checkout, not for the report itself). Contents: outsider verdict, insider verdict, synthesis, findings
    filed (with issue numbers). That directory is the record: nothing is committed or picked up
@@ -71,12 +74,15 @@ Sonnet, medium reasoning effort — the seats do the reading; the synthesis is t
 
 ## CHANGELOG
 
-- v1.4 (2026-11-13) — Triage names `bun scripts/read-latest-report.ts` as the way to find the
+- v1.5 (2026-11-13) — Triage names `bun scripts/read-latest-report.ts` as the way to find the
   previous report's date (the job now holds that grant). Findings and the report pass their
-  body as a file written with the Write tool (`--body-file`), not as base64 computed in a shell
+  body as a file written with the Write tool under `.job-body/` (`--body-file`), not as base64 computed in a shell
   (the shell-encoder design was rejected in security review: untrusted text in a shell
   argument). Dropped the PM-pickup / `docs/council/`
   commit expectation: the state-dir report is the record (operator default).
+- v1.4 (2026-11-12) — seats run as two sequential passes in the job's own context; the Task
+  tool left the council grant (Cringely/spacemolt#865, appsec P1). Trade-off: the outsider's
+  "no rationale context" is now ordering discipline, not a fresh-context guarantee.
 - v1.3 (2026-07-19) — added the Triage step: rank issues filed since the last council run
   against the current milestone, emit an ordered `## Triage` section in the dated report
   (operator-approved; closes the machine-speed-inflow vs PM-speed-ranking gap). Stand-up

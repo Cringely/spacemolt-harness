@@ -64,7 +64,8 @@ describe("vendored snapshot resolves known item economics", () => {
   test("snapshot loaded a substantial index and records its provenance", () => {
     expect(catalog.itemCount).toBeGreaterThan(500);
     expect(catalog.recipeCount).toBeGreaterThan(500);
-    expect(catalog.meta.fetched).toBe("2026-07-12");
+    expect(catalog.meta.version).toBe("0.707.0");
+    expect(catalog.meta.fetched).toBe("2026-11-13");
   });
 });
 

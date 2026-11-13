@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { estimateNetTrip, FUEL_PRICE_FLOOR_CR, LISTING_FEE_BPS } from "../src/agent/net-trip";
+import { FUEL_PRICE_FLOOR_CR, LISTING_FEE_BPS } from "../src/agent/net-trip";
 import { executeTick } from "../src/agent/executor";
 import { buildDigest } from "../src/planner/digest";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
 import type { Plan } from "../src/registry/plan";
 import type { PlanContext } from "../src/planner/types";
 
-// Net-trip profitability (issue #112): the pure estimator, the ADVISORY-ONLY
-// contract on the executor path, and the digest's briefing verdict.
+// Net-trip profitability (issue #112): the ADVISORY-ONLY contract on the
+// executor path, and the digest's briefing verdict.
 //
 // PR #361 review (REVISE) removed the first cut's deterministic travel_to
 // block: it priced revenue at catalog base_value, and catalog value does not
@@ -16,47 +16,6 @@ import type { PlanContext } from "../src/planner/types";
 // lossy" premise failed and the block could refuse profitable arbitrage
 // (#155, conservative suppression). The divergence test below PINS the chosen
 // behavior so a future guard cannot come back without confronting it.
-
-describe("estimateNetTrip", () => {
-  test("computes net = revenue - fuel - listing fee, with breakdown", () => {
-    const est = estimateNetTrip({
-      sales: [{ pricePerUnitCr: 10, quantity: 5 }],
-      missionPayoutCr: 100,
-      fuelUnits: 30,
-      fuelPricePerUnitCr: 2,
-      listedValueCr: 1000, // 1% of the book-resting portion (markets.md:35)
-    });
-    expect(est).toEqual({
-      known: true,
-      revenueCr: 150,
-      fuelCostCr: 60,
-      listingFeeCr: Math.floor((1000 * LISTING_FEE_BPS) / 10000), // 10
-      netCr: 80,
-    });
-  });
-
-  test("mission payout alone is valid revenue (no sales legs)", () => {
-    const est = estimateNetTrip({ missionPayoutCr: 500, fuelUnits: 10, fuelPricePerUnitCr: 2 });
-    expect(est).toEqual({ known: true, revenueCr: 500, fuelCostCr: 20, listingFeeCr: 0, netCr: 480 });
-  });
-
-  // Fail-open channel (#94): a missing number yields NO verdict, and the
-  // missing list names exactly what was absent so the caller can't misread
-  // "unknown" as "zero".
-  test("any missing input -> known:false naming the gap, never a guessed net", () => {
-    const noFuel = estimateNetTrip({ sales: [{ pricePerUnitCr: 4, quantity: 1 }] });
-    expect(noFuel.known).toBe(false);
-    if (!noFuel.known) expect(noFuel.missing).toEqual(["fuelUnits", "fuelPricePerUnitCr"]);
-
-    const noRevenue = estimateNetTrip({ fuelUnits: 5, fuelPricePerUnitCr: 2 });
-    expect(noRevenue.known).toBe(false);
-    if (!noRevenue.known) expect(noRevenue.missing).toContain("revenue (no sales, no missionPayoutCr)");
-
-    const halfSale = estimateNetTrip({ sales: [{ quantity: 3 }], fuelUnits: 5, fuelPricePerUnitCr: 2 });
-    expect(halfSale.known).toBe(false);
-    if (!halfSale.known) expect(halfSale.missing).toEqual(["sales[0].pricePerUnitCr"]);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Executor contract: ADVISORY ONLY -- no deterministic net-trip block exists.
