@@ -1167,8 +1167,7 @@ async function verifySellEffect(
 // conservative-suppression rule (#155), a guard that cannot fire beats a
 // guard that blocks profit: the lesson ships as the digest's advisory
 // net-profit verdict (digest.ts, interpolating net-trip.ts's constants) and
-// the improv briefing rule. estimateNetTrip (net-trip.ts) stays the model
-// SSOT, ready for wiring if a live-bid producer ever lands.
+// the improv briefing rule.
 
 /**
  * travel_to expands into repeated "jump" calls, one hop per tick, re-querying
