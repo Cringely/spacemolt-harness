@@ -3,6 +3,7 @@ import { executeTick } from "../src/agent/executor";
 import type { GameApi, StatusSnapshot } from "../src/client/client";
 import type { V2Result } from "../src/client/http";
 import type { Plan } from "../src/registry/plan";
+import { clipUntrusted, UNTRUSTED_TEXT_SNIPPET_LEN } from "../src/planner/digest";
 
 // No-op admission guards (tracker Cringely/spacemolt#995/#848/#888/#938:
 // 99 + 87 wasted refuel calls per 72h fleet-wide, all answered
@@ -85,6 +86,20 @@ describe("espionage while unaffiliated (#1004)", () => {
     expect(r.reason).not.toMatch(/\w+\{/);
   });
 
+  // #169 review: digest.ts clips a blocked wake's detail at
+  // UNTRUSTED_TEXT_SNIPPET_LEN, and the steer is the tail of the reason. A
+  // reason past the cap reaches the planner without it. The real clipUntrusted
+  // and the imported cap, so the number cannot drift from the digest's.
+  test("the whole reason, steer included, survives the digest's clip", async () => {
+    const { api } = stubApi(status({ factionId: null }));
+    const r = await executeTick(api, plan, { step: 0, iteration: 0 });
+    if (r.kind !== "blocked") throw new Error("unreachable");
+    expect(r.reason.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN);
+    const shown = clipUntrusted(r.reason);
+    expect(shown).toBe(r.reason);
+    expect(shown).toContain("choose a goal that does not depend on it");
+  });
+
   test("a faction member reaches the game", async () => {
     const { api, calls } = stubApi(status({ factionId: "f_crimson" }));
     await executeTick(api, plan, { step: 0, iteration: 0 });
@@ -165,6 +180,20 @@ describe("actions the game rejects with in_battle (#892)", () => {
       expect(r.guard).toBe(true);
       expect(r.reason).toContain(name);
       expect(r.reason).not.toMatch(/\w+\{/);
+    });
+  }
+
+  // #169 review: same clip seam as the espionage reason. The longest action
+  // name is the worst case, but every blocked action is checked.
+  for (const [name, plan] of steps) {
+    test(`${name} reason, steer included, survives the digest's clip`, async () => {
+      const { api } = stubApi(status({ docked: false }));
+      const r = await run(api, plan, true);
+      if (r.kind !== "blocked") throw new Error("unreachable");
+      expect(r.reason.length).toBeLessThanOrEqual(UNTRUSTED_TEXT_SNIPPET_LEN);
+      const shown = clipUntrusted(r.reason);
+      expect(shown).toBe(r.reason);
+      expect(shown).toContain("fight or wait it out");
     });
   }
 

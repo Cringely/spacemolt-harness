@@ -1705,6 +1705,10 @@ export async function executeTick(
   // cannot become true inside a plan: a block, not an advance, and the reason
   // says to change goal rather than name a remedy that does not exist.
   //
+  // The reason is quoted by the digest through clipUntrusted at
+  // UNTRUSTED_TEXT_SNIPPET_LEN (200), so the steer must sit inside that cap
+  // (pinned in test/executor-noop-admission.test.ts).
+  //
   // Fires on factionId === null only. undefined is UNKNOWN (client.ts: no
   // parsed player block, or a faction_id of an unexpected type) and falls
   // through to the game, as every guard here fails open. Membership is the
@@ -1712,9 +1716,8 @@ export async function executeTick(
   // the game's own refusal.
   if (step.action === "espionage" && preStatus?.factionId === null) {
     return guardBlock(
-      "espionage refused: you are not in any faction, and espionage is a faction command that needs " +
-      "membership plus a faction-built Espionage HQ. Joining a faction is not something a plan can do " +
-      "from here, so choose a goal that does not depend on it.",
+      "espionage refused: you are in no faction, and espionage needs membership plus a faction-built " +
+      "Espionage HQ. A plan cannot join one, so choose a goal that does not depend on it.",
     );
   }
 
@@ -1731,11 +1734,12 @@ export async function executeTick(
   // (use_item and reload are documented as working mid-battle), and a guess
   // wider than the evidence would refuse something that works. attack and the
   // other combat actions are never here, since they are how a battle ends.
+  // Reason length: the steer ("fight or wait it out") must sit inside the
+  // digest's 200-char clip, longest action name included (test pins it).
   if (inBattle && IN_BATTLE_BLOCKED_ACTIONS.has(step.action)) {
     return guardBlock(
-      `${step.action} refused: a battle is under way (the game recently rejected an action with in_battle), ` +
-      `and movement, scanning and distress calls stay blocked until it ends. ` +
-      `Only combat actions can resolve it, so fight or wait it out.`,
+      `${step.action} refused: a battle is under way (the game recently rejected an action with in_battle). ` +
+      `Movement, scanning and distress calls stay blocked until it ends, so fight or wait it out.`,
     );
   }
 
