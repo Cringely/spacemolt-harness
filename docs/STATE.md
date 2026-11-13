@@ -2,7 +2,7 @@
 
 > The handoff file. Any session (primarily Claude Code from terminal) resumes from here.
 >
-> **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight self-merged docs PR rather than letting it lag behind batch merges.
+> **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight docs PR rather than letting it lag behind batch merges. Since 2026-11-13 main requires one approving review, so this PR needs one too (decisions.md, ruleset entry).
 
 
 **Last updated:** 2026-09-24, doc-steward pass reconciling PRs #149-#150 (spec fix + githooks). Primary repo: github.com/Cringely/spacemolt-harness
@@ -20,7 +20,7 @@ _Refreshed 2026-11-13 (seventh pass, cluster #151-#176). Boot from this block + 
 - CI and tooling: #156 (openapi fixture regenerated, zod 3 to 4.6.6 for GHSA-mrhx-c7xc-m3w5), #154, #155, #168.
 - Scheduler: #158 (closed job tool set, secrets paths denied, #865), #160 (locked deps installed per job worktree), #162 (strategy-store gate exits 2 on a crash, #1139/#1143), #172 (charters verify a PR before citing it), #171 (long bodies passed as a file, council reads its own reports).
 - Pilot: #159, #161, #163, #164 (#1068), #165 (catalog snapshot 0.493.0 to 0.707.0), #166 (battle status, retreat, stance registered), #167 (#540), #169 (four no-op calls refused before the game), #170 (newer steer supersedes older unpinned ones, #535), #173 (#1150), #174 (#1151), #175 (#1152).
-- Decisions: #157 accepts the scheduler footprint. Fix-agent dispatch (gate D1) stays off until a named condition, ratified by the operator 2026-11-13 (#1034).
+- Decisions: #157 accepts the scheduler footprint. Fix-agent dispatch (gate D1) stays off until a named condition, ratified by the operator 2026-11-13 (#1034). Same day: main requires 1 approving review, reviewer App to supply it.
 
 **TRACKER.** 517 open at the previous pass (PR #151), 238 open at this one (live count 2026-11-13).
 
