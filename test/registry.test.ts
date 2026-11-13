@@ -337,30 +337,15 @@ describe("registry", () => {
   // command to fight or flee" and none of it was registered, so a pilot in a
   // fight had attack as its only lever. VERIFIED against the vendored OpenAPI
   // (docs/game-reference/upstream/openapi-v2.json, spacemolt_battle tool):
-  // /status properties [] ("Works as a query (no tick cost)"), /retreat
-  // properties [] ("Move one zone back"), /stance properties [id] required [id],
-  // id enum fire|evade|brace|flee, example body {"id":"fire"} (the prose says a
-  // `stance` field, the request schema says `id`; the schema is what validates).
+  // /stance properties [id] required [id], id enum fire|evade|brace|flee,
+  // example body {"id":"fire"} (the prose says a `stance` field, the request
+  // schema says `id`; the schema is what validates). Only stance is registered:
+  // status (an unplannable query with no gather) and retreat (one zone out, not
+  // an escape) were dropped in the PR 166 review.
   describe("battle", () => {
-    test("status is a free query with no params", () => {
-      const a = getAction("status");
-      expect(a.tool).toBe("spacemolt_battle");
-      expect(a.kind).toBe("query");
-      expect(a.params.safeParse({}).success).toBe(true);
-      expect(a.params.safeParse({ id: "x" }).success).toBe(false);
-    });
-
-    // retreat/stance are kind "mutation" although the spec carries no
-    // x-is-mutation on them: PlanSchema admits mutations only, and a query the
-    // planner cannot plan leaves a trapped pilot with no way to flee.
-    test("retreat is a plannable mutation with no params", () => {
-      const a = getAction("retreat");
-      expect(a.tool).toBe("spacemolt_battle");
-      expect(a.kind).toBe("mutation");
-      expect(a.params.safeParse({}).success).toBe(true);
-      expect(a.params.safeParse({ id: "x" }).success).toBe(false);
-    });
-
+    // stance is kind "mutation" although the spec carries no x-is-mutation on
+    // it: PlanSchema admits mutations only, and a query the planner cannot plan
+    // leaves a trapped pilot with no way to flee.
     test("stance requires id in fire|evade|brace|flee", () => {
       const a = getAction("stance");
       expect(a.tool).toBe("spacemolt_battle");
@@ -374,16 +359,20 @@ describe("registry", () => {
       expect(a.params.safeParse({ id: "flee", extra: 1 }).success).toBe(false);
     });
 
-    test("a plan can flee and retreat but cannot plan the status query", () => {
+    test("a plan can flee", () => {
       const plan = PlanSchema.parse({
         goal: "get out of the fight",
-        steps: [
-          { action: "stance", params: { id: "flee" } },
-          { action: "retreat", params: {} },
-        ],
+        steps: [{ action: "stance", params: { id: "flee" } }],
       });
-      expect(plan.steps.length).toBe(2);
-      expect(() => PlanSchema.parse({ goal: "x", steps: [{ action: "status", params: {} }] })).toThrow();
+      expect(plan.steps.length).toBe(1);
+    });
+
+    // The battle tool's other routes stay out of the registry until something
+    // uses them (PR 166 review): status has no gather to call it, retreat is
+    // positional, not an escape.
+    test("status and retreat are not registered", () => {
+      expect(() => getAction("status")).toThrow();
+      expect(() => getAction("retreat")).toThrow();
     });
   });
 });
