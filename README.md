@@ -80,7 +80,7 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 
 ## Progress
 
-**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-58).
+**Milestone checklist:** See [docs/milestones.md](docs/milestones.md) for the full timeline (M-01..M-59).
 
 - [x] G1: Harness live (P4 deployed, CI gates, auto-deploy)
 - [x] G2: Pilot survives (guardrails live on production incidents)
@@ -91,9 +91,9 @@ The finish line for this phase is FLEET DEPLOYED — three playstyle-diverse pil
 - [ ] G7: Fleet prerequisites — two accounts + secrets DONE, both flying; persona briefings (#159) remain
 - [ ] **FLEET DEPLOYED** — playstyle trio flying
 
-Current work: a wave-4 cluster of five PRs (#127-#132, 2026-09-21 to 2026-09-23) closed six tracker issues (#982, #1003, #700, #1076, #931, #1051) and merged a backlog-dedupe-ceremony spec (#132) measuring 389 of the 521 open issues as duplicates across 83 clusters. Separately, a 2026-09-20 corsair strand (M-58) gave the first live-production proof of the #534 escalation and the #458 buy-price guard, and surfaced the real F4 blocker: no pilot can request or offer a fleet rescue without a human (#1114). Prod ran `7ab54a3` (PR #131's merge commit) as of 2026-09-23T04:20Z, healthy. Fleet-flight (#591) F1, F2, and F3 are closed (M-52 to M-57). F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) remains open. See [docs/STATE.md](docs/STATE.md).
+Current work: 24 PRs merged on 2026-11-13 (#151, #154-#176) took the tracker from 517 open issues to 238. Mid-wave, production auto-deploy stopped without a failed build: GitHub's `ubuntu-latest` runner image changed, the publish job pushed a different shape of image, and the host deployer refused it (M-59). PR #176 fixed the publish job, and production ran `dbcf18f`, healthy, as of 2026-11-13T16:41Z. The pilot and scheduler fixes from that wave are tested offline and not yet confirmed live. Fleet-flight (#591) F1, F2, and F3 are closed (M-52 to M-57). F4 (3 pilots, 24h, zero strands, steer confirmed per pilot) remains open. See [docs/STATE.md](docs/STATE.md).
 
-The major-milestone timeline (M-01..M-58) is [docs/milestones.md](docs/milestones.md). Current working detail is always in [docs/STATE.md](docs/STATE.md).
+The major-milestone timeline (M-01..M-59) is [docs/milestones.md](docs/milestones.md). Current working detail is always in [docs/STATE.md](docs/STATE.md).
 
 ## Roadmap in one sentence
 
