@@ -7,7 +7,7 @@ import type {
 } from "../planner/types";
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
-import { summarizeStatus, clipPlanContext, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
+import { summarizeStatus, clipPlanContext, clipUntrusted, EXTRACTION_MODULE_BY_POI_TYPE, FLEET_REFUEL_FLOOR_CR } from "../planner/digest";
 import { executeTick, miningEquipmentKey, classifyGameError, IN_BATTLE_BLOCKED_ACTIONS, type LearnedSparseRule, type StepResult } from "./executor";
 import {
   MAX_STATION_SIGHTINGS, STATION_SERVICE_BY_ACTION, deriveStationSightings, dockedStationName,
@@ -44,6 +44,12 @@ export interface PlannerHealth {
   // replan boundary observes a differing fingerprint, so the operator sees the
   // agent is stuck rather than merely momentarily quiet under backoff.
   stuck: boolean;
+  // Layer 3 (plan budget): epoch ms until which the pilot counts as budget-capped
+  // (last capped tick + window); 0 when never capped. plan_budget_exceeded is
+  // emitted once per episode, so the dashboard cannot infer a long episode from
+  // event recency and reads this sticky field instead. 0, not -Infinity, so it
+  // survives JSON serialization.
+  budgetCappedUntil: number;
 }
 
 // The ship-vitals subset of the last StatusSnapshot the loop fetched, flattened
@@ -545,9 +551,13 @@ export class Agent {
   private repeatBreakFloorTs = Number.NEGATIVE_INFINITY;
 
   // Layer 3: throttle so plan_budget_exceeded is emitted once per over-budget
-  // episode, not once per capped tick. Cleared the moment the trailing window
-  // drains back under the ceiling and a replan is permitted again.
-  private planBudgetExceeded = false;
+  // episode, not once per capped tick or per replan. The episode ends only after
+  // a full window with no capped tick: a pilot saturated at the cap passes the
+  // gate each time one old wake ages out, replans, and is capped again on the
+  // next tick, so a flag cleared by that single pass re-armed the emit on every
+  // replan (Cringely/spacemolt#1151: 198 events/24h at a cap of 12). Simpler
+  // alternative rejected: a count-below-cap reset, which needs a new threshold.
+  private lastBudgetCapTs = Number.NEGATIVE_INFINITY;
 
   // Layer 4 (no-progress detector): the previous replan boundary's fingerprint
   // and a run-length count of identical ones. `stuck` is the sticky operator
@@ -1190,6 +1200,9 @@ export class Agent {
         backoffUntil: this.plannerBackoffUntil,
         consecutiveTransientFailures: this.consecutiveTransientFailures,
         stuck: this.stuck,
+        budgetCappedUntil: Number.isFinite(this.lastBudgetCapTs)
+          ? this.lastBudgetCapTs + (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000
+          : 0,
       },
       status: this.lastStatus
         ? {
@@ -1251,6 +1264,25 @@ export class Agent {
       // the same fail-toward-allowing-a-duplicate direction as the
       // cancel_order clear above.
       if (n.msg_type === "buy_filled") this.clearOpenBuyOrders(() => true);
+
+      // Release Layer 4's `unrecoverable` latch when a battle ends (issue
+      // Cringely/spacemolt#1150). A latch armed while every action was
+      // blocked "in_battle" holds a condition the game then lifts, but the
+      // fingerprint reads nothing about combat and an idle ship changes none
+      // of what it does read, so its only other exits (a differing
+      // fingerprint, an operator instruction) never fire: the corsair sat
+      // frozen 3 days after a stalemate. Dropping lastFingerprint makes the
+      // next replan boundary take the differing-fingerprint branch, which owns
+      // the rest of the reset (stuck, arm count, run length). The backoff the
+      // latch armed is dropped with it, but only while latched, so a transient
+      // planner-failure backoff is left alone. Rejected: an in-battle bit in
+      // the fingerprint (get_status carries no combat field, openapi
+      // GetStatusResponse, so it costs an extra call per tick) and a timed
+      // re-probe (a second latch-exit mechanism for the same condition).
+      if (n.msg_type === "battle_ended" && this.stuck) {
+        this.lastFingerprint = undefined;
+        this.plannerBackoffUntil = 0;
+      }
     }
   }
 
@@ -1614,8 +1646,10 @@ export class Agent {
       const windowMs = (this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes) * 60_000;
       const maxPlans = this.config.maxPlansPerWindow ?? AGENT_DEFAULTS.maxPlansPerWindow;
       if (wake.reason !== "instruction" && this.store.countWakesSince(this.id, this.now() - windowMs) >= maxPlans) {
-        if (!this.planBudgetExceeded) {
-          this.planBudgetExceeded = true;
+        const cappedAt = this.now();
+        const newEpisode = cappedAt - this.lastBudgetCapTs > windowMs;
+        this.lastBudgetCapTs = cappedAt;
+        if (newEpisode) {
           this.emit("plan_budget_exceeded", {
             maxPlans,
             windowMinutes: this.config.planBudgetWindowMinutes ?? AGENT_DEFAULTS.planBudgetWindowMinutes,
@@ -1626,7 +1660,6 @@ export class Agent {
         if (!reflexSpentTick && this.plan && this.planState === "running") await this.executeOne(status);
         return;
       }
-      this.planBudgetExceeded = false;
       // evaluateWake (wake.ts) returns "blocked"/"plan_done" only when no
       // instruction is queued, so a queued operator instruction always
       // bypasses this gate. See BLOCKED_THRASH_THRESHOLD's comment.
@@ -2745,7 +2778,14 @@ export class Agent {
       // structurally impossible: every plan reaching the retry gate below
       // has already failed (or passed) BOTH checks together, and the SAME
       // is true of the retried plan.
-      let admitted = admitPlan(plan, surroundings);
+      // Item ids the game itself reported this replan (#1152): the cargo and
+      // docked-market rows the planner was just shown. They outrank the
+      // vendored catalog at admission (normalize-plan.ts normalizePlanItems).
+      const liveItemIds = new Set<string>([
+        ...(ctx.cargo?.items ?? []).map((c) => c.itemId),
+        ...(ctx.marketRows ?? []).map((r) => r.itemId),
+      ]);
+      let admitted = admitPlan(plan, surroundings, liveItemIds);
       if (!admitted.ok) {
         // Routed into the same single-retry pattern every Planner
         // implementation already applies to JSON/schema validation
@@ -2770,13 +2810,19 @@ export class Agent {
         plan = PlanSchema.parse(rawRetry.plan);
         promptChars += rawRetry.promptChars;
         responseChars += rawRetry.responseChars;
-        admitted = admitPlan(plan, surroundings);
+        admitted = admitPlan(plan, surroundings, liveItemIds);
         if (!admitted.ok) {
           throw new Error(`plan admission failed after retry: ${admitted.error}`);
         }
       }
       plan = admitted.plan;
       rewrites = admitted.rewrites;
+      // The vendored catalog is behind the live game (#1152): surface it so
+      // `bun run scripts/refresh-catalog.ts` gets run. Bounded: the ids are
+      // game-reported text and the plan holds at most 30 steps.
+      if (admitted.catalogDrift?.length) {
+        this.emit("catalog_drift", { ids: admitted.catalogDrift.map((id) => clipUntrusted(id)) });
+      }
 
       // Fleet-gift id->username resolution (issue #788), the same name/id
       // failure class as the block above and handled the same deterministic way.

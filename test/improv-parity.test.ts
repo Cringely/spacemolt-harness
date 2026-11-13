@@ -625,7 +625,7 @@ const SEAMS: Seam[] = [
     // twice with the second guarding a throw.
     code: {
       file: "src/agent/agent.ts",
-      marker: /admitted = admitPlan\(plan, surroundings\);[\s\S]*?admitted = admitPlan\(plan, surroundings\);\s*if \(!admitted\.ok\) \{\s*throw new Error/,
+      marker: /admitted = admitPlan\(plan, surroundings(?:, liveItemIds)?\);[\s\S]*?admitted = admitPlan\(plan, surroundings(?:, liveItemIds)?\);\s*if \(!admitted\.ok\) \{\s*throw new Error/,
     },
     // Each anchor was absent from §4 before this bullet was added (checked,
     // not assumed): 'wreck' and 'exotic_matter_sample' appear nowhere else in
