@@ -3854,6 +3854,7 @@ export class Agent {
       keepFuelAboveJumps: this.config.reflex?.keepFuelAboveJumps,
       keepFuelAbovePct:
         this.config.reflex?.keepFuelAbovePct ?? this.config.fuelReservePct ?? AGENT_DEFAULTS.fuelReservePct,
+      poiHasBase: this.currentPoiHasBase, // #1068: scopes the guard's no-remedy exemption
     };
     // Module-fitment telemetry (issues #757/#736). The guard refuses only a
     // PROVEN-absent module and deliberately lets an unreadable fit through
