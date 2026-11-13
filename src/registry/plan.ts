@@ -27,7 +27,7 @@ const TravelToStepSchema = z.object({
 }).strict();
 
 export const PlanStepSchema = z.union(
-  [...stepSchemas, TravelToStepSchema] as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]],
+  [...stepSchemas, TravelToStepSchema] as unknown as [z.ZodType<any>, z.ZodType<any>, ...z.ZodType<any>[]],
 );
 
 export const PlanSchema = z.object({
@@ -62,9 +62,11 @@ export const PlanSchema = z.object({
   // place where the step's params and its repeat/until are visible together,
   // and a plan refused here costs zero ticks and zero credits. The refinement
   // sits on the whole plan rather than on the deposit branch of the step union
-  // so that PlanStepSchema stays a ZodUnion: test/instruct-gate.test.ts reads
-  // `PlanStepSchema.options[].shape.action.value` to re-derive the plannable
-  // vocabulary, and a ZodEffects member has no `.shape` (the #527 seam).
+  // so that PlanStepSchema stays a plain union of unrefined objects:
+  // test/instruct-gate.test.ts reads `PlanStepSchema.options[].shape.action.value`
+  // to re-derive the plannable vocabulary, and a zod 3 ZodEffects member had no
+  // `.shape` (the #527 seam). zod 4 would keep `.shape`, but the plan-level
+  // placement is still the only spot that sees params and repeat/until together.
   //
   // The ITEM form keeps repeat/until untouched -- repeating a deposit of ore is
   // real (the craft/recycle chain, #221), and a rule keyed on the action alone
@@ -78,7 +80,7 @@ export const PlanSchema = z.object({
     const target = (step.params as { target?: unknown } | undefined)?.target;
     if (typeof target !== "string") return; // item form: repeat/until are fine
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       path: ["steps", i],
       // Written as a correction the planner can act on, same contract as the
       // registry refinement's messages and the executor's guard reasons.

@@ -200,7 +200,7 @@ export const CandidatePlanSchema = z.object({
   goal: z.string(),
   steps: z.array(z.object({
     action: z.string(),
-    params: z.record(z.unknown()).default({}),
+    params: z.record(z.string(), z.unknown()).default({}),
     until: z.string().optional(),
     repeat: z.number().optional(),
   })),
