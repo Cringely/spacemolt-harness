@@ -134,18 +134,19 @@ describe("spawn composer + runner (C3)", () => {
   });
 
   // Catches: the ON-ARRIVAL filing defect returning (#114). The work order must
-  // teach the WORKING method — a single-line `--body-b64 <base64>` argv token —
-  // never a heredoc/STDIN body (denied: the headless permission layer splits a
-  // Bash command on newlines) nor the dead `--body-file <under outbox/>` form.
-  test("every filing-capable work order instructs single-line --body-b64 filing, never heredoc/STDIN/--body-file", () => {
+  // teach a method that runs headless: a single-line `--body-file <path>` command
+  // whose body the job wrote with the Write tool. Never a heredoc/STDIN body
+  // (denied: the headless permission layer splits a Bash command on newlines),
+  // never the dead outbox jail (no tool could create a file there), and never
+  // text inside a shell argument (`printf '<text>' | base64`: injection).
+  test("every filing-capable work order instructs single-line --body-file filing, never heredoc/STDIN/outbox", () => {
     for (const j of FILING_JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
-      expect(prompt).toContain("bun scripts/file-finding.ts");
-      expect(prompt).toContain("--body-b64");
+      expect(prompt).toMatch(/bun scripts\/file-finding\.ts[^\n]*--body-file/);
       expect(prompt).toContain("ONE LINE"); // the single-line instruction agents must follow
+      expect(prompt).toContain("Write tool"); // the body is written, not computed in a shell
       expect(prompt).not.toContain("<<"); // no heredoc anywhere
       expect(prompt).not.toContain("STDIN"); // the denied-headless method is gone
-      expect(prompt).not.toContain("--body-file");
       expect(prompt).not.toContain("outbox");
     }
   });
@@ -335,16 +336,23 @@ describe("spawn composer + runner (C3)", () => {
     }
   });
 
-  // Catches: bare `Write` regressing into ANY job's list. Claude Code does
-  // not honor Write(path) scoping (only Edit(path) rules match), so an
-  // unscoped Write lets a prompt-injected run overwrite docs/charters/* ON
-  // DISK in the checkout — the D3 fence is commit-time and never sees a
-  // plain filesystem write; the next spawn readFileSync's the tampered
-  // charter. Reports go through the jailed scripts/write-report.ts instead.
-  test("no job's allowedTools contains bare Write; report-writing jobs carry the jailed writer", () => {
+  // Catches: the Write grant losing the thing that makes it safe. Claude Code
+  // does not honor Write(path) scoping, so the grant is the bare tool, and the
+  // protection for docs/charters/* (the next spawn readFileSync's them; the D3
+  // fence is commit-time and never sees a filesystem write) is the fleet-wide
+  // `Edit(<policy path>)` deny, which Claude Code applies to every built-in
+  // file-editing tool including Write (permissions docs, "Edit rules apply to
+  // all built-in tools that edit files"). Every job holds Write to hand a body
+  // to its script as a file; each must also carry the deny for every policy
+  // path, and no scoped `Write(...)` entry (not honored, so it would read as
+  // protection that is not there).
+  test("every job holds bare Write, no scoped Write(), and its argv denies Edit on every policy path", () => {
     for (const j of JOBS) {
-      expect(j.allowedTools.includes("Write")).toBe(false);
-      expect(j.allowedTools.some((t) => /^Write\(/.test(t))).toBe(false); // scoped Write is not honored either
+      expect(j.allowedTools.includes("Write")).toBe(true);
+      expect(j.allowedTools.some((t) => /^Write\(/.test(t))).toBe(false);
+      const argv = buildArgv(j);
+      const denied = argv.slice(argv.indexOf("--disallowedTools") + 1);
+      for (const p of POLICY_PATHS) expect(denied).toContain(`Edit(${p})`);
     }
     for (const id of ["strategy", "council"] as const) {
       expect(job(id).allowedTools.includes("Bash(bun scripts/write-report.ts *)")).toBe(true);
@@ -393,7 +401,7 @@ describe("spawn composer + runner (C3)", () => {
   test("strategy work order advertises the steer lever as USABLE and names the real command", () => {
     const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
     expect(prompt).toContain("bun scripts/strategy-store.ts steer");
-    expect(prompt).toContain("--text-b64");
+    expect(prompt).toMatch(/strategy-store\.ts steer <agentId> --body-file/);
     expect(prompt).toContain("500 characters"); // the bound the server enforces
     expect(prompt).toContain("#527"); // the query-action content rule
     // The dead advisories, gone. Both are exact strings from the pre-#495
@@ -413,7 +421,7 @@ describe("spawn composer + runner (C3)", () => {
     expect(job("strategy").allowedTools).toContain(grant);
     const grantedPrefix = grant.slice("Bash(".length, -" *)".length); // "bun scripts/strategy-store.ts"
     const prompt = composePrompt(job("strategy"), { charterText: "x", stateNow: "y", cycleId: "strategy-1" });
-    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --text-b64`);
+    expect(prompt).toContain(`${grantedPrefix} steer <agentId> --body-file`);
   });
 
   // Catches (#654): stand-up's council-freshness command drifting out of sync
@@ -433,27 +441,43 @@ describe("spawn composer + runner (C3)", () => {
   });
 
   // Catches (Cringely/spacemolt#798, #880, #899, #507, #1120, #1123, #1147,
-  // #1148, #980): a work order demanding a base64 flag (--body-b64, --text-b64,
-  // --semantic-b64) while the job's closed allowedTools grants no way to
-  // produce base64. Agents then hand-encoded (one slipped character corrupted
-  // a filed body, #980) or rediscovered an ungranted pipe by trial. The work
-  // order must name ONE encoding method, and every pipeline stage of it must
-  // be matched by a Bash grant in THAT job's own list. Stage-by-stage because
-  // the headless permission layer matches each stage of a pipe on its own.
-  const grantMatches = (grant: string, stage: string): boolean => {
-    const m = /^Bash\((.*)\)$/.exec(grant);
-    if (!m) return false;
-    const re = new RegExp("^" + m[1]!.split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
-    return re.test(stage);
-  };
-  test("every work order that demands a base64 flag names one encoder whose every stage is granted to that job", () => {
+  // #1148, #980): a work order demanding a body the job has no safe way to
+  // produce. Agents then hand-encoded base64 (one slipped character corrupted a
+  // filed body, #980) or rediscovered an ungranted pipe by trial. The first fix
+  // granted `Bash(printf *)` + `base64` and taught `printf '<text>' | base64`:
+  // untrusted text inside a single-quoted shell argument is injection, and
+  // `printf *` is a free-form wildcard (security review of PR 171, HIGH). The
+  // method is now a file the job writes with the Write tool, passed by path.
+  // This pins both halves: no job grants a shell encoder, and every body-taking
+  // script a job is granted is named in its work order with the file flag the
+  // script really accepts (a flag renamed on one side only fails here).
+  const SHELL_ENCODER = /^Bash\((printf|base64|echo|cat|tee|xxd|od|openssl|python3?|node|perl|ruby|sh|bash|env)\b/;
+  test("no job grants a shell encoder, and no work order teaches piping text through one", () => {
+    for (const j of JOBS) {
+      expect(j.allowedTools.filter((t) => SHELL_ENCODER.test(t))).toEqual([]);
+      const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
+      expect(prompt).not.toContain("printf");
+      expect(prompt).not.toContain("| base64");
+      expect(prompt).not.toContain("base64 -w");
+    }
+  });
+
+  const BODY_SCRIPTS = [
+    { script: "file-finding.ts", flag: "--body-file" },
+    { script: "write-report.ts", flag: "--body-file" },
+    { script: "strategy-store.ts", flag: "--body-file" },
+    { script: "backlog-dedupe.ts", flag: "--semantic-file" },
+  ];
+  test("each body-taking script a job is granted is named in its work order with a file flag the script accepts", () => {
     for (const j of JOBS) {
       const prompt = composePrompt(j, { charterText: "x", stateNow: "y", cycleId: `${j.id}-1` });
-      expect(/-b64/.test(prompt)).toBe(true); // every job's work order demands one
-      const methods = [...prompt.matchAll(/`([^`]*base64 -w 0[^`]*)`/g)].map((m) => m[1]!);
-      expect(methods.length).toBe(1); // one method, not a menu
-      for (const stage of methods[0]!.split(" | ")) {
-        expect(j.allowedTools.some((g) => grantMatches(g, stage.trim()))).toBe(true);
+      expect(j.allowedTools).toContain("Write"); // the tool that creates the body file
+      expect(prompt).toContain(".scratch/"); // where the work order says to write it
+      for (const { script, flag } of BODY_SCRIPTS) {
+        if (!j.allowedTools.some((t) => t === `Bash(bun scripts/${script} *)`)) continue;
+        expect(prompt).toMatch(new RegExp(`scripts/${script.replace(".", "\\.")}[^\\n]*${flag}`));
+        const src = readFileSync(join(import.meta.dir, "..", "scripts", script), "utf8");
+        expect(src).toContain(flag.slice(2)); // the script parses the flag the prompt names
       }
     }
   });

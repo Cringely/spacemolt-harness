@@ -4,6 +4,9 @@
 // platform-neutral (no fetch). The route-side auth/logic is covered in
 // test/server.test.ts (the routes live on the harness's own server).
 import { test, expect, describe } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   validateStoreArgs, resolveBaseUrl, resolveBearerToken, buildStoreRequest, parseSteerText,
   StoreArgError, STORE_OPS,
@@ -103,5 +106,43 @@ describe("strategy-store.ts steer op (#495)", () => {
     // reached the pilot is reported as a lever pulled.
     expect(() => parseSteerText("dump", ["--text-b64", b64("go dock")])).toThrow(StoreArgError);
     expect(parseSteerText("dump", [])).toBeUndefined();
+  });
+});
+
+// A steer text can ride a file the job wrote with the Write tool (--body-file),
+// confined to the job's cwd, instead of base64 computed in a shell. The base64
+// flag above keeps working.
+describe("strategy-store.ts steer op, --body-file", () => {
+  const jail = () => {
+    const root = mkdtempSync(join(tmpdir(), "steer-file-"));
+    const cwd = join(root, "checkout");
+    mkdirSync(join(cwd, ".scratch"), { recursive: true });
+    writeFileSync(join(root, "outside.md"), "secret");
+    return { root, cwd };
+  };
+
+  test("parseSteerText reads --body-file inside cwd and applies the same character bound", () => {
+    const { cwd } = jail();
+    writeFileSync(join(cwd, ".scratch", "s.md"), "stop mining\nand go dock");
+    expect(parseSteerText("steer", ["--body-file", ".scratch/s.md"], cwd)).toBe("stop mining\nand go dock");
+    writeFileSync(join(cwd, ".scratch", "big.md"), "x".repeat(INSTRUCTION_MAX_LENGTH + 1));
+    expect(() => parseSteerText("steer", ["--body-file", ".scratch/big.md"], cwd)).toThrow(StoreArgError);
+    writeFileSync(join(cwd, ".scratch", "empty.md"), "");
+    expect(() => parseSteerText("steer", ["--body-file", ".scratch/empty.md"], cwd)).toThrow(StoreArgError);
+  });
+
+  // Catches: a steer text read from outside the job's checkout, which would
+  // POST a host file into a pilot's planner prompt.
+  test("parseSteerText rejects a --body-file outside cwd (traversal and absolute)", () => {
+    const { root, cwd } = jail();
+    expect(() => parseSteerText("steer", ["--body-file", "../outside.md"], cwd)).toThrow(StoreArgError);
+    expect(() => parseSteerText("steer", ["--body-file", join(root, "outside.md")], cwd)).toThrow(StoreArgError);
+  });
+
+  test("both body sources, or --body-file on a non-steer op, are rejected", () => {
+    const { cwd } = jail();
+    writeFileSync(join(cwd, "s.md"), "x");
+    expect(() => parseSteerText("steer", ["--text-b64", b64("y"), "--body-file", "s.md"], cwd)).toThrow(StoreArgError);
+    expect(() => parseSteerText("dump", ["--body-file", "s.md"], cwd)).toThrow(StoreArgError);
   });
 });

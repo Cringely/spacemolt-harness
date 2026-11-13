@@ -43,18 +43,18 @@ section as its source; the two files must agree).
 ## Output
 
 1. **Findings → backlog issues**, filed ONLY via `bun scripts/file-finding.ts --dedup-key
-   <stable-key> --title <title> --body-b64 <base64>` — the WHOLE command on ONE LINE, your
-   finding body base64-encoded as the `--body-b64` value with the encoding method the work
-   order names (no heredoc, no pipe, no newline in this command: a headless job's permission
-   layer denies a multi-line Bash command). The
+   <stable-key> --title <title> --body-file <path>` — the WHOLE command on ONE LINE, your
+   finding body written with the Write tool to a file under `.scratch/` and that path as the
+   `--body-file` value, as the work order describes (no heredoc, no pipe, no newline in this
+   command: a headless job's permission layer denies a multi-line Bash command). The
    mechanical filer enforces the #114 verdict-(a) conditions (dedup incl. recently-closed,
    machine-filed label + provenance, bump-not-refile, per-cycle cap). Never `gh issue create`
    directly.
 2. **Dated report**, written ONLY via `bun scripts/write-report.ts --file
-   <YYYY-MM-DD>-council-review.md --body-b64 <base64>` — the WHOLE command on ONE LINE, the
-   report body base64-encoded as the `--body-b64` value (same one-line rule). It lands under
-   `$SCHEDULER_STATE_DIR/reports/` and the jailed writer accepts nothing outside it (you have
-   no plain file-write tool). Contents: outsider verdict, insider verdict, synthesis, findings
+   <YYYY-MM-DD>-council-review.md --body-file <path>` — the WHOLE command on ONE LINE, the
+   report body written to a file under `.scratch/` first (same one-line rule). It lands under
+   `$SCHEDULER_STATE_DIR/reports/` and the jailed writer accepts nothing outside it (your
+   Write tool is for the body file in your checkout, not for the report itself). Contents: outsider verdict, insider verdict, synthesis, findings
    filed (with issue numbers). That directory is the record: nothing is committed or picked up
    from it (your PAT cannot push, stage-1 plan, decision 8).
 
@@ -72,8 +72,10 @@ Sonnet, medium reasoning effort — the seats do the reading; the synthesis is t
 ## CHANGELOG
 
 - v1.4 (2026-11-13) — Triage names `bun scripts/read-latest-report.ts` as the way to find the
-  previous report's date (the job now holds that grant). Findings and the report encode their
-  body with the work order's single base64 method. Dropped the PM-pickup / `docs/council/`
+  previous report's date (the job now holds that grant). Findings and the report pass their
+  body as a file written with the Write tool (`--body-file`), not as base64 computed in a shell
+  (the shell-encoder design was rejected in security review: untrusted text in a shell
+  argument). Dropped the PM-pickup / `docs/council/`
   commit expectation: the state-dir report is the record (operator default).
 - v1.3 (2026-07-19) — added the Triage step: rank issues filed since the last council run
   against the current milestone, emit an ordered `## Triage` section in the dated report

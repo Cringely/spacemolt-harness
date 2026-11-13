@@ -19,19 +19,22 @@
 // file-finding.ts, which is unaffected (it runs as the harness process, not
 // through the agent's Bash allowedTools).
 
-// Base64 encoder grants, held by EVERY job: each work order demands a base64
-// flag (--body-b64, --text-b64, --semantic-b64) and spawn.ts's ENCODE_HOWTO
-// names the one command that produces it, `printf '%b' '<text>' | base64 -w 0`.
-// The headless permission layer matches each pipe stage on its own, so each
-// stage needs its own grant (the space in `-w 0` is load-bearing: `-w0` was
-// denied live, Cringely/spacemolt#905). Neither stage executes another program.
-// Output redirection to a file is a file-write check in that layer and no job
-// holds a Write grant (#1002 saw it denied), so the printf wildcard writes
-// nothing. Rejected: a plain-text flag on the scripts (untrusted text would
-// reach the script unencoded, as shell text), and #1002's
-// `gh issue list --jq @base64`, which only jobs holding a gh grant could use.
-// test/scheduler-spawn.test.ts pins that every job's prompt and grants agree.
-export const ENCODE_GRANTS = ["Bash(printf *)", "Bash(base64 -w 0)"];
+// Bare `Write`, held by EVERY job, so a job can hand a long body (finding,
+// report, steer text, dedupe pairs) to its script as a FILE it writes inside
+// its own checkout and names with `--body-file` (spawn.ts BODY_FILE_HOWTO;
+// body-arg.ts readBodyFile confines the path to cwd). Each work order demands a
+// body, and the first fix granted `Bash(printf *)` + `Bash(base64 -w 0)` and
+// told jobs to run `printf '<text>' | base64 -w 0`: untrusted text inside a
+// single-quoted shell argument is injection, and `printf *` is a free-form
+// wildcard (security review of PR 171, HIGH). Rejected: that encoder pair;
+// `gh issue list --jq @base64` (#1002), which only jobs holding a gh grant
+// could use; a plain-text flag, which would put untrusted text on a command
+// line. No scoped `Write(path)` form: Claude Code does not honor it, so the
+// charter protection is the fleet-wide `Edit(<policy path>)` deny that buildArgv
+// composes, which Claude Code applies to every built-in file-editing tool
+// including Write (test/scheduler-spawn.test.ts pins both). The list names the
+// tool as bare "Write" so a `--tools` list derived from it by tool name (PR 158)
+// includes Write.
 
 export interface JobDef {
   id: "standup" | "strategy" | "council" | "steward" | "dedupe";
@@ -89,7 +92,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun run scripts/repo-hygiene.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/read-latest-report.ts *)",
-      ...ENCODE_GRANTS,
+      "Write", // body files only; see the note above JobDef
     ],
   },
   {
@@ -129,9 +132,8 @@ export const JOBS: JobDef[] = [
     // arbitrary read, then the forced-command SSH key itself).
     // `bun scripts/strategy-store.ts *` is one single-line argv the headless
     // permission layer matches whole (L-39). The dated report writes through
-    // the jailed write-report script (bare Write is banned — Claude Code does
-    // not honor Write(path) scoping, and an unscoped Write could tamper
-    // docs/charters/* on disk where the commit-time D3 fence never looks).
+    // the jailed write-report script, from a body file the job wrote with its
+    // Write grant (see the note above JobDef for why bare Write is safe here).
     // #490: dropped the `Bash(gh *)` wildcard — neither the charter nor this
     // job's work order (spawn.ts) ever calls gh directly. The issue-bump
     // lever routes through file-finding.ts's own dedup (bump-not-refile), and
@@ -151,7 +153,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/strategy-store.ts *)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
-      ...ENCODE_GRANTS,
+      "Write", // body files only; see the note above JobDef
     ],
   },
   {
@@ -163,8 +165,8 @@ export const JOBS: JobDef[] = [
     timeoutMs: 45 * MIN,
     // Task = the outsider/insider/synthesis seats as in-session subagents —
     // the brief's review METHOD, not capability-(b) dispatch (plan §C3);
-    // the dated report writes through the jailed write-report script (bare
-    // Write banned — see the strategy job's note).
+    // the dated report writes through the jailed write-report script, from a
+    // body file the job wrote with its Write grant (see the strategy job's note).
     //
     // #490: narrowed the `Bash(gh *)` wildcard to the one read the brief's
     // §Triage step documents (`gh issue list --search`, docs/briefs/
@@ -188,7 +190,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(bun scripts/write-report.ts *)",
       "Bash(bun scripts/read-latest-report.ts *)",
-      ...ENCODE_GRANTS,
+      "Write", // body files only; see the note above JobDef
     ],
   },
   {
@@ -211,10 +213,11 @@ export const JOBS: JobDef[] = [
     // The ONE job whose PAT could technically merge, so nothing here is
     // wildcarded: git and gh are enumerated per-subcommand (no `Bash(git *)`,
     // no `Bash(gh *)`) — create the docs PR, never merge it. Edit is its
-    // living-docs remit (all existing files; bare Write is banned fleet-wide
-    // — Write(path) scoping is not honored — so a NEW doc file gets flagged
-    // for the PM instead of created headless); the D3 fence (policy-path
-    // allowlist hook) and the pre-push guard back the list structurally.
+    // living-docs remit (existing files). Write is the fleet-wide body-file
+    // grant (note above JobDef), so this job CAN now create a new file; the
+    // work order has it keep body files under .scratch/ (gitignored), and the
+    // D3 fence (policy-path allowlist hook) and the pre-push guard back the
+    // list structurally for anything it commits.
     // Read-only git/gh forms (status, diff, list, view) included so
     // reconciliation per the charter does not dead-end on a denied lookup.
     allowedTools: [
@@ -236,7 +239,7 @@ export const JOBS: JobDef[] = [
       "Bash(bun scripts/steward-prep.ts)",
       "Bash(bun scripts/file-finding.ts *)",
       "Bash(vale *)",
-      ...ENCODE_GRANTS,
+      "Write", // body files only; see the note above JobDef
     ],
   },
   {
@@ -266,7 +269,7 @@ export const JOBS: JobDef[] = [
       "Grep",
       "Glob",
       "Bash(bun scripts/backlog-dedupe.ts *)",
-      ...ENCODE_GRANTS,
+      "Write", // body files only; see the note above JobDef
     ],
   },
 ];

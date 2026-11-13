@@ -53,20 +53,28 @@ describe.skipIf(!docsPresent)("scheduler charters/briefs spanning test (C4)", ()
   });
 
   // Catches: a charter/brief's INSTRUCTIONS reintroducing a dead filing/report
-  // form (#114). Findings and reports now carry the body as a single-line
-  // `--body-b64` argv token; the `--body-file` outbox jail and the STDIN/heredoc
-  // form are both denied headless (no fleet tool could write the outbox file;
-  // the permission layer splits a Bash command on newlines). scheduler-spawn's
-  // work-order test runs the same STDIN/`<<` check on the spawn.ts template, but
-  // only sees stubbed strings — this pins the REAL charter/brief files, closing
-  // the seam-manifest entry-9 gap. Scoped to the instruction body: a
-  // `## CHANGELOG` may legitimately name the old forms as history, not instruction.
-  test("no charter/brief instructs a dead filing/report form (--body-file, STDIN, heredoc)", () => {
+  // form (#114). The STDIN/heredoc form is denied headless (the permission layer
+  // splits a Bash command on newlines), and so was the original outbox jail (no
+  // fleet tool could write the outbox file). The live form is `--body-file`
+  // pointing inside the job's own checkout at a file it wrote with the Write
+  // tool, so the flag itself is no longer a tell: the outbox is. A shell encoder
+  // (`printf ... | base64`) is the other banned form (injection, PR 171 review).
+  // scheduler-spawn's work-order test runs the same checks on the spawn.ts
+  // template, but only sees stubbed strings — this pins the REAL charter/brief
+  // files, closing the seam-manifest entry-9 gap. Scoped to the instruction body:
+  // a `## CHANGELOG` may legitimately name the old forms as history, not instruction.
+  test("no charter/brief instructs a dead filing/report form (outbox, STDIN, heredoc, shell encoder)", () => {
     for (const job of JOBS) {
       const instructions = readFileSync(join(root, job.charterPath), "utf8").split(/^## CHANGELOG/m)[0]!;
-      expect(instructions).not.toContain("--body-file");
+      expect(instructions).not.toContain("outbox");
       expect(instructions).not.toContain("STDIN");
       expect(instructions).not.toContain("<<");
+      expect(instructions).not.toContain("printf");
+      expect(instructions).not.toContain("| base64");
+      // The work order names the file flags, so an instruction body still
+      // teaching a base64 flag would contradict it (base64 flags still work,
+      // they are just no longer how a job is told to pass a body).
+      expect(instructions).not.toMatch(/--(body|text|semantic)-b64/);
     }
   });
 

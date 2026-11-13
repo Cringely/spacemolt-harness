@@ -14,6 +14,7 @@
 // bearer auth, structurally separate from the dashboard's #173 token.
 //
 // Usage:  bun scripts/strategy-store.ts <gate|mark|dump> <agentId>
+//         bun scripts/strategy-store.ts steer <agentId> --body-file <path inside your checkout>
 //         bun scripts/strategy-store.ts steer <agentId> --text-b64 <base64>
 //   gate  -> exit 0 = run the review, 1 = skip, 2 = error (charter step 0)
 //   mark  -> advance the review cursor (post-run bookkeeping)
@@ -39,14 +40,15 @@
 // buildEnv() from jobs.ts's `extraSecrets: ["store_bearer"]`, i.e. read from
 // a secret FILE and exported by the spawner, never passed as an argv token
 // or hardcoded here.
-import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
+import { BodyArgError, resolveBody } from "../src/scheduler/body-arg";
 import { INSTRUCTION_MAX_LENGTH, STORE_TOKEN_HEADER } from "../src/server/server";
 
 export const STORE_OPS = ["gate", "mark", "dump", "steer"] as const;
 export type StoreOp = (typeof STORE_OPS)[number];
 
-/** The one op that carries a request body, and so the one that takes --text-b64. */
+/** The one op that carries a request body, and so the one that takes --text-b64 or --body-file. */
 const TEXT_FLAG = "--text-b64";
+const FILE_FLAG = "--body-file";
 
 // Same character class the server-side route enforces (src/server/server.ts
 // STORE_AGENT_ID_RE). Kept in sync deliberately: the client rejects early
@@ -104,20 +106,31 @@ export function resolveBearerToken(env: NodeJS.ProcessEnv = process.env): string
  * that typed `dump miner --text-b64 ...` meant to steer, and silently
  * dropping the text would report success for a correction that never landed.
  */
-export function parseSteerText(op: StoreOp, rest: readonly string[]): string | undefined {
+export function parseSteerText(op: StoreOp, rest: readonly string[], cwd: string = process.cwd()): string | undefined {
   if (op !== "steer") {
-    if (rest.includes(TEXT_FLAG)) throw new StoreArgError(`${TEXT_FLAG} is only valid with the steer op`);
+    if (rest.includes(TEXT_FLAG) || rest.includes(FILE_FLAG)) {
+      throw new StoreArgError(`${TEXT_FLAG} and ${FILE_FLAG} are only valid with the steer op`);
+    }
     return undefined;
   }
-  if (rest[0] !== TEXT_FLAG || rest[1] === undefined) {
-    throw new StoreArgError(`steer requires ${TEXT_FLAG} <base64 of the steer text>`);
+  // Exactly one source: the base64 token or the file (resolveBody rejects both
+  // or neither). Tokens past the flag pair are rejected, not ignored.
+  const src: { b64?: string; file?: string } = {};
+  for (let i = 0; i < rest.length; i += 2) {
+    const flag = rest[i];
+    const value = rest[i + 1];
+    if ((flag !== TEXT_FLAG && flag !== FILE_FLAG) || value === undefined) {
+      throw new StoreArgError(`steer requires ${FILE_FLAG} <path inside your checkout> (or ${TEXT_FLAG} <base64 of the steer text>)`);
+    }
+    if (flag === TEXT_FLAG) src.b64 = value;
+    else src.file = value;
   }
   let text: string;
   try {
     // Byte cap is the utf8 worst case (4 bytes/char) for the character bound
     // checked next; the character bound is the real gate and is the same
     // number the server's zod .max() enforces.
-    text = decodeBodyArg(rest[1], INSTRUCTION_MAX_LENGTH * 4);
+    text = resolveBody(src, INSTRUCTION_MAX_LENGTH * 4, cwd);
   } catch (e) {
     throw new StoreArgError(e instanceof BodyArgError ? e.message : `invalid ${TEXT_FLAG}: ${e instanceof Error ? e.message : String(e)}`);
   }

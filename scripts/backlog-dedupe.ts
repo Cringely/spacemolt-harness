@@ -4,7 +4,9 @@
 // grant at all.
 //
 //   bun scripts/backlog-dedupe.ts candidates
-//   bun scripts/backlog-dedupe.ts run [--semantic-b64 <base64 of a JSON array of {"member":N,"target":M}>]
+//   bun scripts/backlog-dedupe.ts run [--semantic-file <path> | --semantic-b64 <base64>]
+//     (the body is a JSON array of {"member":N,"target":M}; the file is one the job
+//     wrote inside its checkout, see src/scheduler/body-arg.ts readBodyFile)
 //
 // `candidates` is read-only in every mode: the semantic-pass gate and, when
 // the pass is due, the issues the deterministic pass left unresolved, printed
@@ -23,7 +25,7 @@
 // runtime failure (including posting ON with the labels missing), 2 usage or
 // rejected input.
 import { spawnSync } from "node:child_process";
-import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
+import { BodyArgError, resolveBody } from "../src/scheduler/body-arg";
 import { dedupeCandidates, formatCandidates, runDedupe, type SemanticPair } from "../src/scheduler/dedupe";
 import type { GhRunner } from "../src/scheduler/filing";
 
@@ -32,7 +34,7 @@ const MAX_PAIRS_BYTES = 16 * 1024;
 function usage(msg: string): never {
   console.error(msg);
   console.error(
-    'usage: bun scripts/backlog-dedupe.ts candidates | run [--semantic-b64 <base64 of [{"member":N,"target":M}]>]',
+    'usage: bun scripts/backlog-dedupe.ts candidates | run [--semantic-file <path to a file holding [{"member":N,"target":M}]> | --semantic-b64 <base64 of it>]',
   );
   process.exit(2);
 }
@@ -61,9 +63,12 @@ if (import.meta.main) {
   if (command === "candidates" && rest.length > 0) usage("candidates takes no arguments");
   let pairs: SemanticPair[] = [];
   if (command === "run" && rest.length > 0) {
-    if (rest.length !== 2 || rest[0] !== "--semantic-b64") usage("run takes only --semantic-b64 <base64>");
+    if (rest.length !== 2 || (rest[0] !== "--semantic-file" && rest[0] !== "--semantic-b64")) {
+      usage("run takes only --semantic-file <path inside your checkout> (or --semantic-b64 <base64>)");
+    }
     try {
-      pairs = parseSemanticPairs(decodeBodyArg(rest[1]!, MAX_PAIRS_BYTES));
+      const src = rest[0] === "--semantic-file" ? { file: rest[1]! } : { b64: rest[1]! };
+      pairs = parseSemanticPairs(resolveBody(src, MAX_PAIRS_BYTES));
     } catch (e) {
       usage(e instanceof BodyArgError || e instanceof Error ? e.message : String(e));
     }

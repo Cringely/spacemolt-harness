@@ -5,6 +5,7 @@
 // provenance, bump-not-refile, per-cycle cap) are enforced mechanically, not
 // by prose the agent might drift from.
 //
+//   bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-file <path>
 //   bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>
 //
 // #635: a headless spawn has no memory across cycles, so three cycles once
@@ -27,9 +28,13 @@
 // layer splits a Bash command on newlines and matches each fragment against the
 // closed allowedTools list independently, so a heredoc/STDIN body is DENIED,
 // while a one-line `--body-b64 <token>` matches `Bash(bun scripts/file-finding.ts *)`.
-// The old `--body-file <under outbox/>` form was dead on arrival too — no fleet
-// tool could CREATE a file in that jail (bare Write is banned, write-report.ts
-// is jailed to reports/).
+// The form the work orders teach is `--body-file <path>`: the job writes the
+// body with the Write tool into its own checkout and passes the path, which
+// readBodyFile confines to cwd. That keeps the text out of every shell command
+// (a `printf '<text>' | base64` step would put untrusted text inside a
+// single-quoted shell argument). The old `--body-file <under outbox/>` jail was
+// dead on arrival because no fleet tool could create a file there; this one
+// lives in the checkout, where Write can.
 //
 // The caller is a spawned agent, so its arguments are UNTRUSTED input (Batch C
 // security review): job/cycle identity comes from the scheduler-written
@@ -41,13 +46,15 @@
 // 2 usage/missing env/rejected input/no active cycle, 3 filing disabled by
 // the D1 gate (gates.json).
 import { spawnSync } from "node:child_process";
-import { BodyArgError, decodeBodyArg } from "../src/scheduler/body-arg";
+import { BodyArgError, resolveBody } from "../src/scheduler/body-arg";
 import { canFile, loadGates } from "../src/scheduler/gates";
 import { FilingInputError, MAX_BODY_BYTES, fileFinding, readActiveCycle, type GhRunner } from "../src/scheduler/filing";
 
 function usage(msg: string): never {
   console.error(msg);
-  console.error("usage: bun scripts/file-finding.ts --dedup-key <key> --title <title> --body-b64 <base64 of the body>");
+  console.error(
+    "usage: bun scripts/file-finding.ts --dedup-key <key> --title <title> (--body-file <path inside your checkout> | --body-b64 <base64 of the body>)",
+  );
   process.exit(2);
 }
 
@@ -62,7 +69,8 @@ for (let i = 0; i < args.length; i += 2) {
 const { title } = opts;
 const dedupKey = opts["dedup-key"];
 const bodyB64 = opts["body-b64"];
-if (!dedupKey || !title || !bodyB64) usage("missing required argument");
+const bodyFile = opts["body-file"];
+if (!dedupKey || !title || (!bodyB64 && !bodyFile)) usage("missing required argument");
 
 const stateDir = process.env.SCHEDULER_STATE_DIR;
 if (!stateDir) usage("SCHEDULER_STATE_DIR is not set");
@@ -79,13 +87,14 @@ if (!canFile(loadGates(stateDir))) {
   process.exit(3);
 }
 
-// Decode + validate + cap the body BEFORE any gh call. Malformed base64 or an
-// oversized decoded body is rejected input (exit 2), never a gh failure.
+// Decode or read + validate + cap the body BEFORE any gh call. Malformed
+// base64, a body file outside the checkout, or an oversized body is rejected
+// input (exit 2), never a gh failure.
 let body: string;
 try {
-  body = decodeBodyArg(bodyB64, MAX_BODY_BYTES);
+  body = resolveBody({ b64: bodyB64, file: bodyFile }, MAX_BODY_BYTES);
 } catch (e) {
-  usage(e instanceof BodyArgError ? e.message : `invalid --body-b64: ${e instanceof Error ? e.message : String(e)}`);
+  usage(e instanceof BodyArgError ? e.message : `invalid body: ${e instanceof Error ? e.message : String(e)}`);
 }
 
 const gh: GhRunner = (ghArgs) => {

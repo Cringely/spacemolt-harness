@@ -144,18 +144,22 @@ export function extractStateNow(md: string): string {
   return lines.slice(start, end).join("\n").trim();
 }
 
-// The ONE base64 method, shared by every job (every work order demands a
-// base64 flag). jobs.ts ENCODE_GRANTS grants exactly its two pipe stages, and
-// test/scheduler-spawn.test.ts matches each stage of the backticked command
-// below against the job's own grants, so editing either side alone fails.
-// `%b` (not `%s`) lets a multi-line body ride one line as backslash-n; a
-// newline in the command would be a command boundary the permission layer
-// denies.
-const ENCODE_HOWTO =
-  "Base64 encoding (every `--body-b64`, `--text-b64` and `--semantic-b64` value): produce it with this ONE method, never by hand (a hand-encoded token corrupts silently). Run the encoder as its own command, on ONE LINE: `printf '%b' '<text>' | base64 -w 0`. Put the text between single quotes, write each line break in it as backslash-n and each literal backslash as two backslashes, and keep single quotes out of the text (rephrase). The output is one unwrapped line: copy it character for character as the flag's value in the NEXT command. Do not nest the encoder inside the other command with `$(...)`, and do not add flags or stages to it: those forms are denied headless. This pipe is the only one you may use; the commands that take the encoded value never contain a pipe.";
+// The ONE way a job passes a long body (finding, report, steer text, dedupe
+// pairs) to its script, shared by every job: write it with the Write tool into
+// the checkout, name the file with a file flag. Every job holds a bare Write
+// grant for this (jobs.ts, note above JobDef), and the scripts confine the path
+// to the job's cwd (body-arg.ts readBodyFile). Nothing here has the job run a
+// shell step on its text: an earlier version taught
+// `printf '<text>' | base64 -w 0`, which puts untrusted text inside a
+// single-quoted shell argument (injection, PR 171 security review).
+// test/scheduler-spawn.test.ts pins that no job grants a shell encoder and that
+// every script a job holds is named here with a file flag the script parses.
+// .scratch/ is gitignored, so the steward's `git add` cannot sweep a body in.
+const BODY_FILE_HOWTO =
+  "Long bodies (every finding body, report body, steer text and dedupe pair list): write the text with the Write tool to a file under `.scratch/` in your checkout (your cwd), e.g. `.scratch/finding.md`, then pass its path to the script as the file flag shown in that script's command below. The command carries only the path, never the text. Write the file once per body, as plain text. Do not base64-encode anything and do not build a body with a shell command (heredoc, pipe, redirect): no such command is granted. A path outside your checkout is rejected.";
 
 const FILING_HOWTO =
-  "File findings ONLY via `bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-b64 <base64>` — the WHOLE command on ONE LINE. base64-encode your finding body with the encoding method above (standard base64, no line wrapping) and pass it as the --body-b64 value. Do NOT use a heredoc, a pipe, or any newline anywhere in the file-finding command: a headless job's permission layer treats a newline as a command boundary and denies the run. Template (one line): `bun scripts/file-finding.ts --dedup-key <k> --title <t> --body-b64 <base64 of the body>`. It runs under the scheduler-recorded job/cycle identity and enforces the #114 verdict-(a) conditions (dedup incl. recently-closed, machine-filed label + provenance, bump-not-refile, per-cycle cap). Every filed issue gets a fixed priority label automatically — there is no flag to set it. Never `gh issue create` directly." +
+  "File findings ONLY via `bun scripts/file-finding.ts --dedup-key <stable-key> --title <title> --body-file <path>` — the WHOLE command on ONE LINE. Write your finding body to a file with the Write tool as described above and pass its path as the --body-file value. Do NOT use a heredoc, a pipe, or any newline anywhere in the file-finding command: a headless job's permission layer treats a newline as a command boundary and denies the run. Template (one line): `bun scripts/file-finding.ts --dedup-key <k> --title <t> --body-file .scratch/finding.md`. It runs under the scheduler-recorded job/cycle identity and enforces the #114 verdict-(a) conditions (dedup incl. recently-closed, machine-filed label + provenance, bump-not-refile, per-cycle cap). Every filed issue gets a fixed priority label automatically — there is no flag to set it. Never `gh issue create` directly." +
   " Dedup-key rule (#635): mint the key as a lowercase-kebab-case slug naming the CONDITION ONLY (e.g. `core-harvest-unimplemented`) — leave severity/priority (p0, blocker) out of it, it belongs in the title. You do not need to search for a prior key yourself: filing already auto-normalizes a severity word out of the key before matching, so `core-harvest-unimplemented-p0` and `p0-core-harvest-unimplemented` land on the same open issue even without you reusing the exact prior spelling. That normalization does not cover a genuinely different WORDING for the same condition (`core-harvest-unimplemented` vs `core-harvest-job-unimplemented` still file as two) — keep the key short and literal to the condition to avoid that.";
 
 function workOrder(job: JobDef, cycleId: string): string {
@@ -170,7 +174,7 @@ function workOrder(job: JobDef, cycleId: string): string {
   const common = [
     cycleIdLine,
     "You run headless on the scheduler host against a dedicated checkout (your cwd). `gh` is authenticated via GH_TOKEN in your environment.",
-    ENCODE_HOWTO,
+    BODY_FILE_HOWTO,
   ];
   const perJob: Record<JobDef["id"], string[]> = {
     standup: [
@@ -181,14 +185,14 @@ function workOrder(job: JobDef, cycleId: string): string {
     strategy: [
       "Target: this 6h strategy review window, per your charter (step-0 gate first).",
       "Authorized store access (#114 A1): the ONE transport is `bun scripts/strategy-store.ts <op> <agentId>` — the WHOLE command on ONE LINE. Three fixed ops: `gate` (step-0 precheck; exit 0 = run, 1 = skip, 2 = error), `mark` (advance the cursor, post-run only), `dump` (the review dataset JSON — heartbeat trend + failure taxonomy). It calls an authenticated HTTP route on the harness server (bearer token in the `X-Store-Token` header); no SSH, no `docker exec`, no arbitrary read. If you need to read the store, that is what `dump` is for — do not reach past these three ops.",
-      "Steer lever (#495), ladder step 1: `bun scripts/strategy-store.ts steer <agentId> --text-b64 <base64>` — the WHOLE command on ONE LINE, your steer text base64-encoded as the --text-b64 value (no heredoc, no pipe, no newline in the command). It is a fourth op on the SAME authenticated route family and the SAME bearer as the three above; nothing else is needed. Hard cap 500 characters, enforced both sides. A 204 means ACCEPTED AND QUEUED, not applied — the pilot consumes it at its next replan, and there is nothing to read back to confirm it.",
+      "Steer lever (#495), ladder step 1: `bun scripts/strategy-store.ts steer <agentId> --body-file <path>` — the WHOLE command on ONE LINE, your steer text written to a file as described above and the file's path as the --body-file value (no heredoc, no pipe, no newline in the command). It is a fourth op on the SAME authenticated route family and the SAME bearer as the three above; nothing else is needed. Hard cap 500 characters, enforced both sides. A 204 means ACCEPTED AND QUEUED, not applied — the pilot consumes it at its next replan, and there is nothing to read back to confirm it.",
       "Steer content rule (#527): a steer must NOT order a query action (a read-only lookup such as find_route or view_market). The planner can only be told to take MUTATIONS, so an instruction naming a query is rejected 400 and never reaches the pilot. Write the OUTCOME you want (\"get to a station and refuel\") or the MUTATION to take (\"jump to gold_run, then dock and refuel\").",
       "When to steer: this is the SHARPEST lever you hold and the only one that acts inside this window. Reach for it when a finding needs correcting NOW and the issue lever is too slow — an issue waits on a human reading a backlog item, which can be hours or days, and a pilot burning credits or stranded does not have that long. Everything else about the ladder stands: a steer is transient and situational, never a standing rule, and a finding that needs a durable fix (a briefing line, a guard, a missing capability) still goes to the issue lever whether or not you also steer. A finding steered twice wanted an issue the first repeat.",
-      "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-strategy-review.md --body-b64 <base64>` — the WHOLE command on ONE LINE, the report body base64-encoded as the --body-b64 value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/ and the writer accepts nothing outside it. Issue-worthy findings go through file-finding.",
+      "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-strategy-review.md --body-file <path>` — the WHOLE command on ONE LINE, the report body written to a file as described above and the file's path as the --body-file value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/ and the writer accepts nothing outside it. Issue-worthy findings go through file-finding.",
     ],
     council: [
       "Target: today's daily council review, per the brief above (outsider seat, insider seat, synthesis).",
-      "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-council-review.md --body-b64 <base64>` — the WHOLE command on ONE LINE, the report body base64-encoded as the --body-b64 value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/. That directory is the record: nothing is committed or collected from it. Findings go through file-finding.",
+      "Reporting channel: write your dated report via `bun scripts/write-report.ts --file <YYYY-MM-DD>-council-review.md --body-file <path>` — the WHOLE command on ONE LINE, the report body written to a file as described above and the file's path as the --body-file value (no heredoc, no pipe, no newline in the command). It lands under $SCHEDULER_STATE_DIR/reports/. That directory is the record: nothing is committed or collected from it. Findings go through file-finding.",
     ],
     steward: [
       "Target: the merge cluster since the last steward anchor — reconcile the living docs per your charter.",
@@ -197,7 +201,7 @@ function workOrder(job: JobDef, cycleId: string): string {
     ],
     dedupe: [
       "Target: this week's backlog dedupe pass, per your charter. You are the semantic pass only. The script runs the deterministic passes and does every tracker read and write.",
-      "Commands, each the WHOLE command on ONE LINE: first `bun scripts/backlog-dedupe.ts candidates`, then `bun scripts/backlog-dedupe.ts run`, adding `--semantic-b64 <base64 of a JSON array of {\"member\":N,\"target\":M} pairs>` only when the candidates output says the semantic pass is due and you found pairs. Standard base64, no line wrapping, no heredoc, no pipe.",
+      "Commands, each the WHOLE command on ONE LINE: first `bun scripts/backlog-dedupe.ts candidates`, then `bun scripts/backlog-dedupe.ts run`, adding `--semantic-file <path>` only when the candidates output says the semantic pass is due and you found pairs. The file holds a JSON array of {\"member\":N,\"target\":M} pairs, written with the Write tool as described above. No heredoc, no pipe.",
       "Whether anything reaches the tracker is the operator's gates.json dedupePosting gate, OFF by default. With it off the run is a dry run: it writes $SCHEDULER_STATE_DIR/reports/backlog-dedupe.md and nothing else. You cannot and must not change that.",
       "Reporting channel: the script's own report, plus your five-field completion report on stdout carrying the `run` command's JSON summary.",
     ],
