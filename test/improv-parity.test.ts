@@ -114,6 +114,29 @@ const SEAMS: Seam[] = [
     anchors: [/Refueling Pump/i, /no_refueling_pump/i, /fill my own tank/i],
   },
   {
+    guard: "full-tank refuel guard (tracker Cringely/spacemolt#995: a refill against a tank status reads full " +
+      "advances instead of calling the game)",
+    code: { file: "src/agent/executor.ts", marker: "preStatus.fuel >= preStatus.maxFuel" },
+    anchors: [/tank_full/i, /max_fuel/i],
+  },
+  {
+    guard: "espionage membership guard (tracker Cringely/spacemolt#1004: no faction on status -> blocked wake)",
+    code: { file: "src/agent/executor.ts", marker: 'step.action === "espionage"' },
+    anchors: ["espionage", /Espionage HQ/i, /faction_id/i],
+  },
+  {
+    guard: "distress_signal cooldown guard (tracker Cringely/spacemolt#792: inside the one-hour cooldown of " +
+      "the pilot's own last call -> blocked wake)",
+    code: { file: "src/agent/executor.ts", marker: "distressCooldownMinutes > 0" },
+    anchors: ["distress_signal", /one-hour cooldown/i, /already_active/i],
+  },
+  {
+    guard: "in_battle guard (tracker Cringely/spacemolt#892: movement, scan and distress calls refused for a " +
+      "window after the game's own in_battle answer)",
+    code: { file: "src/agent/executor.ts", marker: "IN_BATTLE_BLOCKED_ACTIONS.has(step.action)" },
+    anchors: ["in_battle", /mid-battle/i, "reload"],
+  },
+  {
     guard: "tick-pacing settle (SM-12: pending accept skips one submission)",
     code: { file: "src/agent/executor.ts", marker: /settle: true/ },
     anchors: [/action pending/i, /wait one tick/i],
