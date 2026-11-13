@@ -18,5 +18,5 @@ The code-repo half of `change-management.md`. The confirmation list, backups, co
 
 Before ending any session with code or config changes:
 1. **Commit last known good state** — all working changes must be in a commit before the session closes. Never leave uncommitted working changes.
-2. **Push to remote** — ensure the commit is on GitHub, not just local.
+2. **Push to remote** — ensure the commit is on GitHub, not just local. Run `git remote` first. When it prints nothing, the project has no remote: skip this step and say "No remote configured, push skipped" in the close. When the folder is not a git repository at all, skip steps 1 and 2 the same way and say so.
 3. **Sync production** — pull on the production host if production was the work target.

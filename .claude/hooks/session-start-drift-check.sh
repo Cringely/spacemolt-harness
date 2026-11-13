@@ -76,9 +76,13 @@ manifest="$root/.claude/.harness-manifest.json"
 # until that is fixed. One line rather than silence, so the skip is visible instead of reading
 # identical to "nothing to report." Still exit 0 either way: advisory only, nothing here can
 # refuse a tool call.
+#   The line points at the installer, not -Audit (#141). A project still carrying the legacy
+# manifest shape has its coreRepo and stackDetected embedded in the manifest, so -Audit
+# compares against those and says nothing about the missing sidecar. A plain install prints
+# why the sidecar was refused and writes it once .claude/.gitignore covers it.
 if [ ! -f "$sidecar" ]; then
     if [ -f "$manifest" ]; then
-        printf '%s\n' "harness: sidecar unavailable, machine-specific checks skipped (see -Audit)"
+        printf '%s\n' "harness: sidecar unavailable, machine-specific checks skipped (re-run the installer for the reason)"
     fi
     exit 0
 fi
