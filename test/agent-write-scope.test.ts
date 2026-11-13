@@ -13,42 +13,57 @@
 // automatically rather than by a hand-maintained list.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decide, inScratch, readWriteScope } from "../.claude/hooks/agent-write-scope";
 
-const CWD = "/home/runner/project";
+// Real directories, because inScratch() canonicalises both the target and the project root and
+// treats a failure to do so as "not scratch". PROJECT stands for the checkout. OUTSIDE is a sibling
+// temp directory that is not inside it, standing for the session scratchpad area.
+const PROJECT = realpathSync.native(mkdtempSync(join(tmpdir(), "write-scope-project-")));
+const OUTSIDE = realpathSync.native(mkdtempSync(join(tmpdir(), "write-scope-outside-")));
+afterAll(() => {
+  rmSync(PROJECT, { recursive: true, force: true });
+  rmSync(OUTSIDE, { recursive: true, force: true });
+});
 const REPO_ROOT = join(import.meta.dir, "..");
 const REAL_AGENTS_DIR = join(REPO_ROOT, ".claude", "agents");
 
 describe("inScratch() — path classification", () => {
   test.each([
-    "/tmp/claude/proj/sess/scratchpad/report.md",
-    "C:\\Users\\me\\AppData\\Local\\Temp\\claude\\proj\\sess\\scratchpad\\findings.md",
-    "/home/runner/project/.scratch/notes.md",
-    "scratchpad/relative.md",
-    "/tmp/SCRATCHPAD/case-insensitive.md",
-  ])("in scope: %s", (p) => {
-    expect(inScratch(p, CWD)).toBe(true);
+    ["session scratchpad outside the project", join(OUTSIDE, "scratchpad", "report.md")],
+    ["scratch segment outside the project, any case", join(OUTSIDE, "SCRATCHPAD", "case-insensitive.md")],
+    ["a .scratch segment outside the project", join(OUTSIDE, ".scratch", "notes.md")],
+    ["the project drop box", join(PROJECT, ".claude", "scratch", "findings.md")],
+    ["the project drop box, nested", join(PROJECT, ".claude", "scratch", "deep", "x.md")],
+  ])("in scope: %s", (_label, p) => {
+    expect(inScratch(p, PROJECT, PROJECT)).toBe(true);
   });
 
   test.each([
-    "/home/runner/project/src/index.ts",
-    "C:\\Users\\me\\.claude\\rules\\agent-usage.md",
-    "docs/STATE.md",
-    "/etc/hosts",
+    ["source file in the project", join(PROJECT, "src", "index.ts")],
+    ["a relative project doc", "docs/STATE.md"],
+    ["a file outside any scratch dir", join(OUTSIDE, "hosts")],
     // Traversal out of a scratch dir resolves away from it, so it must not pass.
-    "/tmp/scratchpad/../../etc/passwd",
+    ["traversal out of scratch", join(OUTSIDE, "scratchpad", "..", "..", "etc", "passwd")],
     // A file merely NAMED scratchpad is not a scratch directory.
-    "/home/runner/project/scratchpad.md",
-  ])("out of scope: %s", (p) => {
-    expect(inScratch(p, CWD)).toBe(false);
+    ["a file named scratchpad.md", join(OUTSIDE, "scratchpad.md")],
+    // Inside the project these names mean nothing: such a folder is tracked content.
+    ["scratchpad folder inside the project", join(PROJECT, "scratchpad", "x.md")],
+    ["a .scratch folder inside the project", join(PROJECT, ".scratch", "notes.md")],
+    ["a scratch skill folder inside the project", join(PROJECT, ".claude", "skills", "scratch", "SKILL.md")],
+    ["the drop box directory itself", join(PROJECT, ".claude", "scratch")],
+    ["a UNC-style spelling", "//server/share/scratchpad/x.md"],
+  ])("out of scope: %s", (_label, p) => {
+    expect(inScratch(p, PROJECT, PROJECT)).toBe(false);
   });
 
   test("relative paths resolve against cwd, not the filesystem root", () => {
-    expect(inScratch("../.scratch/x.md", "/home/runner/project/sub")).toBe(true);
-    expect(inScratch("../src/x.ts", "/home/runner/project/sub")).toBe(false);
+    const sub = join(PROJECT, "sub");
+    expect(inScratch("../.claude/scratch/x.md", sub, PROJECT)).toBe(true);
+    expect(inScratch("../src/x.ts", sub, PROJECT)).toBe(false);
+    expect(inScratch("scratchpad/relative.md", OUTSIDE, PROJECT)).toBe(true);
   });
 });
 
@@ -124,7 +139,7 @@ describe("readWriteScope() — derived from agent frontmatter, never a hand-list
 
 describe("decide() — only scratch-scoped agents are gated", () => {
   test("scoped agent writing outside scratch is denied", () => {
-    const verdict = decide("scratch", "/home/runner/project/src/index.ts", CWD);
+    const verdict = decide("scratch", join(PROJECT, "src", "index.ts"), PROJECT, PROJECT);
     expect(verdict.action).toBe("deny");
     if (verdict.action === "deny") {
       expect(verdict.reason).toContain("writeScope: scratch");
@@ -132,7 +147,7 @@ describe("decide() — only scratch-scoped agents are gated", () => {
   });
 
   test("scoped agent writing inside scratch is allowed", () => {
-    expect(decide("scratch", "/tmp/claude/s/scratchpad/r.md", CWD)).toEqual({
+    expect(decide("scratch", join(OUTSIDE, "scratchpad", "r.md"), PROJECT, PROJECT)).toEqual({
       action: "allow",
     });
   });
@@ -145,18 +160,18 @@ describe("decide() — only scratch-scoped agents are gated", () => {
   test.each([null, "repo", ""])(
     "unscoped agent (%p) is untouched even for a write far outside any scratch dir",
     (scope) => {
-      expect(decide(scope, "/home/runner/project/src/index.ts", CWD)).toEqual({
+      expect(decide(scope, join(PROJECT, "src", "index.ts"), PROJECT, PROJECT)).toEqual({
         action: "allow",
       });
     },
   );
 
   test("main session (no agent_type, so no scope) is untouched", () => {
-    expect(decide(null, "/anywhere/at/all.md", CWD)).toEqual({ action: "allow" });
+    expect(decide(null, join(OUTSIDE, "all.md"), PROJECT, PROJECT)).toEqual({ action: "allow" });
   });
 
   test("missing file_path allows rather than crashing — fail open", () => {
-    expect(decide("scratch", undefined, CWD)).toEqual({ action: "allow" });
+    expect(decide("scratch", undefined, PROJECT, PROJECT)).toEqual({ action: "allow" });
   });
 });
 
@@ -204,9 +219,35 @@ describe("hook stdin→stdout contract", () => {
       JSON.stringify({
         agent_type: "scratchy",
         cwd: fakeProject,
+        tool_input: { file_path: join(fakeProject, ".claude", "scratch", "report.md") },
+      }),
+      { CLAUDE_PROJECT_DIR: fakeProject },
+    );
+    expect(code).toBe(0);
+    expect(out).toBe("");
+  });
+
+  test("a scratchpad-named folder inside the project is denied (tracked content)", () => {
+    const { code, out } = runHook(
+      JSON.stringify({
+        agent_type: "scratchy",
+        cwd: fakeProject,
         tool_input: { file_path: join(fakeProject, "scratchpad", "report.md") },
       }),
       { CLAUDE_PROJECT_DIR: fakeProject },
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe("deny");
+  });
+
+  test("Copilot CLI stand-down: COPILOT_CLI without CLAUDECODE exits 0 silently, even for a deny case", () => {
+    const { code, out } = runHook(
+      JSON.stringify({
+        agent_type: "scratchy",
+        cwd: fakeProject,
+        tool_input: { file_path: join(fakeProject, "src", "index.ts") },
+      }),
+      { CLAUDE_PROJECT_DIR: fakeProject, COPILOT_CLI: "1", CLAUDECODE: "" },
     );
     expect(code).toBe(0);
     expect(out).toBe("");

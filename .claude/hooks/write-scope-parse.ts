@@ -25,8 +25,8 @@ export function parseWriteScope(text: string): string | null {
   if (!/^---[ \t]*\r?$/.test(lines[0] ?? "")) return null;
   let value: string | null = null;
   for (let i = 1; i < lines.length; i++) {
-    if (/^---[ \t]*\r?$/.test(lines[i])) return value;
-    value ??= lines[i].match(/^writeScope:\s*(\S+)\s*$/)?.[1] ?? null;
+    if (/^---[ \t]*\r?$/.test(lines[i] ?? "")) return value;
+    value ??= (lines[i] ?? "").match(/^writeScope:\s*(\S+)\s*$/)?.[1] ?? null;
   }
   // No closing delimiter: not frontmatter, so no declaration.
   return null;
