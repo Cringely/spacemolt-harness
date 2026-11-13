@@ -309,7 +309,9 @@ describe("pinned instructions leave goals only by explicit revoke (#817)", () =>
     // One more unretired steer overflows MAX_GOALS (5 -> 6) -- enough on its
     // own, under the old age-only eviction, to push the pinned instruction
     // (the oldest slot) straight out with no revoke and no receipt.
-    agent.instruct("steer 5");
+    // The overflowing steer is itself pinned: an unpinned one would supersede
+    // steers 1-4 outright (Cringely/spacemolt#535) and never reach the cap.
+    agent.instruct("steer 5", { standing: true });
     await agent.runOnce();
 
     // The pinned instruction survives, still in the oldest slot; the cap

@@ -114,7 +114,11 @@ describe("Agent.runOnce", () => {
     const agent = new Agent({ id: "a1", persona: "p", api, store, planner, config, now: () => 1_000_000 });
     await agent.runOnce(); // initial no_plan replan (no instruction, no goal)
     for (let i = 1; i <= 6; i++) {
-      agent.instruct(`steer ${i}`);
+      // Pinned (standing) steers: an unpinned steer supersedes its predecessors
+      // outright (Cringely/spacemolt#535), which would leave nothing for the
+      // cap to evict. Pinned steers are exempt from supersession, so the #186
+      // cap is still what bounds them.
+      agent.instruct(`steer ${i}`, { standing: true });
       await agent.runOnce(); // instruction wake -> replan pushes the goal
     }
     const expected = ["steer 2", "steer 3", "steer 4", "steer 5", "steer 6"];

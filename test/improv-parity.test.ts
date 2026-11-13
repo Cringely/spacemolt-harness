@@ -433,6 +433,15 @@ const SEAMS: Seam[] = [
     anchors: [/acted on ONCE/i, /is this done yet/i, "instruction_done"],
   },
   {
+    guard: "one-shot destructive order is spent once it runs: a successful oneShot action (self_destruct) retires the steer that ordered it, so it never re-runs on a respawned ship (#542)",
+    // The retirement block's own condition. Not the bare `oneShot` flag or the
+    // ONE_SHOT_ACTIONS name: those also occur in the registry, the set's
+    // declaration and comments, so deleting the block would leave them
+    // matching. This call is the block's gate and occurs once in agent.ts.
+    code: { file: "src/agent/agent.ts", marker: "ONE_SHOT_ACTIONS.has(step.action)" },
+    anchors: [/spent once/i, /never re-?run/i, /respawn/i],
+  },
+  {
     guard: "pinned (\"standing until revoked\") instruction survives instruction_done -- only an explicit operator revoke clears it (#817)",
     // #1106: the bare "pinnedInstructions" identifier occurs 14 times in
     // agent.ts (field decl, replay, instruct()'s pin, revokeInstruction,
