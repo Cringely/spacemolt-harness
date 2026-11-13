@@ -1105,7 +1105,7 @@ export class Agent {
   // goals; this is the same shape for pinned operator ones.
   //
   // Pass 1 evicts oldest-first, skipping any text still in pinnedInstructions
-  // -- ordinary steers age out exactly as before. Only if pinned entries
+  // or standingGoals (#821) -- ordinary steers age out exactly as before. Only if pinned entries
   // ALONE still exceed `keep` (every unpinned steer already gone) does pass 2
   // evict the oldest pinned survivor too -- but visibly: the same
   // instruction_pin_changed{pinned:false} receipt an explicit revoke writes,
@@ -1115,7 +1115,11 @@ export class Agent {
   private evictOldestUnpinned(goals: string[], keep: number): string[] {
     const survivors = goals.slice();
     for (let i = 0; survivors.length > keep && i < survivors.length; ) {
-      if (this.pinnedInstructions.has(survivors[i]!)) { i++; continue; }
+      // Standing config goals are protected like pinned ones
+      // (Cringely/spacemolt#821). mergeStandingGoals restores a missing one
+      // through this very method, so an age-only pass let the restore of one
+      // standing goal evict another, and the two traded places every replan.
+      if (this.pinnedInstructions.has(survivors[i]!) || this.standingGoals.includes(survivors[i]!)) { i++; continue; }
       survivors.splice(i, 1);
     }
     while (survivors.length > keep) {

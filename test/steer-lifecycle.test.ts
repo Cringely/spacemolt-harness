@@ -81,6 +81,39 @@ describe("superseding steers (#535)", () => {
   });
 });
 
+describe("standing goal merge is stable (#821)", () => {
+  const STANDING = ["MILESTONE one", "MILESTONE two", "FUEL rule"];
+
+  // Breakage caught: the live #821 trace. The goals list sits at the cap with
+  // two operator steers and one standing goal evicted by the push side. The
+  // merge restored it by dropping the OLDEST goal, which was another standing
+  // goal, so on the next replan the two swapped places, every replan, and the
+  // planner never saw all three. Every standing goal must be present at
+  // construction and on every replan, and the list must not change between
+  // replans that received no new steer.
+  test("three standing goals plus an overflowing steer list do not rotate across replans", async () => {
+    const store = new Store(":memory:");
+    // The state the cap leaves behind: s0 evicted, s1 and s2 now the oldest.
+    store.savePlan("m1", okPlan, [STANDING[1]!, STANDING[2]!, "errand 3", "errand 4", "errand 5"]);
+    const planner = new MockPlanner([okPlan]);
+    const agent = new Agent({
+      id: "m1", persona: "p", goals: STANDING, api: stubApi().api, store, planner, config, now: () => 1,
+    });
+    const seen = [agent.snapshot().goals];
+    for (let i = 0; i < 10; i++) {
+      await agent.runOnce();
+      seen.push(agent.snapshot().goals);
+    }
+    expect(planner.contexts.length).toBeGreaterThanOrEqual(2);
+    for (const goals of seen) for (const s of STANDING) expect(goals).toContain(s);
+    for (const ctx of planner.contexts) for (const s of STANDING) expect(ctx.goals).toContain(s);
+    // Stable: identical content and order on every replan with no new steer.
+    for (const goals of seen) expect(goals).toEqual(seen[0]!);
+    // The oldest ERRAND made the room, not a standing goal.
+    expect(seen[0]).toEqual([STANDING[0]!, STANDING[1]!, STANDING[2]!, "errand 4", "errand 5"]);
+  });
+});
+
 describe("one-shot destructive steers (#542)", () => {
   // A planner that reads goals the way the live model does: it plans a
   // self_destruct whenever a goal in the briefing names one, and never reports
