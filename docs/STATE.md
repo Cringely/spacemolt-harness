@@ -9,6 +9,40 @@
 
 ## NOW, live status
 
+_Refreshed 2026-11-13 (seventh pass, cluster #151-#176). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
+
+**DEPLOY STATE, PM live capture 2026-11-13T16:41Z (not verifiable from the repo).** Production runs `dbcf18f` (PR #176's merge commit), healthy, provenance verified. Everything merged through #176 is deployed. #171 (`7c0850b`) merged at 16:46Z, after the capture, and deploys on the next publish.
+
+**AUTO-DEPLOY INCIDENT, FIXED BY #176.** Auto-deploy skipped every image from `f911c8a` onward. GitHub's `ubuntu-latest` runner moved from 24.04 to 26.04 under an unchanged workflow, `docker build` there pushed an OCI image index (a wrapper around several manifests) in place of a single manifest, and the host deployer could not map the tag to a sha7, so it refused and production stayed on `c3bfee3`. #176 pins the publish job to `ubuntu-24.04` and builds with `--provenance=false --sbom=false`. See [L-60](wiki/engineering-lessons.md#l-60--a-floating-runner-label-is-an-input-nobody-reviewed).
+
+**TWENTY-FOUR PRs MERGED 2026-11-13** (#151, #154-#176). The open-PR list is empty.
+
+- CI and tooling: #156 (openapi fixture regenerated, zod 3 to 4.6.6 for GHSA-mrhx-c7xc-m3w5), #154, #155, #168.
+- Scheduler: #158 (closed job tool set, secrets paths denied, #865), #160 (locked deps installed per job worktree), #162 (strategy-store gate exits 2 on a crash, #1139/#1143), #172 (charters verify a PR before citing it), #171 (long bodies passed as a file, council reads its own reports).
+- Pilot: #159, #161, #163, #164 (#1068), #165 (catalog snapshot 0.493.0 to 0.707.0), #166 (battle status, retreat, stance registered), #167 (#540), #169 (four no-op calls refused before the game), #170 (newer steer supersedes older unpinned ones, #535), #173 (#1150), #174 (#1151), #175 (#1152).
+- Decisions: #157 accepts the scheduler footprint. Fix-agent dispatch (gate D1) stays off until a named condition, pending operator ratification (#1034).
+
+**TRACKER.** 517 open at the previous pass (PR #151), 238 open at this one (live count 2026-11-13).
+
+**UNPROVEN LIVE.** All of these are offline-tested only:
+
+- the corsair unfreeze after a battle ends (#1150, PR #173)
+- the miner plan-cap fix (#1151, PR #174)
+- live ids outranking the vendored catalog, and the refresh script (#1152, PR #175)
+- the refuel, espionage, in_battle and distress guards (PR #169)
+- the steer lifecycle (PR #170)
+- the scheduler body-file path and council report-reading (PR #171). Its 16 tracker issues stay open until the first live ceremony cycle confirms them.
+
+Carried from the previous pass, still without a live signal recorded here: #1115, #1114, #1116, #1133, #1136.
+
+**BACKLOG:** `docs/backlog.md` was NOT regenerated this pass and still lists the 517-issue backlog. `scripts/gen-backlog.py` refuses a count below half the last one, and 238 is below 258.
+
+**Next:** the live signals above, starting with the first ceremony cycle on #171. Dedupe standing report #1142 is still open. PR #176 leaves two follow-ups: unpin the runner once a newer image is confirmed to push a single manifest, and an operator decision on patching the host deployer to read an index. F4 (3 pilots/24h/zero strands, steer confirmed) stays open (#591).
+
+## Recent history, 2026-09-24 sixth pass (cluster #137-#150)
+
+Moved out of `## NOW` on 2026-11-13 (seventh pass) to fit the 500-word cap. Superseded only where the block above says so. Extracted verbatim from `origin/main`'s pre-11-13 `docs/STATE.md`.
+
 _Refreshed 2026-09-24 (sixth pass, cluster #137-#150). Boot from this block + `docs/backlog.md` + `docs/game-reference/commands.md`._
 
 **ELEVEN PRs MERGED THIS CLUSTER:** wave-5 (#137-#147, six tracker issues closed: #1115/#1114/#1116/#1135/#1136/#1133), plus wave-6 docs/tests (#149 dedupe spec fix, #150 githooks pre-commit propagation). See recent history for wave-5 detail.

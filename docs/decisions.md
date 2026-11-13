@@ -518,6 +518,8 @@ Source: issue #219 (P1 epic, unblocks #107/#216 and the first rung of five other
 
 **Decision.** (C). `estimateNetTrip` (src/agent/net-trip.ts) stays the fee-model SSOT: revenue (bid x quantity, or mission payout) minus fuel and listing fee, returning UNKNOWN naming any missing input (#94). No executor block remains. The digest verdict names the anti-pattern ("selling one last item across a paid border"), interpolates the model's constants, states that catalog value only ESTIMATES a distant sale, and names the no-trip recovery: list with create_sell_order and fly on (fills settle unattended). Standing-goal and bundling exemptions are taught in the same line. A divergence test (catalog says loss, live bid may say profit) pins departure, so any future block must rest on data that bounds revenue. Depth: PR #361; test/net-trip.test.ts, test/improv-parity.test.ts.
 
+*2026-11-13: PR #168 deleted `estimateNetTrip`. The fee constants remain.*
+
 ## 2026-07-17 — Mining preconditions: the 4x deposit-lock guard plus learned too-sparse rules (#188)
 
 **Context.** The pilot spent a tick on `mine` and the game answered "deposits too sparse ... the richest deposit holds 24 units; your array needs at least 25 to get a lock". Both numbers were knowable in advance. The vendored reference carries the rule (mining.md:42: an array more than 4x over a deposit's supported_power cannot extract, and the incident's 24-vs-25 arithmetic matches it) and both inputs are free queries: get_poi's resources[] carries supported_power (openapi-v2 GetPOIResponse, the shape #302 landed) and the fitted lasers already report mining_power on every status snapshot. No separate min-lock stat exists anywhere in the catalog; the "needs at least 25" figure derives from the 4x rule.
