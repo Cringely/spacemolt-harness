@@ -12,8 +12,11 @@ per run: review, synthesize, file, report, terminate.
 
 ## Method — two seats, then synthesis
 
-Run both seats as in-session subagents (Task tool). That is this job's review METHOD — it is
-not the capability-(b) agent dispatch the D1 gate keeps off.
+Run both seats yourself, one after the other, as separate passes. You hold no Task tool (a
+Task subagent's Bash escaped the job's tool list, Cringely/spacemolt#865). The outsider pass
+MUST read only code and the one-paragraph what-this-is before you open any rationale doc;
+the insider pass comes second, so the outsider verdict is written down before rationale
+context can contaminate it.
 
 1. **Outsider seat.** Fresh eyes, LOW context BY DESIGN: the code plus a one-paragraph
    what-this-is, and NO rationale context (no decisions.md, no wiki, no goals). It sees
@@ -66,6 +69,10 @@ Sonnet, medium reasoning effort — the seats do the reading; the synthesis is t
 - Never make live game calls; LLM calls are this run and its two seats only.
 
 ## CHANGELOG
+
+- v1.4 (2026-11-12) — seats run as two sequential passes in the job's own context; the Task
+  tool left the council grant (Cringely/spacemolt#865, appsec P1). Trade-off: the outsider's
+  "no rationale context" is now ordering discipline, not a fresh-context guarantee.
 
 - v1.3 (2026-07-19) — added the Triage step: rank issues filed since the last council run
   against the current milestone, emit an ordered `## Triage` section in the dated report

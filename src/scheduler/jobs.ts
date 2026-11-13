@@ -2,12 +2,19 @@
 // and PAT split are the spec §Job table + §Security verbatim — a reviewer
 // diffs this file against docs/superpowers/specs/2026-07-18-durable-scheduler.md.
 //
-// allowedTools (finalized in Task C3): CLOSED per-job lists mirroring spec
+// allowedTools (finalized in Task C3): per-job lists mirroring spec
 // §What-it-executes — LLM output is untrusted input, so anything absent from
-// a list is forbidden. No package managers, no unscoped shell, and never a
+// a list is not granted. No package managers, no unscoped shell, and never a
 // bare `Bash(git *)` or `Bash(gh *)` wildcard; the pre-push hook and the D3
 // fence stay the structural backstops BEHIND the lists
-// (test/scheduler-spawn.test.ts pins the closed-list posture).
+// (test/scheduler-spawn.test.ts pins the grant posture).
+//
+// A list is an ALLOW list, additive on its own: it does not close the tool
+// set (Cringely/spacemolt#865: read-only Bash ran with no grant, and a bare
+// `Read` matches every path, not just the worktree). The set is closed by
+// buildArgv (spawn.ts), which passes `--restricted` and a `--tools` list
+// derived from the lists below by toolNames(), so each list stays defined
+// here once.
 //
 // #490: a bare `Bash(gh *)` on council/standup/strategy let the spawned agent
 // run `gh issue create`/`gh issue comment` directly, unscoped, bypassing the
@@ -27,6 +34,11 @@ export interface JobDef {
   extraSecrets?: string[];
   timeoutMs: number;
   allowedTools: string[];
+}
+
+/** The built-in tool names a job's grant list names: `Bash(gh pr list *)` becomes `Bash`, deduped. */
+export function toolNames(allowedTools: string[]): string[] {
+  return [...new Set(allowedTools.map((t) => t.replace(/\(.*$/, "")))];
 }
 
 const MIN = 60_000;
@@ -144,9 +156,10 @@ export const JOBS: JobDef[] = [
     model: "sonnet",
     patSecret: "gh_pat_readcomment",
     timeoutMs: 45 * MIN,
-    // Task = the outsider/insider/synthesis seats as in-session subagents —
-    // the brief's review METHOD, not capability-(b) dispatch (plan §C3);
-    // the dated report writes through the jailed write-report script (bare
+    // No Task: the outsider/insider seats were in-session subagents until
+    // Cringely/spacemolt#865, where a Task subagent's Bash was not held to
+    // this list. The brief now has the job run the seats itself, in order.
+    // The dated report writes through the jailed write-report script (bare
     // Write banned — see the strategy job's note).
     //
     // #490: narrowed the `Bash(gh *)` wildcard to the one read the brief's
@@ -160,7 +173,6 @@ export const JOBS: JobDef[] = [
       "Read",
       "Grep",
       "Glob",
-      "Task",
       "Bash(gh issue list *)",
       "Bash(gh issue view *)",
       "Bash(bun scripts/file-finding.ts *)",
