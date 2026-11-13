@@ -703,7 +703,10 @@ The model gets the wheel, not the safety switches:
   itself rate-limited, not a stop (#534): 3 consecutive re-arms on the IDENTICAL fingerprint (no
   differing state observed in between) escalate to a held stop (`operator_alert{class:
   "unrecoverable"}`) instead of repeating the alert-then-revert cycle forever. Only a differing
-  fingerprint or an operator instruction clears it, nothing weaker does, by design. Applies to
+  fingerprint or an operator instruction clears it, nothing weaker does, by design, with one
+  exception: a `battle_ended` notification releases a latch armed on an external blocker (#1150)
+  and is plan-then-execute only, since `McpGameApi.notifications()` returns an empty list, so
+  improv mode has no such exit. Applies to
   plan-then-execute's own no-progress detector (agent.ts's Layer 4) the same way regardless of
   mode, so no separate improv briefing rule is needed for the escalation itself.
 - **Heartbeat liveness floor**: no resolved action in one window → force re-evaluate / revert.
