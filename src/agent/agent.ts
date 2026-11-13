@@ -3,7 +3,7 @@ import type { Store, PlanCursor } from "../store/store";
 import { PlanSchema, type Plan } from "../registry/plan";
 import type {
   Planner, PlanContext, Surroundings, PreviousGoal, PurchaseEstimate, ActiveMissionStatus, StationSighting,
-  FleetDistress,
+  FleetDistress, OpenBuyOrder,
 } from "../planner/types";
 import { goalPurchaseCandidates } from "./goal-items";
 import { TransientPlannerError, SubscriptionLimitError, TokenInvalidError } from "../planner/errors";
@@ -2575,7 +2575,8 @@ export class Agent {
       // Buyable-here surfacing (issue #93): fetched here, on the same
       // once-per-replan cadence as the mission listings above, gated tighter
       // (docked AND cargo aboard) — see gatherMarket.
-      const marketRows = await this.gatherMarket(statusSnap);
+      const openBuyOrders = this.openBuyOrders(statusSnap?.dockedAt);
+      const marketRows = await this.gatherMarket(statusSnap, openBuyOrders);
       // Remote-POI targeting fix (issue #176): the scannable entities at the
       // pilot's position -- fetched every replan, ungated, like the active
       // missions above (what is around you is a fact of your position, not of
@@ -2651,6 +2652,7 @@ export class Agent {
         // (full-tank and where-can-I-refuel), same snapshot as lowFuel above.
         tank: statusSnap ? { fuel: statusSnap.fuel, maxFuel: statusSnap.maxFuel } : undefined,
         marketRows,
+        openBuyOrders,
         // Repeated-buy remainder (issue #669): the buy-side counterpart to
         // marketRows above, read fresh every replan off the docked station
         // (same status snapshot statusSummary is built from -- no extra
@@ -3162,6 +3164,32 @@ export class Agent {
     this.emit("item_unavailable", { key: `${stationKey}:${itemId}`, stationKey, itemId });
   }
 
+  // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+  // #1025, #986, #949, #833): the digest-side read of the open-buy-order memory
+  // learnBuyOrderOpened/clearOpenBuyOrders maintain (#681). The planner posted
+  // bids for items nobody sells and never cancelled them because it was never
+  // told a bid existed, how old it was, or that cancel_order only works at the
+  // station holding the order. Same event stream the duplicate-order guard
+  // reads, so the digest and the guard cannot disagree about what is open.
+  // ageHours is event-ts to now: the latest buy_order event per key is the
+  // placement (a refused duplicate never emits one), and a partial fill is not
+  // distinguishable here, so the digest words it "no fill notification since".
+  // Oldest first; bounded by BUY_ORDER_OPEN_LOOKBACK distinct (station, item).
+  private openBuyOrders(dockedAt: string | null | undefined): OpenBuyOrder[] {
+    const now = this.now();
+    const out: OpenBuyOrder[] = [];
+    for (const e of this.store.latestEventPerPayloadKey(this.id, "buy_order", "key", BUY_ORDER_OPEN_LOOKBACK)) {
+      const r = e.payload as { stationKey?: unknown; itemId?: unknown; open?: unknown };
+      if (r.open !== true || typeof r.stationKey !== "string" || typeof r.itemId !== "string") continue;
+      out.push({
+        itemId: r.itemId, stationKey: r.stationKey,
+        ageHours: Math.max(0, (now - e.ts) / 3_600_000),
+        here: r.stationKey === dockedAt,
+      });
+    }
+    return out.sort((a, b) => b.ageHours - a.ageHours);
+  }
+
   // Repeated-buy remainder (issue #669, skeptic finding upheld on the
   // triage): the executor guard (executeTick's itemUnavailableAtStation,
   // below) answers "is THIS ONE proposed buy step blocked" for the executor
@@ -3523,8 +3551,16 @@ export class Agent {
     }
   }
 
-  private async gatherMarket(status: StatusSnapshot | null): Promise<MarketRow[] | undefined> {
-    if (!status?.docked || !status.cargo?.length || !this.api.getMarket) return undefined;
+  // gatherMarket's gate, extended for standing-bid depth (Cringely/spacemolt#918): it also opens for a
+  // docked pilot with an open bid AT THIS station, cargo or not. The digest's
+  // "is anyone selling this item here" clause reads these rows, and the pilots
+  // that bid (a scout with an empty hold) never passed the cargo gate. Bids
+  // held at other stations do not open it: the rows describe THIS market only.
+  private async gatherMarket(
+    status: StatusSnapshot | null, openBuyOrders: readonly OpenBuyOrder[] = [],
+  ): Promise<MarketRow[] | undefined> {
+    const bidHere = openBuyOrders.some((o) => o.here);
+    if (!status?.docked || (!status.cargo?.length && !bidHere) || !this.api.getMarket) return undefined;
     try {
       const rows = await this.api.getMarket();
       if (!rows.length) {

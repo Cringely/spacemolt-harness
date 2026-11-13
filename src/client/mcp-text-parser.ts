@@ -120,10 +120,11 @@ function toCr(token: string | undefined): number | undefined {
  * where the pilot's palladium sells returned "0 sold (no buyers)" 38 times —
  * absence and a blank bid both mean NO buyer.
  *
- * Only the consumed fields are parsed (itemId, bestBuy, buyQty — see
- * client.ts's MarketRow); best_sell/spread/sell_qty/category/item_name are
- * real columns with no consumer yet, so they stay unparsed (no dead data, per
- * CurrentPoiInfo's precedent). Defensive like the parsers above: a missing
+ * Only the consumed fields are parsed (itemId, bestBuy, buyQty, sellQty — see
+ * client.ts's MarketRow); best_sell/spread/category/item_name are real
+ * columns with no consumer yet, so they stay unparsed (no dead data, per
+ * CurrentPoiInfo's precedent). sell_qty is the ask-side depth: the captured
+ * antimatter_torpedoes row (blank best_sell, sell_qty 0) is the no-sellers shape. Defensive like the parsers above: a missing
  * section, a shape drift, or a row without an item_id degrades to fewer/no
  * rows, never a throw — the agent surfaces an empty parse as a visible
  * market_error rather than claiming anything from missing data.
@@ -151,7 +152,13 @@ export function parseMarketText(text: string | null | undefined): MarketRow[] {
   for (const row of table) {
     const itemId = row["item_id"];
     if (!itemId) continue;
-    rows.push({ itemId, bestBuy: toCr(row["best_buy"]), buyQty: toInt(row["buy_qty"]) });
+    // sell_qty is NOT in the header guard: it is optional for the bid-side
+    // consumers, and a listing without it must yield sellQty undefined (unknown),
+    // not 0 -- a 0 would read as a "no sellers" verdict (#94).
+    rows.push({
+      itemId, bestBuy: toCr(row["best_buy"]), buyQty: toInt(row["buy_qty"]),
+      sellQty: "sell_qty" in row ? toInt(row["sell_qty"]) : undefined,
+    });
   }
   return rows;
 }

@@ -137,6 +137,17 @@ export interface FleetDistress {
   credits: number;
 }
 
+// Standing-bid depth and aging: one entry of PlanContext.openBuyOrders. Built
+// from the pilot's own buy_order events (itemId and stationKey are the values
+// the harness recorded from the planner's params and the status snapshot), no
+// quoted game text.
+export interface OpenBuyOrder {
+  itemId: string;
+  stationKey: string;
+  ageHours: number;
+  here: boolean;
+}
+
 export interface PlanContext {
   persona: string;
   goals: string[];
@@ -298,6 +309,15 @@ export interface PlanContext {
   // here in-window", never "everything is stocked" -- the digest renders no
   // section from missing data, only from a populated list.
   unavailableItemsAtStation?: string[];
+  // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+  // #1025, #986, #949, #833): every create_buy_order this pilot placed that no
+  // cancel_order or buy_filled notification has closed (the buy_order event
+  // stream Agent.learnBuyOrderOpened writes, #681), across ALL stations, oldest
+  // first. ageHours is placement-to-now, computed fresh per replan so the
+  // digest stays pure. `here` is whether the pilot is docked at the station
+  // holding the order: cancel_order is station-scoped, so the digest offers
+  // the cancel call only for a `here` bid. Undefined/empty -> no section.
+  openBuyOrders?: OpenBuyOrder[];
   // Ship tool (issue #219): the pilot's own fitting grid -- CPU/power headroom,
   // slot counts, and what is fitted right now. Taken from the SAME StatusSnapshot
   // statusSummary is built from (get_status already carries the ship's fit block;
