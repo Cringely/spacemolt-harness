@@ -19,7 +19,10 @@ single-line call to one thin caller:
 
 - `bun scripts/strategy-store.ts gate <agentId>` — the step-0 precheck (below).
 - `bun scripts/strategy-store.ts dump <agentId>` — the review dataset: the heartbeat trend series
-  (Method §1) and the deterministic failure taxonomy (Method §2), one JSON shape.
+  (Method §1) and the deterministic failure taxonomy (Method §2), one JSON shape. It also carries
+  `plannerHealth`: per planner-health event kind (fallback latch, token_invalid, stalled,
+  endpoint down/recovered), when it last fired and how often in the window. A latch that tripped
+  before the window still shows, so a fallback pill that has been up for days is dated, not guessed.
 - `bun scripts/strategy-store.ts mark <agentId>` — advance the review cursor (final step, below).
 
 That caller makes an authenticated HTTP request to the harness's own server

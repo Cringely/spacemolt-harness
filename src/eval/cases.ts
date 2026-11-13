@@ -37,7 +37,12 @@ const SurroundingsSchema = z.object({
     sparse: z.boolean().optional(),
   })),
   dockedAt: z.string().nullable(),
-  currentPoi: z.object({ id: z.string(), name: z.string(), type: z.string() }).optional(),
+  // hasBase/fuelReserve (D1): mirror Surroundings.currentPoi so a harvested case
+  // replays the station-tank reading the fuel-availability line was shown.
+  currentPoi: z.object({
+    id: z.string(), name: z.string(), type: z.string(),
+    hasBase: z.boolean().optional(), fuelReserve: z.number().optional(),
+  }).optional(),
 });
 
 const CargoSchema = z.object({
@@ -106,10 +111,21 @@ const PlanContextSchema = z.object({
   })).optional(),
   nearbyText: z.string().optional(),
   lowFuel: z.boolean().optional(),
+  // D1: mirrors PlanContext.tank, the numbers behind the fuel-availability line.
+  tank: z.object({ fuel: z.number(), maxFuel: z.number() }).optional(),
   marketRows: z.array(z.object({
     itemId: z.string(),
     bestBuy: z.number().optional(),
     buyQty: z.number(),
+    sellQty: z.number().optional(),
+  })).optional(),
+  // Standing-bid depth and aging: mirrors PlanContext's openBuyOrders (plain
+  // strings and numbers, no game text).
+  openBuyOrders: z.array(z.object({
+    itemId: z.string(),
+    stationKey: z.string(),
+    ageHours: z.number(),
+    here: z.boolean(),
   })).optional(),
   // Repeated-buy remainder (issue #669): mirrors PlanContext's
   // unavailableItemsAtStation -- item ids, so a plain optional string array
@@ -200,7 +216,7 @@ export const CandidatePlanSchema = z.object({
   goal: z.string(),
   steps: z.array(z.object({
     action: z.string(),
-    params: z.record(z.unknown()).default({}),
+    params: z.record(z.string(), z.unknown()).default({}),
     until: z.string().optional(),
     repeat: z.number().optional(),
   })),

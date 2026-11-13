@@ -130,11 +130,9 @@ COPY --from=test /app/.preflight-ok /app/.preflight-ok
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY package.json bun.lock agents.example.yaml ./
 COPY src ./src
-# scripts/ ships in the runtime image (#290): the charters run the strategy-
-# review gate + marker CLIs via `docker exec ... bun run scripts/...`, and an
-# image without them fails 'Module not found' at the first gated review (the
-# marker CLI missing is worse: the review cursor can never advance). Pinned by
-# test/image-contents.test.ts. Cost is a few KB of TypeScript; the host-only
+# scripts/ ships in the runtime image (#290): the charters run CLIs under
+# scripts/ (strategy-store.ts), and an image without them fails 'Module not
+# found' at the first gated review. Pinned by test/image-contents.test.ts. Cost is a few KB of TypeScript; the host-only
 # steward tools ride along inert.
 COPY scripts ./scripts
 RUN chown -R harness:harness /app

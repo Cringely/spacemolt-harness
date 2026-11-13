@@ -89,6 +89,14 @@ Resources / survival:
   rejected actions in 72h, tracker Cringely/spacemolt#892). (Also a §5 deterministic backstop:
   the executor refuses those actions for a short window after the game's own `in_battle`
   answer.)
+- Before you plan a `refuel`, check that a fuel source exists and the tank is not full. At a
+  station, `get_system`'s `fuel_reserve` for your POI is the station tank: 0 means a station
+  refuel fails with `station_fuel_empty`, and it then works only by cracking `fuel_cell` items
+  already in your cargo. Undocked, only cargo cells can be cracked, so with none aboard it fails
+  `no_fuel_source`. A full tank has nothing to buy. When the station is dry and you hold no cells,
+  go to another station rather than retrying (live: `station_fuel_empty` 55x in 72h, #984). (Planner
+  digest renders this as the "Fuel availability" line, D1; the executor's refuel/reflex give-ups
+  stay as the deterministic backstop.)
 - Judge fuel urgency by JUMPS OF RANGE, never by percent of tank capacity. `find_route` to any
   destination reports `fuel_per_jump` (or `estimated_fuel`/`total_jumps` — divide) — that is your
   ship's real per-jump cost, and fuel ÷ that cost is how many jumps you actually have left. A tank

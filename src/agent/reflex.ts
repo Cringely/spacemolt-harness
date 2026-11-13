@@ -100,6 +100,21 @@ export function fuelUrgent(
     : keepAbovePct != null && maxFuel > 0 && (fuel / maxFuel) * 100 < keepAbovePct;
 }
 
+// Cringely/spacemolt#1068: the mine fuel-floor guard (executor.ts) exists to
+// push the pilot toward fuel (refuel, or travel/jump to a station). At
+// Fuel == 0 the game returns no_fuel on travel and jump (fuel.md "Stranded",
+// travel.md Fuel), and with no fuel cell to crack there is no remedy left, so
+// blocking `mine` only deadlocks the pilot (corsair, ~23.5h). Keyed on
+// fuel <= 0 ONLY, not "below one jump": in-system travel costs about
+// distance * 0.07 against 1.0 for a jump (fuel.md), so a ship that cannot jump
+// can often still travel_to a station, which is the guard's own steer.
+// Unknown cargo reads as "no cell": fails open toward admitting, the guard's
+// convention.
+export function fuelRemedyUnavailable(status: Pick<StatusSnapshot, "fuel" | "cargo">): boolean {
+  const hasCell = status.cargo?.some((i) => i.itemId.includes("fuel_cell") && i.quantity > 0) ?? false;
+  return status.fuel <= 0 && !hasCell;
+}
+
 export function evaluateReflex(
   status: StatusSnapshot | null, config: ReflexConfig, fuelPerJump?: number,
   planRemediesFuel?: boolean, planRemediesHull?: boolean,

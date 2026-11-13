@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildDigest, summarizeStatus, FLEET_REFUEL_FLOOR_CR } from "../src/planner/digest";
+import { buildDigest, summarizeStatus, FLEET_REFUEL_FLOOR_CR, BID_STALE_HOURS } from "../src/planner/digest";
+import { getAction } from "../src/registry/actions";
 import { parseMarketText } from "../src/client/mcp-text-parser";
 import type { PlanContext } from "../src/planner/types";
 import type { StatusSnapshot } from "../src/client/client";
@@ -19,6 +20,22 @@ const baseCtx: PlanContext = {
 };
 
 describe("buildDigest", () => {
+  // PR 166 review: ACTION_VOCAB renders stance as `stance(id:string)` with no enum
+  // values, so the planner could not learn `flee` was the escape. The digest line
+  // is pinned against the VALUES THE REGISTRY SCHEMA ACCEPTS (read off the zod enum,
+  // not off the BATTLE_STANCES constant the digest also uses), anchored to the
+  // stance line because bare words like "fire" match the whole digest trivially.
+  test("the stance line names every registry stance and says flee is the escape", () => {
+    const { shape } = getAction("stance").params as unknown as { shape: { id: { options: string[] } } };
+    const stances = shape.id.options;
+    expect(stances).toContain("flee"); // guard: the options read worked and flee is still a stance
+    const line = buildDigest(baseCtx).split("\n").find((l) => /^stance id is one of/.test(l));
+    expect(line).toBeDefined();
+    for (const s of stances) expect(line!).toContain(s);
+    expect(line!).toContain("flee is the escape");
+    expect(line!).toMatch(/3 ticks/);
+  });
+
   // Enumeration test (simplicity rule 5): every PlanContext field must appear
   // in the built prompt. This is the guard against a future edit silently
   // dropping a field the planner needs to see.
@@ -1451,6 +1468,111 @@ describe("social capabilities", () => {
       expect(text).not.toContain("Proven unavailable at this station");
     });
   });
+
+  // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+  // #1025, #986, #949, #833). The planner posted create_buy_order bids for items
+  // nobody sells, then never cancelled them: credits sat in escrow for 3+ days,
+  // and cancel_order retried from the wrong station (it is station-scoped,
+  // openapi-v2 cancel_order "all your orders at this station") failed no_orders
+  // hundreds of times. buildDigest is pure, so each case hands it the
+  // pre-computed openBuyOrders entry; the Agent-side producer is pinned in
+  // test/agent-standing-bids.test.ts.
+  describe("standing buy orders: seller depth and aging", () => {
+    const bid = (over: Partial<NonNullable<PlanContext["openBuyOrders"]>[number]> = {}) =>
+      ({ itemId: "survey_scanner_i", stationKey: "market_prime", ageHours: 2, here: true, ...over });
+    const section = (text: string) => text.split("\n").filter((l) => l.includes("survey_scanner_i")).join("\n");
+
+    test("no section without open bids (undefined and empty alike)", () => {
+      expect(buildDigest(baseCtx)).not.toContain("Standing buy orders");
+      expect(buildDigest({ ...baseCtx, openBuyOrders: [] })).not.toContain("Standing buy orders");
+    });
+
+    test("a fresh bid here shows its age and, from the market rows, NO SELLERS when the ask side is empty", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "survey_scanner_i", buyQty: 0, sellQty: 0 }],
+      });
+      expect(text).toContain("Standing buy orders");
+      expect(section(text)).toMatch(/placed ~2h ago/);
+      expect(section(text)).toContain("NO SELLERS");
+      expect(section(text)).not.toContain("STALE");
+    });
+
+    test("an item absent from a parsed listing also reads NO SELLERS (absent row = no orders either side)", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "iron_ore", bestBuy: 11, buyQty: 200, sellQty: 10 }],
+      });
+      expect(section(text)).toContain("NO SELLERS");
+    });
+
+    test("a row with sell depth reports the units offered, not NO SELLERS", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "survey_scanner_i", buyQty: 0, sellQty: 3 }],
+      });
+      expect(section(text)).toContain("3 units for sale here");
+      expect(section(text)).not.toContain("NO SELLERS");
+    });
+
+    // ABSENCE IS NOT A VERDICT (#94): no fetched rows, or a listing that has no
+    // sell_qty column (sellQty undefined), says nothing about sellers.
+    test("makes no seller claim without rows, without a sell_qty column, or for a bid at another station", () => {
+      expect(section(buildDigest({ ...baseCtx, openBuyOrders: [bid()] }))).not.toMatch(/NO SELLERS|for sale here/);
+      expect(section(buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "survey_scanner_i", buyQty: 0 }],
+      }))).not.toMatch(/NO SELLERS|for sale here/);
+      expect(section(buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ here: false })],
+        marketRows: [{ itemId: "iron_ore", buyQty: 0, sellQty: 0 }],
+      }))).not.toMatch(/NO SELLERS|for sale here/);
+    });
+
+    test("a bid at the threshold is STALE with the cancel call, one hour under it is not", () => {
+      const stale = buildDigest({ ...baseCtx, openBuyOrders: [bid({ ageHours: BID_STALE_HOURS })] });
+      expect(section(stale)).toContain("STALE");
+      expect(section(stale)).toContain('cancel_order{order_id="all"}');
+      const fresh = buildDigest({ ...baseCtx, openBuyOrders: [bid({ ageHours: BID_STALE_HOURS - 1 })] });
+      expect(section(fresh)).not.toContain("STALE");
+      expect(section(fresh)).not.toContain("cancel_order");
+    });
+
+    // The #1025/#986/#949/#833 loop: cancel_order from a station that does not
+    // hold the order fails no_orders. A stale bid elsewhere must say go back,
+    // and must not hand the planner a cancel call it cannot make from here.
+    test("a stale bid at ANOTHER station says return there, and offers no cancel call", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ ageHours: 72, here: false, stationKey: "far_outpost" })],
+      });
+      expect(section(text)).toContain("far_outpost");
+      expect(section(text)).toContain("STALE");
+      expect(section(text)).toMatch(/only (works|acts) at the station holding/i);
+      expect(section(text)).not.toContain('cancel_order{order_id="all"}');
+    });
+
+    // The duplicate guard keys on the DOCKED station plus the item (agent.ts
+    // buyOrderAlreadyOpen), so a bid at another station does not make
+    // create_buy_order refuse. The digest must not say it does.
+    test("a stale bid elsewhere makes no claim that create_buy_order is refused as a duplicate", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ ageHours: 72, here: false, stationKey: "far_outpost" })],
+      });
+      expect(section(text)).not.toMatch(/duplicate|create_buy_order/i);
+    });
+
+    test("every open bid is listed, oldest first as supplied", () => {
+      const text = buildDigest({
+        ...baseCtx,
+        openBuyOrders: [bid({ itemId: "fuel_cell", ageHours: 50 }), bid({ itemId: "iron_ore", ageHours: 3 })],
+      });
+      const lines = text.split("\n");
+      const header = lines.findIndex((l) => l.includes("Standing buy orders"));
+      expect(lines[header + 1]).toMatch(/^- fuel_cell .*STALE/);
+      expect(lines[header + 2]).toMatch(/^- iron_ore /);
+      expect(lines[header + 2]).not.toContain("STALE");
+    });
+  });
 });
 
 describe("summarizeStatus", () => {
@@ -1476,5 +1598,132 @@ describe("summarizeStatus", () => {
 
   test("null status renders the existing 'status unavailable' placeholder", () => {
     expect(summarizeStatus(null)).toBe("status unavailable");
+  });
+});
+
+// D1 (Cringely/spacemolt#984, #839, #829, #701, #684; canonical #716): the
+// planner kept proposing refuel where it cannot work -- at a station whose tank
+// reads zero (station_fuel_empty, 55x/72h), with nothing aboard to crack
+// (no_fuel_source, 196x lifetime for one pilot), and with a target that means
+// ship-to-ship transfer (target=self/full, 54x/72h) -- because the digest only
+// said "fuel 40/100" in a status string and never stated where fuel exists.
+// Invariant: the digest states a refuel as available only where a fuel source
+// exists and the tank is not full. Vendored reference: fuel.md:107-109 (draw
+// order: station tank, then cargo cells "if the station is empty"), fuel.md:138
+// (base.Fuel == 0 -> station_fuel_empty), travel.md:62 (docked buys station
+// fuel; otherwise cracks cargo cells; target=<player> is ship-to-ship, needs a
+// Refueling Pump), openapi-v2.json get_system.poi.fuel_reserve (integer,
+// required).
+describe("fuel availability line (D1)", () => {
+  const station = (fuelReserve?: number) => ({
+    systemId: "market_prime", systemName: "Market Prime", connections: [], pois: [],
+    dockedAt: "market_prime_station",
+    currentPoi: { id: "market_prime_station", name: "Market Prime Station", type: "station", hasBase: true, fuelReserve },
+  });
+  const undocked = {
+    systemId: "market_prime", systemName: "Market Prime", connections: [], pois: [], dockedAt: null,
+    currentPoi: { id: "belt_1", name: "Belt 1", type: "asteroid_belt", hasBase: false, fuelReserve: 0 },
+  };
+  const cells = (quantity: number) => ({
+    used: quantity, capacity: 50, items: [{ itemId: "fuel_cell", name: "Fuel Cell", quantity }],
+  });
+  const empty = { used: 0, capacity: 50, items: [] };
+  const fuelLine = (ctx: PlanContext): string | undefined =>
+    buildDigest(ctx).split("\n").find((l) => l.startsWith("Fuel availability:"));
+  const ctxOf = (over: Partial<PlanContext>): PlanContext => ({
+    ...baseCtx, tank: { fuel: 40, maxFuel: 100 }, cargo: empty, surroundings: station(500), ...over,
+  });
+
+  test("dry station, nothing to crack: refuel here is stated as failing, with the way out", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(0) }))!;
+    expect(line).toContain("EMPTY");
+    expect(line).toContain("station_fuel_empty");
+    expect(line).toMatch(/refuel here FAILS/);
+    expect(line).toContain("travel_to another station");
+    // must not simultaneously offer the working-refuel claim
+    expect(line).not.toContain("fills your tank");
+  });
+
+  test("dry station AND fuel_cell proven unavailable: no fuel source here, relocate (#701)", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(0), unavailableItemsAtStation: ["fuel_cell"] }))!;
+    expect(line).toContain("NO fuel source");
+    expect(line).toContain("travel_to another station");
+    expect(line).not.toMatch(/buy fuel_cell from this station/);
+  });
+
+  test("dry station but cells aboard: refuel is offered, as a crack of the cargo cells", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(0), cargo: cells(3) }))!;
+    expect(line).toContain("3 fuel cell");
+    expect(line).toContain("cracks");
+    expect(line).not.toMatch(/refuel here FAILS/);
+  });
+
+  test("stocked station, tank not full: states refuel here fills the tank", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(500) }))!;
+    expect(line).toContain("holds 500");
+    expect(line).toContain("fills your tank");
+    expect(line).not.toContain("EMPTY");
+  });
+
+  test("low fuel at a stocked docked station: advisory does not claim refuel needs cargo cells (review #163)", () => {
+    // fuel.md:105-109 / travel.md:62: a docked refuel draws the station tank
+    // first, so "none aboard = refuel fails" contradicts the availability line.
+    const text = buildDigest(ctxOf({ lowFuel: true, surroundings: station(500) }));
+    expect(text).toContain("FUEL IS LOW");
+    expect(text).toContain("fills your tank");
+    expect(text).not.toMatch(/none aboard/i);
+    expect(text).not.toMatch(/FROM YOUR CARGO/);
+    expect(text).not.toMatch(/refuel fails/i);
+    // the exact-id guidance (#152) survives the reword
+    expect(text).toMatch(/buy id=fuel_cell/);
+  });
+
+  test("full tank: states a refuel buys nothing and offers no refuel path", () => {
+    const line = fuelLine(ctxOf({ tank: { fuel: 100, maxFuel: 100 }, surroundings: station(500) }))!;
+    expect(line).toContain("FULL");
+    expect(line).toMatch(/do not plan a refuel/i);
+    expect(line).not.toContain("fills your tank");
+    expect(line).not.toContain("holds 500");
+  });
+
+  test("undocked, nothing aboard: refuel fails (no_fuel_source), dock first", () => {
+    const line = fuelLine(ctxOf({ surroundings: undocked }))!;
+    expect(line).toContain("no_fuel_source");
+    expect(line).toMatch(/dock/);
+    // the belt's meaningless fuel_reserve:0 must not be read as a dry station
+    expect(line).not.toContain("EMPTY");
+  });
+
+  test("undocked with cells aboard: refuel cracks them", () => {
+    const line = fuelLine(ctxOf({ surroundings: undocked, cargo: cells(2) }))!;
+    expect(line).toContain("2 fuel cell");
+    expect(line).toContain("cracks");
+    expect(line).not.toContain("no_fuel_source");
+  });
+
+  test("premium cells count as cells aboard (catalog fuel-cell ids, not the literal fuel_cell)", () => {
+    const premium = { used: 1, capacity: 50, items: [{ itemId: "premium_fuel_cell", name: "Premium Fuel Cell", quantity: 1 }] };
+    expect(fuelLine(ctxOf({ surroundings: undocked, cargo: premium }))).not.toContain("no_fuel_source");
+  });
+
+  // ABSENCE IS NOT A VERDICT (#94): an unread reserve is unproven, never dry.
+  test("docked with no fuel_reserve reading: makes no claim about the station tank", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(undefined) }))!;
+    expect(line).not.toContain("EMPTY");
+    expect(line).not.toContain("fills your tank");
+    expect(line).not.toContain("holds");
+    expect(line).toContain("not read");
+  });
+
+  test("renders nothing without a tank reading, and nothing when maxFuel is 0", () => {
+    expect(fuelLine(ctxOf({ tank: undefined }))).toBeUndefined();
+    expect(fuelLine(ctxOf({ tank: { fuel: 0, maxFuel: 0 } }))).toBeUndefined();
+  });
+
+  test("target note: own-tank refuel takes no target; never self/full (#839)", () => {
+    const line = fuelLine(ctxOf({ surroundings: station(500) }))!;
+    expect(line).toMatch(/omit target/i);
+    expect(line).toContain('"self"');
+    expect(line).toContain('"full"');
   });
 });

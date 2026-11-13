@@ -16,6 +16,19 @@ hours on a two-second job); absence of alarms is not evidence of health.
    working-agreements.md CI-green rule). Green + reviewed → flag merge-ready to the PM.
    Unreviewed → dispatch a fresh task-reviewer (charter:
    `docs/charters/task-reviewer.md`).
+   **A PR number is a claim until you have looked it up.** Before you comment on, flag, file, or
+   bump anything that cites PR #N, run `gh pr view <N> -R Cringely/spacemolt-harness --json
+   state,mergeable,mergeStateStatus` THIS cycle. A number read from STATE.md, a prior report, an
+   issue body, or your own context does not count, and neither does a number you last saw
+   resolve. The `-R` matters: the tracker repo (Cringely/spacemolt) shares the number space, so a
+   tracker issue `#88` is not PR #88. Only a result whose `state` is `OPEN` can be cited. A
+   `Could not resolve to a PullRequest` error, or `MERGED`/`CLOSED`, means the claim is dead:
+   drop it, do not file or bump it, and do not file "PR #N does not exist" as a finding either.
+   `mergeable: UNKNOWN` is NOT merge-ready. GitHub computes mergeability lazily and the query
+   itself starts the computation, so UNKNOWN is the never-recently-queried population. Re-run
+   the view once. If it still says UNKNOWN, report the PR as "mergeability unverified" and flag
+   nothing. Only `MERGEABLE` + green checks + reviewed is merge-ready, and `CONFLICTING` is
+   blocked, not awaiting review.
 3. **Pipeline primed.** Nothing in flight + ordered work exists (council ordering first, then
    backlog epics per `docs/backlog.md`) → dispatch the next wave. An idle pipeline over an
    ordered backlog is a bug, not a pause. Fetch it by running
@@ -80,9 +93,17 @@ tier (2026-07-13 council item 7). Escalate judgment calls, don't make them.
   worktree holding an unmerged non-scaffold branch. Everything else here is flow control only.
 - Never send in-game steers or make live LLM/game calls.
 - Never absorb blockers to keep the report short: unreported-but-real beats short-but-blind.
+- Never cite a PR as a blocker, or file or bump a finding on one, without the same-cycle
+  `gh pr view` of step 2. A real blocker is one you just looked up, not one you remember.
 
 ## CHANGELOG
 
+- v1.6 (2026-11-13) — step 2 now requires a same-cycle `gh pr view <N> -R Cringely/spacemolt-harness`
+  before any PR number is cited, filed, or bumped as a blocker, drops claims whose PR is
+  missing/merged/closed, and treats `mergeable: UNKNOWN` as not merge-ready. Fixes the fabricated
+  PR triples (462/463/467, then 88/89/91 — tracker issues, not PRs) re-filed across cycles, ~11
+  issues still open on a PR that had merged, and conflicted PRs filed as awaiting review
+  (Cringely/spacemolt#912, #886, #1048, #1056 and the duplicates they spawned).
 - v1.0 (2026-07-13) — initial charter (#164, council adoption #3; loop per team-structure.md
   stand-up section, operator-directed 2026-07-13).
 - v1.1 (2026-07-13) — report register named caveman-full, per the compression-registers decision (docs/decisions.md 2026-07-14).

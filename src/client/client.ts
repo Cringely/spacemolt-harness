@@ -280,12 +280,18 @@ export interface CurrentPoiInfo {
 // when the cell is blank (no bid); buyQty is the bid's demand. A held item
 // is sellable at this station iff bestBuy is present AND buyQty > 0 — the
 // digest's market check (planner/digest.ts) keys the sell precondition on
-// exactly that. best_sell/spread/sell_qty/item_name are real columns with no
-// consumer yet, so they stay unparsed (no dead data, per CurrentPoiInfo).
+// exactly that. best_sell/spread/item_name are real columns with no consumer
+// yet, so they stay unparsed (no dead data, per CurrentPoiInfo). sell_qty now
+// has one: the standing-bid section (planner/digest.ts) needs "is anyone
+// selling this item here" (Cringely/spacemolt#918, #1013).
 export interface MarketRow {
   itemId: string;
   bestBuy?: number; // cr/unit the market pays you; undefined = no standing bid
   buyQty: number;   // units the market stands ready to buy
+  // Units offered on the ask side (the captured sell_qty column; 0 for a row
+  // with a blank best_sell). undefined = the listing carried no sell_qty
+  // column, which is UNKNOWN, never "no sellers" (#94).
+  sellQty?: number;
 }
 
 // Mission-progress bridge (issue #291): one active mission's structured facts,
@@ -870,7 +876,7 @@ const ActiveMissionObjectiveSchema = z.object({
 // array, which degraded every mission's id/objectives/progress to undefined
 // for the tick -- the exact dangling state #931's fix above depends on
 // staying rare. `.catch()` contains a field's own parse failure to that
-// field alone (verified on this repo's pinned zod 3.25.76: a divergent
+// field alone (verified on zod 3.25.76, re-verified on the pinned 4.6.7: a divergent
 // `credits` value yields a rewards object missing only `credits`, `skill_xp`
 // and the rest of the mission parse normally) -- a cosmetic display value
 // must not be able to blank the one sanctioned mission_id source.

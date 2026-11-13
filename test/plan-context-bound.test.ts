@@ -182,4 +182,51 @@ describe("plan_context stores exactly what the planner was SHOWN", () => {
     // rows. Same fidelity rule, structural rather than textual.
     expect(persisted.marketRows!.map((r) => r.itemId)).toEqual(["iron_ore"]);
   });
+
+  // renderStandingBids is the second reader of marketRows: a bid HERE reads its
+  // item's row for the seller clause. The shaping pass kept held items only, so
+  // the persisted event rendered a different digest than the planner saw and an
+  // eval replay (#263) scored a model against the wrong text.
+  describe("a standing bid's seller clause survives the persist/replay round trip", () => {
+    const bidHere = (itemId: string) => ({ itemId, stationKey: "market_prime", ageHours: 3, here: true });
+    const base: PlanContext = {
+      persona: "p", goals: [], wake: { reason: "heartbeat" }, statusSummary: "s", recentEvents: [],
+      cargo: { used: 3, capacity: 50, items: [{ itemId: "iron_ore", name: "Iron Ore", quantity: 3 }] },
+    };
+    const listing = [
+      { itemId: "iron_ore", bestBuy: 12, buyQty: 100, sellQty: 3 },
+      { itemId: "survey_scanner_i", buyQty: 1, bestBuy: 4_400, sellQty: 7 },
+    ];
+
+    test("units for sale on a bid item the pilot does not hold", () => {
+      const ctx: PlanContext = { ...base, openBuyOrders: [bidHere("survey_scanner_i")], marketRows: listing };
+      const live = buildDigest(ctx);
+      expect(live).toContain("7 units for sale here");
+      expect(buildDigest(clipPlanContext(ctx))).toBe(live);
+    });
+
+    test("a bid item that is also held keeps its row (its sellQty is the bid's seller depth)", () => {
+      const ctx: PlanContext = { ...base, openBuyOrders: [bidHere("iron_ore")], marketRows: listing };
+      const live = buildDigest(ctx);
+      expect(live).toContain("3 units for sale here");
+      expect(buildDigest(clipPlanContext(ctx))).toBe(live);
+    });
+
+    test("a bid item absent from the listing still reads NO SELLERS after the rows are clipped", () => {
+      const ctx: PlanContext = {
+        ...base, openBuyOrders: [bidHere("survey_scanner_i")],
+        marketRows: [{ itemId: "palladium_ore", bestBuy: 900, buyQty: 5, sellQty: 2 }],
+      };
+      const live = buildDigest(ctx);
+      expect(live).toContain("NO SELLERS");
+      expect(buildDigest(clipPlanContext(ctx))).toBe(live);
+    });
+
+    test("a bid at ANOTHER station adds no row to the persisted event", () => {
+      const ctx: PlanContext = {
+        ...base, openBuyOrders: [{ ...bidHere("survey_scanner_i"), here: false }], marketRows: listing,
+      };
+      expect(clipPlanContext(ctx).marketRows!.map((r) => r.itemId)).toEqual(["iron_ore"]);
+    });
+  });
 });

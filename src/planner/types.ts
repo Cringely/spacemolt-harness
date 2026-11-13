@@ -68,7 +68,12 @@ export interface Surroundings {
   // the digest's "You are at" line so the planner knows where it already is
   // before proposing a destination (ground truth: planner at commerce_fields,
   // blocked by sparse deposits, planned to relocate to commerce_fields).
-  currentPoi?: { id: string; name: string; type: string };
+  // D1: hasBase/fuelReserve are get_system.poi's own fields (CurrentPoiInfo,
+  // client.ts) -- Agent.gatherSurroundings already passes the whole object
+  // through, so widening the type here adds no new fetch. fuelReserve is the
+  // station tank (units of fuel) and is only meaningful when dockedAt is set:
+  // a belt reads fuel_reserve:0 (test/fixtures/spacemolt-probe-2026-07-12.json).
+  currentPoi?: { id: string; name: string; type: string; hasBase?: boolean; fuelReserve?: number };
 }
 
 // SM-6 fix: cargoUsed/cargoCapacity (folded into statusSummary below) told the
@@ -130,6 +135,17 @@ export interface FleetDistress {
   username: string;
   fuel: number;
   credits: number;
+}
+
+// Standing-bid depth and aging: one entry of PlanContext.openBuyOrders. Built
+// from the pilot's own buy_order events (itemId and stationKey are the values
+// the harness recorded from the planner's params and the status snapshot), no
+// quoted game text.
+export interface OpenBuyOrder {
+  itemId: string;
+  stationKey: string;
+  ageHours: number;
+  here: boolean;
 }
 
 export interface PlanContext {
@@ -257,6 +273,13 @@ export interface PlanContext {
   // from the summary string without parsing its own prose. Undefined when
   // status is unavailable (same degradation as cargo above).
   lowFuel?: boolean;
+  // D1 (Cringely/spacemolt#984/#839/#829): the tank as numbers, off the SAME
+  // StatusSnapshot statusSummary is built from. lowFuel above says "below
+  // reserve" but cannot say "full", and the digest cannot parse its own
+  // statusSummary prose. Gates the digest's fuel-availability line, which
+  // states where a refuel can actually draw from. Undefined when status is
+  // unavailable; the digest then renders no availability claim (#94).
+  tank?: { fuel: number; maxFuel: number };
   // Buyable-here surfacing (issue #93): THIS station's market summary rows,
   // harness-fetched by Agent.gatherMarket once per DOCKED replan WITH cargo
   // aboard (no cargo -> no sell decision -> no fetch; the market query is the
@@ -286,6 +309,15 @@ export interface PlanContext {
   // here in-window", never "everything is stocked" -- the digest renders no
   // section from missing data, only from a populated list.
   unavailableItemsAtStation?: string[];
+  // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+  // #1025, #986, #949, #833): every create_buy_order this pilot placed that no
+  // cancel_order or buy_filled notification has closed (the buy_order event
+  // stream Agent.learnBuyOrderOpened writes, #681), across ALL stations, oldest
+  // first. ageHours is placement-to-now, computed fresh per replan so the
+  // digest stays pure. `here` is whether the pilot is docked at the station
+  // holding the order: cancel_order is station-scoped, so the digest offers
+  // the cancel call only for a `here` bid. Undefined/empty -> no section.
+  openBuyOrders?: OpenBuyOrder[];
   // Ship tool (issue #219): the pilot's own fitting grid -- CPU/power headroom,
   // slot counts, and what is fitted right now. Taken from the SAME StatusSnapshot
   // statusSummary is built from (get_status already carries the ship's fit block;

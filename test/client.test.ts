@@ -1129,7 +1129,7 @@ describe("SpacemoltClient", () => {
     server.setHandler("spacemolt_market", "view_market", () => ({ result: marketText }));
     const rows = await client.getMarket();
     expect(rows.length).toBe(482);
-    expect(rows.find((r) => r.itemId === "iron_ore")).toEqual({ itemId: "iron_ore", bestBuy: 11, buyQty: 200 });
+    expect(rows.find((r) => r.itemId === "iron_ore")).toEqual({ itemId: "iron_ore", bestBuy: 11, buyQty: 200, sellQty: 10 });
     server.setHandler("spacemolt_market", "view_market", () => ({
       structuredContent: { items: [{ item_id: "iron_ore" }] },
     }));

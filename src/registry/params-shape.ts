@@ -7,12 +7,14 @@ export interface FieldShape {
 }
 
 /**
- * The params OBJECT behind a registry entry, unwrapping the ZodEffects that a
- * cross-field refinement adds (issue #703: `deposit` takes either the item form
- * or the gift form, never both, which zod can only express as a refinement on
- * the object). Every shape-reader goes through this rather than reaching for
- * `.shape` itself, so the unwrap rule lives in one place -- today the digest /
- * ollama vocabulary below and test/registry-conformance.test.ts.
+ * The params OBJECT behind a registry entry. A cross-field refinement (issue
+ * #703: `deposit` takes either the item form or the gift form, never both,
+ * which zod can only express as a refinement on the object) wrapped the object
+ * in a ZodEffects under zod 3, and this unwrapped it. zod 4 keeps the
+ * ZodObject, so the check is now a type assertion. Every shape-reader goes
+ * through this rather than reaching for `.shape` itself, so the rule lives in
+ * one place -- today the digest / ollama vocabulary below and
+ * test/registry-conformance.test.ts.
  *
  * Honest about its limit: the returned object describes the FIELDS, not the
  * refinement. A refined entry's fields are each individually optional, so a
@@ -21,12 +23,14 @@ export interface FieldShape {
  * planner (see the deposit entry in actions.ts). Throws on anything that is not
  * an object at heart, same fail-loudly-on-drift contract as before.
  */
-export function paramsObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
-  const inner = schema instanceof z.ZodEffects ? schema.innerType() : schema;
-  if (!(inner instanceof z.ZodObject)) {
-    throw new Error(`paramsObject: expected a ZodObject, got ${inner.constructor.name}`);
+export function paramsObject(schema: z.ZodType): z.ZodObject<z.ZodRawShape> {
+  // zod 4 attaches `.superRefine` checks to the ZodObject itself (there is no
+  // ZodEffects wrapper any more), so a refined entry already IS the object.
+  // The function stays as the single choke point, and still throws on drift.
+  if (!(schema instanceof z.ZodObject)) {
+    throw new Error(`paramsObject: expected a ZodObject, got ${schema.constructor.name}`);
   }
-  return inner as z.ZodObject<z.ZodRawShape>;
+  return schema as z.ZodObject<z.ZodRawShape>;
 }
 
 /**
@@ -46,16 +50,16 @@ export function paramsObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
  * schema), so this maps that shape rather than inventing structure the API
  * doesn't assert.
  */
-export function describeParamsShape(schema: z.ZodTypeAny): FieldShape[] {
+export function describeParamsShape(schema: z.ZodType): FieldShape[] {
   return Object.entries(paramsObject(schema).shape).map(([name, field]) => {
-    const zf = field as z.ZodTypeAny;
+    const zf = field as z.ZodType;
     const optional = zf instanceof z.ZodOptional;
-    const inner = optional ? zf.unwrap() : zf;
+    const inner = optional ? (zf.unwrap() as z.ZodType) : zf;
     return { name, type: primitiveType(inner), optional };
   });
 }
 
-function primitiveType(field: z.ZodTypeAny): FieldShape["type"] {
+function primitiveType(field: z.ZodType): FieldShape["type"] {
   if (field instanceof z.ZodString) return "string";
   if (field instanceof z.ZodNumber) return "number";
   if (field instanceof z.ZodBoolean) return "boolean";
