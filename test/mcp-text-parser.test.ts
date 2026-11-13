@@ -165,7 +165,7 @@ describe("parseMarketText against the captured fixture", () => {
   });
 
   test("a standing bid row carries the bid price and demand (iron_ore: 11cr, qty 200)", () => {
-    expect(byId.get("iron_ore")).toEqual({ itemId: "iron_ore", bestBuy: 11, buyQty: 200 });
+    expect(byId.get("iron_ore")).toEqual({ itemId: "iron_ore", bestBuy: 11, buyQty: 200, sellQty: 10 });
   });
 
   test("comma-separated prices and quantities parse to full integers (trap b)", () => {
@@ -175,7 +175,21 @@ describe("parseMarketText against the captured fixture", () => {
   });
 
   test("a blank best_buy cell stays undefined, not 0 (vanadium_ore has no bid here)", () => {
-    expect(byId.get("vanadium_ore")).toEqual({ itemId: "vanadium_ore", bestBuy: undefined, buyQty: 0 });
+    expect(byId.get("vanadium_ore")).toEqual({ itemId: "vanadium_ore", bestBuy: undefined, buyQty: 0, sellQty: 8 });
+  });
+
+  // Sell-side depth (Cringely/spacemolt#918, #1013): the digest's standing-bid
+  // section needs "is anyone selling this item here". sell_qty is the units on
+  // the ask side. The real listing carries a row with a blank best_sell and
+  // sell_qty 0 (antimatter_torpedoes) -- the captured no-sellers shape.
+  test("sell_qty parses to ask-side depth: 1,587 for fuel_tank, 0 for the blank-ask antimatter_torpedoes", () => {
+    expect(byId.get("fuel_tank")!.sellQty).toBe(1587);
+    expect(byId.get("antimatter_torpedoes")!.sellQty).toBe(0);
+  });
+
+  test("a table without a sell_qty column leaves sellQty undefined, never 0 (absence is not a no-sellers verdict)", () => {
+    const text = "Market summary at X (1 items):\ncategory\titem_id\titem_name\tbest_buy\tbuy_qty\nore\tiron_ore\tIron Ore\t11cr\t200";
+    expect(parseMarketText(text)).toEqual([{ itemId: "iron_ore", bestBuy: 11, buyQty: 200, sellQty: undefined }]);
   });
 
   test("palladium_ore is ABSENT from the listing -- the live no-buyers ground truth", () => {

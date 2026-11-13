@@ -117,6 +117,15 @@ const PlanContextSchema = z.object({
     itemId: z.string(),
     bestBuy: z.number().optional(),
     buyQty: z.number(),
+    sellQty: z.number().optional(),
+  })).optional(),
+  // Standing-bid depth and aging: mirrors PlanContext's openBuyOrders (plain
+  // strings and numbers, no game text).
+  openBuyOrders: z.array(z.object({
+    itemId: z.string(),
+    stationKey: z.string(),
+    ageHours: z.number(),
+    here: z.boolean(),
   })).optional(),
   // Repeated-buy remainder (issue #669): mirrors PlanContext's
   // unavailableItemsAtStation -- item ids, so a plain optional string array

@@ -106,8 +106,9 @@ function clipStringsDeep<T>(value: T, maxLen: number): T {
  *
  * Three shaping passes run BEFORE the backstop, because the backstop cannot know
  * them:
- *   1. marketRows -> only the held-item rows, the only rows the digest renders
- *      (renderMarketCheck); the raw listing runs ~482 rows, ~20x the event.
+ *   1. marketRows -> only the held-item rows and the rows of items with a bid at
+ *      this station, the only rows the digest renders (renderMarketCheck,
+ *      renderStandingBids); the raw listing runs ~482 rows, ~20x the event.
  *   2. chat sender/text -> the TIGHTER UNTRUSTED_TEXT_SNIPPET_LEN (200), which is
  *      what the digest quotes chat at. The backstop's 1500 is a ceiling, not a
  *      licence to store more than the planner saw.
@@ -127,7 +128,13 @@ function clipStringsDeep<T>(value: T, maxLen: number): T {
  * untrusted seam's persisted text must appear verbatim in the digest.
  */
 export function clipPlanContext(ctx: PlanContext): PlanContext {
-  const heldIds = new Set((ctx.cargo?.items ?? []).map((i) => i.itemId));
+  // Rows the digest reads: held items (renderMarketCheck) and the item of a bid
+  // at THIS station (renderStandingBids' seller clause, which ignores bids
+  // elsewhere).
+  const heldIds = new Set([
+    ...(ctx.cargo?.items ?? []).map((i) => i.itemId),
+    ...(ctx.openBuyOrders ?? []).filter((o) => o.here).map((o) => o.itemId),
+  ]);
   const shaped: PlanContext = {
     ...ctx,
     wake:
@@ -416,6 +423,10 @@ export function buildDigest(ctx: PlanContext): string {
       `Proven unavailable at this station (a recent buy here was blocked item_not_available): ${ctx.unavailableItemsAtStation.join(", ")}. Do not plan another buy for these here -- post a standing bid with create_buy_order instead, or find another station.`,
     );
   }
+  // Standing-bid depth and aging: directly under the proven-unavailable line,
+  // whose "post a standing bid instead" remedy is what creates these orders.
+  // Rendered only for a populated list (absence is not a verdict, #94).
+  if (ctx.openBuyOrders?.length) lines.push(renderStandingBids(ctx.openBuyOrders, ctx.marketRows));
   // Ship tool (issue #219): what the pilot is FLYING, rendered next to the
   // credits it could spend on a better one. The live miss this closes: the
   // miner sat on 17,306cr with zero lifetime module or hull purchases, because
@@ -1554,6 +1565,72 @@ function renderMarketCheck(
     // estimate -- without this the annotation above is a number with no
     // decision attached. Advisory prose, never a block (#361).
     `A live bid far below an item's catalog estimate is a lowball LOCAL price, not the item's worth -- selling once to clear the hold is fine, but do not settle into a mine-and-sell loop priced by a lowball bid: check the Market intelligence section for better demand, sell at a richer market, or list at your price with create_sell_order.`;
+}
+
+// Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+// #1025, #986, #949, #833): the age at which an unfilled create_buy_order is
+// flagged STALE. Receipt for 24: the observed failures are bids that never
+// filled across 71h (#726) and 3+ days (#808) with the pilot insolvent behind
+// them; 24h fires well before that while leaving a full day (~8,640 ticks) for
+// a hauler to pass and fill. No fill-time figure exists in the vendored
+// reference to derive it from, so this is a judgment constant, same standing
+// as MISSION_STALE_HOURS. Simpler alternative rejected: show the age with no
+// threshold and let the planner judge, which is the status quo's failure --
+// 0 cancels in the captured windows. ADVISORY, never an auto-cancel: a cancel
+// is a mutation on a timer, and a partial fill is invisible to the harness
+// (buy_filled clears every record broadly, agent.ts clearOpenBuyOrders).
+export const BID_STALE_HOURS = 24;
+
+// Standing-bid section. Enumerated inputs: each bid's itemId/stationKey/
+// ageHours/here, the market rows (only for a `here` bid -- the rows describe
+// THIS station's market, so another station's bid gets no seller clause), and
+// BID_STALE_HOURS.
+//
+// Seller clause: row.sellQty > 0 -> units offered; a parsed listing that has
+// the item at sellQty 0 or lacks it entirely -> NO SELLERS (the summary lists
+// an item iff some order exists on it, the same absent-row semantics the
+// buyer check relies on, mcp-text-parser.ts); rows undefined (no listing was
+// fetched), or a listing without a sell_qty column (sellQty undefined) -> no
+// clause, never an inferred verdict. The gate is `rows` defined, not non-empty:
+// gatherMarket never hands over an empty array, and clipPlanContext's clipped
+// rows are [] when neither a held item nor a bid is in the listing, which must
+// still read NO SELLERS so a replayed digest equals the live one.
+//
+// Cancel call only for a `here` bid: cancel_order is station-scoped (openapi-v2
+// cancel_order, "all your orders at this station"), and the scout's 400+
+// no_orders failures (#833, #949, #986, #1025) were cancels issued from
+// somewhere else. For a bid elsewhere the line says go back. It makes no
+// claim about create_buy_order: the duplicate guard keys on the DOCKED station
+// plus the item (agent.ts buyOrderAlreadyOpen), so a bid elsewhere is not refused.
+function renderStandingBids(
+  orders: NonNullable<PlanContext["openBuyOrders"]>,
+  rows: PlanContext["marketRows"],
+): string {
+  const byId = new Map((rows ?? []).map((r) => [r.itemId, r]));
+  const bullets = orders.map((o) => {
+    const stale = o.ageHours >= BID_STALE_HOURS;
+    const parts = [
+      `- ${o.itemId} at ${quoteUntrusted(o.stationKey)} (${o.here ? "HERE" : "NOT this station"}): ` +
+      `placed ~${Math.floor(o.ageHours)}h ago, no fill notification since`,
+    ];
+    if (o.here && rows) {
+      const sellQty = byId.has(o.itemId) ? byId.get(o.itemId)!.sellQty : 0;
+      if (sellQty === 0) parts.push(`NO SELLERS listed here`);
+      else if (sellQty !== undefined) parts.push(`${sellQty} units for sale here`);
+    }
+    if (stale && o.here) {
+      parts.push(
+        `STALE (${BID_STALE_HOURS}h+): cancel it now with cancel_order{order_id="all"} -- the escrowed credits return to your wallet (this clears every order you hold at this station)`,
+      );
+    } else if (stale) {
+      parts.push(
+        `STALE (${BID_STALE_HOURS}h+): cancel_order only works at the station holding the order, so travel back there to cancel it -- from anywhere else cancel_order fails no_orders`,
+      );
+    }
+    return parts.join(". ");
+  });
+  return `Standing buy orders YOU placed (the credits stay in escrow until a seller fills the order or you cancel it):\n${bullets.join("\n")}\n` +
+    `A bid with no sellers fills only if a player lists the item later, and every credit behind it is credits you cannot spend on fuel. Do not post another bid while one is STALE, and cancel a stale one before you chase the item elsewhere.`;
 }
 
 // Market-intelligence injection (issue #269): the harness-run analyze_market

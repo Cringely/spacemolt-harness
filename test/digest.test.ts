@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildDigest, summarizeStatus, FLEET_REFUEL_FLOOR_CR } from "../src/planner/digest";
+import { buildDigest, summarizeStatus, FLEET_REFUEL_FLOOR_CR, BID_STALE_HOURS } from "../src/planner/digest";
 import { parseMarketText } from "../src/client/mcp-text-parser";
 import type { PlanContext } from "../src/planner/types";
 import type { StatusSnapshot } from "../src/client/client";
@@ -1449,6 +1449,111 @@ describe("social capabilities", () => {
     test("omits the section when unavailableItemsAtStation is an empty array", () => {
       const text = buildDigest({ ...baseCtx, unavailableItemsAtStation: [] });
       expect(text).not.toContain("Proven unavailable at this station");
+    });
+  });
+
+  // Standing-bid depth and aging (Cringely/spacemolt#1013, #726, #808, #918,
+  // #1025, #986, #949, #833). The planner posted create_buy_order bids for items
+  // nobody sells, then never cancelled them: credits sat in escrow for 3+ days,
+  // and cancel_order retried from the wrong station (it is station-scoped,
+  // openapi-v2 cancel_order "all your orders at this station") failed no_orders
+  // hundreds of times. buildDigest is pure, so each case hands it the
+  // pre-computed openBuyOrders entry; the Agent-side producer is pinned in
+  // test/agent-standing-bids.test.ts.
+  describe("standing buy orders: seller depth and aging", () => {
+    const bid = (over: Partial<NonNullable<PlanContext["openBuyOrders"]>[number]> = {}) =>
+      ({ itemId: "survey_scanner_i", stationKey: "market_prime", ageHours: 2, here: true, ...over });
+    const section = (text: string) => text.split("\n").filter((l) => l.includes("survey_scanner_i")).join("\n");
+
+    test("no section without open bids (undefined and empty alike)", () => {
+      expect(buildDigest(baseCtx)).not.toContain("Standing buy orders");
+      expect(buildDigest({ ...baseCtx, openBuyOrders: [] })).not.toContain("Standing buy orders");
+    });
+
+    test("a fresh bid here shows its age and, from the market rows, NO SELLERS when the ask side is empty", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "survey_scanner_i", buyQty: 0, sellQty: 0 }],
+      });
+      expect(text).toContain("Standing buy orders");
+      expect(section(text)).toMatch(/placed ~2h ago/);
+      expect(section(text)).toContain("NO SELLERS");
+      expect(section(text)).not.toContain("STALE");
+    });
+
+    test("an item absent from a parsed listing also reads NO SELLERS (absent row = no orders either side)", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "iron_ore", bestBuy: 11, buyQty: 200, sellQty: 10 }],
+      });
+      expect(section(text)).toContain("NO SELLERS");
+    });
+
+    test("a row with sell depth reports the units offered, not NO SELLERS", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "survey_scanner_i", buyQty: 0, sellQty: 3 }],
+      });
+      expect(section(text)).toContain("3 units for sale here");
+      expect(section(text)).not.toContain("NO SELLERS");
+    });
+
+    // ABSENCE IS NOT A VERDICT (#94): no fetched rows, or a listing that has no
+    // sell_qty column (sellQty undefined), says nothing about sellers.
+    test("makes no seller claim without rows, without a sell_qty column, or for a bid at another station", () => {
+      expect(section(buildDigest({ ...baseCtx, openBuyOrders: [bid()] }))).not.toMatch(/NO SELLERS|for sale here/);
+      expect(section(buildDigest({
+        ...baseCtx, openBuyOrders: [bid()],
+        marketRows: [{ itemId: "survey_scanner_i", buyQty: 0 }],
+      }))).not.toMatch(/NO SELLERS|for sale here/);
+      expect(section(buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ here: false })],
+        marketRows: [{ itemId: "iron_ore", buyQty: 0, sellQty: 0 }],
+      }))).not.toMatch(/NO SELLERS|for sale here/);
+    });
+
+    test("a bid at the threshold is STALE with the cancel call, one hour under it is not", () => {
+      const stale = buildDigest({ ...baseCtx, openBuyOrders: [bid({ ageHours: BID_STALE_HOURS })] });
+      expect(section(stale)).toContain("STALE");
+      expect(section(stale)).toContain('cancel_order{order_id="all"}');
+      const fresh = buildDigest({ ...baseCtx, openBuyOrders: [bid({ ageHours: BID_STALE_HOURS - 1 })] });
+      expect(section(fresh)).not.toContain("STALE");
+      expect(section(fresh)).not.toContain("cancel_order");
+    });
+
+    // The #1025/#986/#949/#833 loop: cancel_order from a station that does not
+    // hold the order fails no_orders. A stale bid elsewhere must say go back,
+    // and must not hand the planner a cancel call it cannot make from here.
+    test("a stale bid at ANOTHER station says return there, and offers no cancel call", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ ageHours: 72, here: false, stationKey: "far_outpost" })],
+      });
+      expect(section(text)).toContain("far_outpost");
+      expect(section(text)).toContain("STALE");
+      expect(section(text)).toMatch(/only (works|acts) at the station holding/i);
+      expect(section(text)).not.toContain('cancel_order{order_id="all"}');
+    });
+
+    // The duplicate guard keys on the DOCKED station plus the item (agent.ts
+    // buyOrderAlreadyOpen), so a bid at another station does not make
+    // create_buy_order refuse. The digest must not say it does.
+    test("a stale bid elsewhere makes no claim that create_buy_order is refused as a duplicate", () => {
+      const text = buildDigest({
+        ...baseCtx, openBuyOrders: [bid({ ageHours: 72, here: false, stationKey: "far_outpost" })],
+      });
+      expect(section(text)).not.toMatch(/duplicate|create_buy_order/i);
+    });
+
+    test("every open bid is listed, oldest first as supplied", () => {
+      const text = buildDigest({
+        ...baseCtx,
+        openBuyOrders: [bid({ itemId: "fuel_cell", ageHours: 50 }), bid({ itemId: "iron_ore", ageHours: 3 })],
+      });
+      const lines = text.split("\n");
+      const header = lines.findIndex((l) => l.includes("Standing buy orders"));
+      expect(lines[header + 1]).toMatch(/^- fuel_cell .*STALE/);
+      expect(lines[header + 2]).toMatch(/^- iron_ore /);
+      expect(lines[header + 2]).not.toContain("STALE");
     });
   });
 });
