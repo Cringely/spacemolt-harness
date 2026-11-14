@@ -62,7 +62,9 @@
 # and the token-pattern secret scan (#232) below are real gates: each can and
 # does `exit 1`, and the secret scan also refuses when its grep cannot run.
 # See their own comment blocks for what each covers and why both live ahead
-# of Vale rather than after it.
+# of Vale rather than after it. A clone can also chain one script of its own
+# after both, through git config harness.preCommitChain (#75), and that
+# script's refusal refuses the commit too.
 
 set -u
 
@@ -350,6 +352,63 @@ $identity_staged
 EOF
   secret_refuse "Staged content"
 fi
+
+# --- per-clone chained check (#75) ----------------------------------------
+# Opt-in per clone, through the local git config harness.preCommitChain, the
+# same opt-in shape as harness.personalTermsFile. Its value is the file name of
+# a POSIX sh script in this hook's own directory, and the script runs with `sh`
+# after every gate above has passed. A non-zero exit refuses the commit. A clone
+# adds a check of its own this way without editing its installed copy of this
+# file.
+#
+# THE SCRIPT COMES FROM THE HOOK DIRECTORY, NEVER THE WORK TREE
+# A path into the work tree would run whatever the checked-out branch carries,
+# in the committer's shell, on every commit. The hook directory is the
+# installed copy git runs this file from, so a script there carries the same
+# trust as this hook. Where a project commits .claude/hooks/, a branch that
+# edits the script changes what runs. Where it is gitignored installer output,
+# a checkout, switch, merge or pull still replaces a file there when the
+# incoming tree tracks it, and re-running the installer restores it. A slash
+# or a backslash in the value is a path, not a file name, and refuses, so the
+# value cannot name a file in the work tree.
+#
+# A chain point, not an edit to a project's installed copy of this file. An
+# edited installed hook reads as project-modified drift in the installer's
+# audit. Pinning it as an accepted overlay instead would freeze every gate
+# above at the pinned version, because the installer stops updating a file
+# once it is pinned.
+#
+# --local only. A global value would opt in every repository on the machine.
+#
+# Every configured failure refuses: a key set but empty, a value that is a
+# path, a script missing from the hook directory, and a config read that
+# fails. A clone that opted into a gate never commits with that gate off.
+chain_name=$(git config --local --get harness.preCommitChain 2>/dev/null)
+chain_rc=$?
+case $chain_rc in
+  0)
+    if [ -z "$chain_name" ]; then
+      echo "pre-commit: refused. git config harness.preCommitChain is set but empty. Point it at a script, or unset it to opt this clone out." >&2
+      exit 1
+    fi
+    case "$chain_name" in
+      */* | *\\*)
+        echo "pre-commit: refused. git config harness.preCommitChain is '$chain_name', a path. It must be the file name of a script in the hook directory, not a path into a checkout." >&2
+        exit 1
+        ;;
+    esac
+    if [ ! -f "$hook_dir/$chain_name" ]; then
+      echo "pre-commit: refused. git config harness.preCommitChain names '$chain_name', which is not in the hook directory. Install it there, or unset the key to opt this clone out." >&2
+      exit 1
+    fi
+    sh "$hook_dir/$chain_name" || exit 1
+    ;;
+  1) ;;
+  *)
+    echo "pre-commit: refused. Could not read git config harness.preCommitChain (git config exited $chain_rc)." >&2
+    exit 1
+    ;;
+esac
 
 # core.quotePath=false: its default (true) makes git emit non-ASCII paths as
 # a quoted C-style literal ("file_\303\251.md"), which `mkdir -p`/`git show`
