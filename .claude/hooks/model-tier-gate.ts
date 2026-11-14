@@ -64,7 +64,7 @@
 //
 // WIRE CONTRACT, and where it differs from its siblings. A deny prints its reason on stderr and
 // exits 2, which Claude Code reads as "block and hand the reason back to the model".
-// agent-worktree-gate.ts and review-gate.ts instead exit 0 and emit a `hookSpecificOutput` deny on
+// agent-worktree-gate.ts instead exits 0 and emits a `hookSpecificOutput` deny on
 // stdout. Both forms block; this one is kept because it is the form that was verified live against
 // this gate's own payloads before promotion, and because it is the form test/model-tier-gate.test.ts
 // asserts on. The code shape is otherwise the siblings': a pure exported `decide()` returning a
@@ -699,6 +699,9 @@ export function decide(
 if (import.meta.main) {
   try {
     const raw = await Bun.stdin.text();
+    // Copilot CLI also runs .claude/settings.json hooks and fails closed on them (#227). Stand
+    // down there, but never while CLAUDECODE is set, so a Claude Code session always runs the rest.
+    if (process.env.COPILOT_CLI && !process.env.CLAUDECODE) process.exit(0);
     if (raw.trim() === "") process.exit(0);
 
     const readFile = (path: string): string | null => {
