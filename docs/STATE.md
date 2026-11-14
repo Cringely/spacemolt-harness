@@ -2,7 +2,7 @@
 
 > The handoff file. Any session (primarily Claude Code from terminal) resumes from here.
 >
-> **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff with no logic to review; keep it current via a lightweight docs PR rather than letting it lag behind batch merges. Since 2026-11-13 main requires one approving review, so this PR needs one too (decisions.md, ruleset entry).
+> **Standing rule (STATE freshness):** the `## NOW` block below is PM-owned and MUST be refreshed at every wave of work, every merge cluster, and every compaction/away-transition, **including IN-FLIGHT work**, so progress is visible remotely without reading the code. STATE.md is a living handoff. Keep it current via a lightweight docs PR rather than letting it lag behind batch merges. Like every change to main, that PR goes through the one-approval ruleset of 2026-11-13 (decisions.md).
 
 
 **Last updated:** 2026-09-24, doc-steward pass reconciling PRs #149-#150 (spec fix + githooks). Primary repo: github.com/Cringely/spacemolt-harness
